@@ -44,6 +44,7 @@ void MessageHandler::send_version(uint64_t peer_id) {
     ver.protocol_version = consensus::PROTOCOL_VERSION;
     ver.best_height = chain_.tip() ? chain_.tip()->height : 0;
     ver.timestamp = get_time();
+    ver.listen_port = net_.listen_port();
 
     net_.send_to(peer_id, cmd::VERSION, ver.serialize());
 }
@@ -56,10 +57,13 @@ void MessageHandler::handle_version(uint64_t peer_id, const std::vector<uint8_t>
     spdlog::info("P2P recv version from peer {}: v={}, height={}",
         peer_id, ver.protocol_version, ver.best_height);
 
-    // Update peer with version info
+    // Update peer with version info, including their listen port
     net_.update_peer(peer_id, [&](Peer& peer) {
         peer.info().protocol_version = ver.protocol_version;
         peer.info().best_height = ver.best_height;
+        if (ver.listen_port > 0) {
+            peer.info().port = ver.listen_port; // replace ephemeral port with listen port
+        }
         peer.set_state(PeerState::VERSION_SENT);
     });
 
@@ -245,9 +249,8 @@ void MessageHandler::handle_getaddr(uint64_t peer_id) {
     for (const auto& p : peers) {
         if (p.id == peer_id) continue;
         if (p.address.empty()) continue;
-        // Only advertise outbound peers (they have real listen ports).
-        // Inbound peers have ephemeral ports — connecting to them won't work.
-        if (p.inbound) continue;
+        // Skip peers without a known listen port
+        if (p.port == 0 || p.port > 49151) continue;
 
         struct in_addr ip_addr;
         if (inet_pton(AF_INET, p.address.c_str(), &ip_addr) == 1) {

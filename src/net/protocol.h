@@ -91,6 +91,7 @@ struct VersionMessage {
     uint32_t protocol_version{consensus::PROTOCOL_VERSION};
     uint64_t best_height{0};
     int64_t  timestamp{0};
+    uint16_t listen_port{0}; // port this node listens on (0 = not accepting inbound)
 
     std::vector<uint8_t> serialize() const;
     static VersionMessage deserialize(const uint8_t* data, size_t len);

@@ -25,6 +25,7 @@ std::vector<uint8_t> VersionMessage::serialize() const {
     w.write_u32(protocol_version);
     w.write_u64(best_height);
     w.write_i64(timestamp);
+    w.write_u16(listen_port);
     return w.release();
 }
 
@@ -34,6 +35,9 @@ VersionMessage VersionMessage::deserialize(const uint8_t* data, size_t len) {
     msg.protocol_version = reader.read_u32();
     msg.best_height = reader.read_u64();
     msg.timestamp = reader.read_i64();
+    if (reader.remaining() >= 2) {
+        msg.listen_port = reader.read_u16();
+    }
     return msg;
 }
 

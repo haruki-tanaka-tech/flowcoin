@@ -76,6 +76,9 @@ public:
     // Get number of connected peers
     size_t peer_count() const;
 
+    // Get our listen port
+    uint16_t listen_port() const { return config_.port; }
+
     bool is_running() const { return running_.load(); }
 
 private:
