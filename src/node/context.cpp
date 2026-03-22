@@ -179,8 +179,10 @@ void NodeContext::init(const std::string& data_dir,
         if (p.empty()) {
             throw std::runtime_error("submitblock requires block data");
         }
+        if (!wallet) {
+            throw std::runtime_error("no wallet loaded");
+        }
 
-        // Parse block fields from JSON
         auto& b = p[0];
         CBlock block;
         auto& h = block.header;
@@ -201,16 +203,30 @@ void NodeContext::init(const std::string& data_dir,
         h.n_heads = b.value("n_heads", uint32_t(0));
         h.rank = b.value("rank", uint32_t(0));
         h.stagnation_count = b.value("stagnation_count", uint32_t(0));
-        h.miner_pubkey = PubKey::from_hex(b.value("miner_pubkey", std::string("")));
-        h.miner_sig = Signature::from_hex(b.value("miner_sig", std::string("")));
 
-        // Coinbase transaction
-        if (b.contains("coinbase_pubkey_hash")) {
-            auto pkh = Blob<20>::from_hex(b.value("coinbase_pubkey_hash", std::string("")));
-            auto reward = consensus::get_block_subsidy(h.height);
-            block.vtx.push_back(make_coinbase(reward, pkh, h.height));
-            h.merkle_root = block.compute_merkle_root();
+        // Get fresh mining address from wallet (new address per block)
+        std::string addr = wallet->get_mining_address();
+        auto keys = wallet->get_all_keys();
+        const WalletKey* miner_key = nullptr;
+        for (const auto& wk : keys) {
+            if (wk.address == addr) { miner_key = &wk; break; }
         }
+        if (!miner_key) {
+            throw std::runtime_error("failed to get mining key");
+        }
+
+        // Set miner pubkey
+        h.miner_pubkey = miner_key->keypair.pubkey;
+
+        // Coinbase to miner's address
+        auto reward = consensus::get_block_subsidy(h.height);
+        block.vtx.push_back(make_coinbase(reward, miner_key->pubkey_hash, h.height));
+        h.merkle_root = block.compute_merkle_root();
+
+        // Sign the block
+        auto ub = h.unsigned_bytes();
+        h.miner_sig = crypto::sign(miner_key->keypair.privkey, miner_key->keypair.pubkey,
+                                    ub.data(), ub.size());
 
         // Accept block
         auto state = chain->accept_block(block);
