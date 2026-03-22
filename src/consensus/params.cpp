@@ -15,8 +15,10 @@ const ChainParams& ChainParams::mainnet() {
         .hrp           = "fl",
         .initial_nbits = 0x1e0fffff,
         .seed_nodes    = {
-            "211.205.13.203:9333",          // Primary seed node (South Korea)
-            "seed.flowcoin.org:9333",       // DNS seed
+            "seed.flowcoin.org:9333",
+        },
+        .fallback_nodes = {
+            "211.205.13.203:9333",
         },
     };
     return p;
@@ -26,7 +28,7 @@ const ChainParams& ChainParams::testnet() {
     static const ChainParams p{
         .network       = Network::TESTNET,
         .name          = "testnet",
-        .magic         = 0x544E4554,        // "TNET"
+        .magic         = 0x544E4554,
         .p2p_port      = 19333,
         .rpc_port      = 19334,
         .hrp           = "tfl",
@@ -34,6 +36,7 @@ const ChainParams& ChainParams::testnet() {
         .seed_nodes    = {
             "seed.flowcoin.org:19333",
         },
+        .fallback_nodes = {},
     };
     return p;
 }
@@ -42,12 +45,13 @@ const ChainParams& ChainParams::regtest() {
     static const ChainParams p{
         .network       = Network::REGTEST,
         .name          = "regtest",
-        .magic         = 0x52454754,        // "REGT"
+        .magic         = 0x52454754,
         .p2p_port      = 29333,
         .rpc_port      = 29334,
         .hrp           = "flrt",
         .initial_nbits = 0x207fffff,
-        .seed_nodes    = {},                // no seeds for regtest
+        .seed_nodes    = {},
+        .fallback_nodes = {},
     };
     return p;
 }

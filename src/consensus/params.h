@@ -62,7 +62,8 @@ struct ChainParams {
     uint16_t    rpc_port;
     std::string hrp;           // bech32m human-readable prefix
     uint32_t    initial_nbits; // genesis difficulty
-    std::vector<std::string> seed_nodes; // ip:port of bootstrap nodes
+    std::vector<std::string> seed_nodes;     // DNS seeds (primary)
+    std::vector<std::string> fallback_nodes; // IP seeds (fallback if DNS fails)
 
     static const ChainParams& mainnet();
     static const ChainParams& testnet();

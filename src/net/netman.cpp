@@ -200,11 +200,26 @@ void NetManager::connect_to(const std::string& host, uint16_t port) {
         }
     }
 
-    // Also skip if already connected to this host:port
+    // Resolve hostname to IP for deduplication
+    std::string resolved = host;
+    {
+        struct addrinfo hints{}, *res = nullptr;
+        hints.ai_family = AF_INET;
+        if (getaddrinfo(host.c_str(), nullptr, &hints, &res) == 0 && res) {
+            char ip[INET_ADDRSTRLEN];
+            auto* sa = reinterpret_cast<struct sockaddr_in*>(res->ai_addr);
+            inet_ntop(AF_INET, &sa->sin_addr, ip, sizeof(ip));
+            resolved = ip;
+            freeaddrinfo(res);
+        }
+    }
+
+    // Skip if already connected to this resolved IP:port
     {
         std::lock_guard lock(mu_);
         for (const auto& [id, peer] : peers_) {
-            if (peer->info().address == host && peer->info().port == port) {
+            if (peer->info().address == resolved && peer->info().port == port) {
+                spdlog::debug("P2P skipping duplicate connection to {}:{}", resolved, port);
                 return;
             }
         }

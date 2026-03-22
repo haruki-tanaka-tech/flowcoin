@@ -134,9 +134,13 @@ void NodeContext::start_p2p(const net::NetConfig& config) {
         cfg.port = params->p2p_port;
     }
 
-    // Add hardcoded seed nodes from ChainParams (unless user provided their own)
+    // DNS seeds first, IP fallbacks added separately after connection attempt
     if (cfg.seed_nodes.empty()) {
         cfg.seed_nodes = params->seed_nodes;
+        // Append fallback IPs — NetManager deduplicates resolved addresses
+        for (const auto& fb : params->fallback_nodes) {
+            cfg.seed_nodes.push_back(fb);
+        }
     }
 
     net_manager = std::make_unique<net::NetManager>(cfg);
