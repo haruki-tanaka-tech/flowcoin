@@ -243,10 +243,12 @@ void MessageHandler::handle_getaddr(uint64_t peer_id) {
     VectorWriter addrs;
 
     for (const auto& p : peers) {
-        if (p.id == peer_id) continue; // don't send back their own address
+        if (p.id == peer_id) continue;
         if (p.address.empty()) continue;
+        // Only advertise outbound peers (they have real listen ports).
+        // Inbound peers have ephemeral ports — connecting to them won't work.
+        if (p.inbound) continue;
 
-        // Encode: 4 bytes IP + 2 bytes port
         struct in_addr ip_addr;
         if (inet_pton(AF_INET, p.address.c_str(), &ip_addr) == 1) {
             addrs.write(reinterpret_cast<const uint8_t*>(&ip_addr.s_addr), 4);
@@ -284,9 +286,12 @@ void MessageHandler::handle_addr(uint64_t peer_id, const std::vector<uint8_t>& p
         inet_ntop(AF_INET, ip_bytes, ip_str, sizeof(ip_str));
 
         std::string addr = ip_str;
+
+        // Skip obviously invalid ports (ephemeral range)
+        if (port > 49151 || port == 0) continue;
+
         spdlog::debug("P2P received addr {}:{} from peer {}", addr, port, peer_id);
 
-        // Connect if we don't already have this peer
         bool already_connected = false;
         auto peers = net_.get_peer_info();
         for (const auto& p : peers) {
