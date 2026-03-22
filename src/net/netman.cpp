@@ -6,8 +6,13 @@
 
 #include <uv.h>
 #include <spdlog/spdlog.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netdb.h>
+#endif
 #include <set>
 
 #include <cstring>

@@ -6,7 +6,12 @@
 #include "consensus/params.h"
 
 #include <spdlog/spdlog.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
+#endif
 
 namespace flow::net {
 

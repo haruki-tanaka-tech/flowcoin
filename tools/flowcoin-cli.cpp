@@ -6,11 +6,17 @@
 
 #include <nlohmann/json.hpp>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
 #include <arpa/inet.h>
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 #include <cstring>
 #include <iostream>
@@ -51,11 +57,15 @@ static std::string http_post(const std::string& host, uint16_t port,
 
     std::string response;
     char buf[4096];
-    ssize_t n;
+    int n;
     while ((n = recv(sock, buf, sizeof(buf), 0)) > 0) {
         response.append(buf, static_cast<size_t>(n));
     }
+#ifdef _WIN32
+    closesocket(sock);
+#else
     close(sock);
+#endif
 
     // Extract body from HTTP response
     auto header_end = response.find("\r\n\r\n");
