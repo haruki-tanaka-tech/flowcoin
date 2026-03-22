@@ -158,7 +158,7 @@ TEST(ValidationTest, Check3_TimeNotAdvancing) {
                                     ub.data(), ub.size());
     auto state = check_block(f.block, f.ctx);
     EXPECT_FALSE(state.valid);
-    EXPECT_EQ(state.reject_reason, "time-not-advancing");
+    EXPECT_EQ(state.reject_reason, "time-too-old");
 }
 
 // ─── Check 4: too soon ──────────────────────────────────────

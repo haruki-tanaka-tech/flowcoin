@@ -6,6 +6,8 @@
 
 #include <uv.h>
 #include <spdlog/spdlog.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 
 #include <cstring>
 
@@ -163,7 +165,51 @@ void NetManager::on_new_connection(uv_stream_t* server, int status) {
 }
 
 void NetManager::connect_to(const std::string& host, uint16_t port) {
-    // Schedule connect in the event loop thread
+    // Skip self-connections
+    if (port == config_.port) {
+        if (host == "127.0.0.1" || host == "localhost" ||
+            host == config_.bind_addr || host == "0.0.0.0") {
+            return;
+        }
+        // Resolve hostname and check if it's our own IP
+        struct addrinfo hints{}, *result = nullptr;
+        hints.ai_family = AF_INET;
+        if (getaddrinfo(host.c_str(), nullptr, &hints, &result) == 0 && result) {
+            char resolved[INET_ADDRSTRLEN];
+            auto* sa = reinterpret_cast<struct sockaddr_in*>(result->ai_addr);
+            inet_ntop(AF_INET, &sa->sin_addr, resolved, sizeof(resolved));
+            freeaddrinfo(result);
+            // Check against all local interfaces
+            uv_interface_address_t* addrs = nullptr;
+            int count = 0;
+            if (uv_interface_addresses(&addrs, &count) == 0) {
+                for (int i = 0; i < count; ++i) {
+                    char local_ip[INET_ADDRSTRLEN];
+                    auto* a = reinterpret_cast<struct sockaddr_in*>(&addrs[i].address.address4);
+                    if (addrs[i].address.address4.sin_family == AF_INET) {
+                        inet_ntop(AF_INET, &a->sin_addr, local_ip, sizeof(local_ip));
+                        if (std::string(resolved) == local_ip) {
+                            uv_free_interface_addresses(addrs, count);
+                            spdlog::debug("P2P skipping self-connection to {}:{}", host, port);
+                            return;
+                        }
+                    }
+                }
+                uv_free_interface_addresses(addrs, count);
+            }
+        }
+    }
+
+    // Also skip if already connected to this host:port
+    {
+        std::lock_guard lock(mu_);
+        for (const auto& [id, peer] : peers_) {
+            if (peer->info().address == host && peer->info().port == port) {
+                return;
+            }
+        }
+    }
+
     std::lock_guard lock(work_mu_);
     work_queue_.push_back([this, host, port]() {
         auto* ctx = new ConnContext;
@@ -175,8 +221,21 @@ void NetManager::connect_to(const std::string& host, uint16_t port) {
         auto* req = new uv_connect_t;
         req->data = ctx;
 
+        // Resolve hostname to IP if needed
+        std::string resolved_host = host;
+        struct addrinfo hints{}, *res = nullptr;
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        if (getaddrinfo(host.c_str(), nullptr, &hints, &res) == 0 && res) {
+            char ip_buf[INET_ADDRSTRLEN];
+            auto* sa = reinterpret_cast<struct sockaddr_in*>(res->ai_addr);
+            inet_ntop(AF_INET, &sa->sin_addr, ip_buf, sizeof(ip_buf));
+            resolved_host = ip_buf;
+            freeaddrinfo(res);
+        }
+
         struct sockaddr_in addr;
-        uv_ip4_addr(host.c_str(), port, &addr);
+        uv_ip4_addr(resolved_host.c_str(), port, &addr);
 
         auto peer = std::make_shared<Peer>(ctx->peer_id, host, port, false);
         peer->set_state(PeerState::CONNECTING);
@@ -235,7 +294,23 @@ void NetManager::on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
 
     if (nread < 0) {
         delete[] buf->base;
-        spdlog::debug("P2P peer {} disconnected", ctx->peer_id);
+
+        // Schedule reconnect for outbound peers
+        {
+            std::lock_guard lock(ctx->mgr->mu_);
+            auto it = ctx->mgr->peers_.find(ctx->peer_id);
+            if (it != ctx->mgr->peers_.end() && !it->second->info().inbound) {
+                auto& info = it->second->info();
+                spdlog::info("P2P outbound peer {}:{} disconnected, scheduling reconnect",
+                    info.address, info.port);
+                ctx->mgr->reconnect_list_.push_back({
+                    info.address, info.port, 0, get_time() + 30
+                });
+            } else {
+                spdlog::debug("P2P peer {} disconnected", ctx->peer_id);
+            }
+        }
+
         ctx->mgr->remove_peer(ctx->peer_id);
         if (ctx->mgr->on_peer_event_) {
             ctx->mgr->on_peer_event_(ctx->peer_id, false);
@@ -362,6 +437,31 @@ void NetManager::process_work_queue() {
     }
     for (auto& fn : work) {
         fn();
+    }
+
+    // Process reconnections
+    int64_t now = get_time();
+    std::lock_guard lock(mu_);
+    for (auto it = reconnect_list_.begin(); it != reconnect_list_.end(); ) {
+        if (it->attempts >= 5) {
+            it = reconnect_list_.erase(it);
+            continue;
+        }
+        if (now >= it->next_try) {
+            std::string h = it->host;
+            uint16_t p = it->port;
+            it->attempts++;
+            it->next_try = now + 30 * it->attempts; // backoff: 30s, 60s, 90s...
+            it = reconnect_list_.erase(it);
+            // connect_to needs work_mu_ which we can't take here (deadlock).
+            // Schedule via the work queue for next cycle.
+            work_mu_.lock();
+            work_queue_.push_back([this, h, p]() { connect_to(h, p); });
+            work_mu_.unlock();
+            if (work_async_) uv_async_send(work_async_);
+        } else {
+            ++it;
+        }
     }
 }
 

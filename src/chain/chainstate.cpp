@@ -10,6 +10,7 @@
 #include "core/time.h"
 
 #include <spdlog/spdlog.h>
+#include <algorithm>
 #include <filesystem>
 
 namespace flow {
@@ -96,6 +97,19 @@ consensus::BlockContext ChainState::build_context(const CBlockIndex* parent) con
     ctx.improving_blocks = parent->improving_blocks;
     ctx.current_time = get_time();
     ctx.expected_dataset_hash = Hash256::ZERO;
+
+    // Compute median time past (BIP 113): median of last 11 block timestamps
+    std::vector<int64_t> timestamps;
+    const CBlockIndex* walk = parent;
+    for (int i = 0; i < 11 && walk; ++i) {
+        timestamps.push_back(walk->timestamp);
+        walk = walk->prev;
+    }
+    if (!timestamps.empty()) {
+        std::sort(timestamps.begin(), timestamps.end());
+        ctx.median_time_past = timestamps[timestamps.size() / 2];
+    }
+
     return ctx;
 }
 

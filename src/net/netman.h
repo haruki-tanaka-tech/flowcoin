@@ -103,6 +103,15 @@ private:
     OnMessage on_message_;
     OnPeerEvent on_peer_event_;
 
+    // Reconnect: outbound peers that disconnected
+    struct ReconnectEntry {
+        std::string host;
+        uint16_t port;
+        int attempts{0};
+        int64_t next_try{0};
+    };
+    std::vector<ReconnectEntry> reconnect_list_;
+
     void run_loop();
     void accept_connection(uv_tcp_s* client_handle);
     void remove_peer(uint64_t peer_id);

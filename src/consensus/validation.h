@@ -44,6 +44,7 @@ struct BlockContext {
     uint32_t parent_rank{0};
     uint32_t improving_blocks{0};
     int64_t  current_time{0};
+    int64_t  median_time_past{0};  // median of last 11 block timestamps
     Hash256  expected_dataset_hash;
 
     // Optional: forward eval for val_loss verification.

@@ -29,10 +29,15 @@ ValidationState check_block(const CBlock& block, const BlockContext& ctx) {
         return state;
     }
 
-    // ─── Check 3: timestamp > parent.timestamp ──────────────
-    if (h.timestamp <= ctx.parent_timestamp) {
-        state.invalid("time-not-advancing");
-        return state;
+    // ─── Check 3: timestamp > median time past ─────────────
+    // Bitcoin BIP 113: block timestamp must exceed median of last 11 blocks.
+    // Falls back to parent timestamp if MTP not computed (early chain).
+    {
+        int64_t mtp = (ctx.median_time_past > 0) ? ctx.median_time_past : ctx.parent_timestamp;
+        if (h.timestamp <= mtp) {
+            state.invalid("time-too-old");
+            return state;
+        }
     }
 
     // ─── Check 4: timestamp >= parent.timestamp + 300 ───────

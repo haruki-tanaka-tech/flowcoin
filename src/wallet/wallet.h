@@ -76,6 +76,7 @@ public:
 private:
     sqlite3* db_{nullptr};
     crypto::ExtKey master_;
+    Hash256 encryption_key_; // keccak256(seed) for encrypting privkeys at rest
     uint32_t next_index_{0};
     std::vector<WalletKey> keys_;
 

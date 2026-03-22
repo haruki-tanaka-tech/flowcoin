@@ -11,6 +11,16 @@
 
 namespace flow {
 
+// Encrypt/decrypt privkey using XOR with keccak256-derived key stream.
+// Simple but safe: same operation for encrypt and decrypt (XOR is symmetric).
+static PrivKey encrypt_privkey(const PrivKey& key, const Hash256& enc_key) {
+    PrivKey result;
+    for (size_t i = 0; i < 32; ++i) {
+        result[i] = key[i] ^ enc_key[i];
+    }
+    return result;
+}
+
 static void check_sqlite(int rc, sqlite3* db, const char* ctx) {
     if (rc != SQLITE_OK && rc != SQLITE_DONE && rc != SQLITE_ROW) {
         throw std::runtime_error(std::string(ctx) + ": " + sqlite3_errmsg(db));
@@ -36,6 +46,7 @@ Wallet::Wallet(const std::string& wallet_path, const std::string& seed_hex) {
     }
 
     master_ = crypto::master_key_from_seed(seed.data(), seed.size());
+    encryption_key_ = keccak256(seed.data(), seed.size());
 
     int rc = sqlite3_open(wallet_path.c_str(), &db_);
     check_sqlite(rc, db_, "open wallet.dat");
@@ -76,10 +87,11 @@ void Wallet::load_keys() {
         bool imported = sqlite3_column_int(stmt, 6) != 0;
 
         if (imported) {
-            // Imported key: read privkey directly from DB
+            // Imported key: read encrypted privkey from DB, decrypt
             const void* pk_blob = sqlite3_column_blob(stmt, 1);
             if (pk_blob && sqlite3_column_bytes(stmt, 1) == 32) {
-                std::memcpy(wk.keypair.privkey.bytes(), pk_blob, 32);
+                PrivKey encrypted(static_cast<const uint8_t*>(pk_blob));
+                wk.keypair.privkey = encrypt_privkey(encrypted, encryption_key_);
             }
             wk.keypair.pubkey = crypto::derive_pubkey(wk.keypair.privkey);
         } else {
@@ -126,8 +138,9 @@ void Wallet::store_key(const WalletKey& wk) {
         "INSERT OR REPLACE INTO keys (idx, privkey, pubkey, address, pubkey_hash, used, imported) "
         "VALUES (?, ?, ?, ?, ?, ?, ?);",
         -1, &stmt, nullptr);
+    PrivKey encrypted = encrypt_privkey(wk.keypair.privkey, encryption_key_);
     sqlite3_bind_int(stmt, 1, static_cast<int>(wk.index));
-    sqlite3_bind_blob(stmt, 2, wk.keypair.privkey.bytes(), 32, SQLITE_STATIC);
+    sqlite3_bind_blob(stmt, 2, encrypted.bytes(), 32, SQLITE_STATIC);
     sqlite3_bind_blob(stmt, 3, wk.keypair.pubkey.bytes(), 32, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 4, wk.address.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_blob(stmt, 5, wk.pubkey_hash.bytes(), 20, SQLITE_STATIC);

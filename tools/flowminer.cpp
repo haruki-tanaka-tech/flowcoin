@@ -15,6 +15,7 @@
 #include <spdlog/spdlog.h>
 #include <csignal>
 #include <filesystem>
+#include <fstream>
 
 static std::atomic<bool> g_shutdown{false};
 static void signal_handler(int) { g_shutdown.store(true); }
@@ -76,12 +77,27 @@ int main(int argc, char* argv[]) {
         uint32_t vocab = 256; // byte-level for v0.1
         trainer = std::make_unique<flow::mining::Trainer>(d_model, d_ff, vocab);
 
-        // Training data: simple repeating pattern for v0.1
-        // Production: miners provide their own training data
-        for (int i = 0; i < 128; ++i) {
-            training_data.push_back(i % vocab);
+        // Load training data from file or generate structured pattern
+        std::string train_file = data_dir + "/training_data.bin";
+        std::ifstream tdf(train_file, std::ios::binary);
+        if (tdf) {
+            std::vector<uint8_t> raw((std::istreambuf_iterator<char>(tdf)),
+                                      std::istreambuf_iterator<char>());
+            for (auto b : raw) training_data.push_back(static_cast<int32_t>(b));
+            spdlog::info("Loaded {} bytes training data from {}", raw.size(), train_file);
+        } else {
+            // Generate structured code-like training data
+            // Fibonacci sequence as byte tokens — structured, learnable pattern
+            training_data.resize(1024);
+            training_data[0] = 1;
+            training_data[1] = 1;
+            for (size_t i = 2; i < training_data.size(); ++i) {
+                training_data[i] = (training_data[i-1] + training_data[i-2]) % vocab;
+            }
+            spdlog::info("Using generated training data (1024 tokens)");
         }
-        spdlog::info("Trainer initialized: d_model={}, d_ff={}, vocab={}", d_model, d_ff, vocab);
+        spdlog::info("Trainer: d_model={}, d_ff={}, vocab={}, data={} tokens",
+            d_model, d_ff, vocab, training_data.size());
     }
 
     spdlog::info("Chain height: {}, Wallet keys: {}",
