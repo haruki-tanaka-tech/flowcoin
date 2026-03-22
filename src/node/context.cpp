@@ -96,13 +96,15 @@ void NodeContext::init(const std::string& data_dir,
     chain->init_genesis(genesis);
 
     // Verify genesis block hash matches hardcoded value
-    Hash256 expected_genesis = Hash256::from_hex(consensus::GENESIS_HASH_HEX);
     Hash256 actual_genesis = genesis.get_hash();
-    if (actual_genesis != expected_genesis) {
-        spdlog::error("Genesis hash mismatch!");
-        spdlog::error("  Expected: {}", expected_genesis.to_hex());
-        spdlog::error("  Got:      {}", actual_genesis.to_hex());
-        throw std::runtime_error("genesis hash mismatch — corrupted binary");
+    if (!params->genesis_hash.empty()) {
+        Hash256 expected = Hash256::from_hex(params->genesis_hash);
+        if (actual_genesis != expected) {
+            spdlog::error("Genesis hash mismatch!");
+            spdlog::error("  Expected: {}", expected.to_hex());
+            spdlog::error("  Got:      {}", actual_genesis.to_hex());
+            throw std::runtime_error("genesis hash mismatch — corrupted binary");
+        }
     }
     spdlog::info("Genesis: {} (verified)", actual_genesis.to_hex().substr(0, 16));
 

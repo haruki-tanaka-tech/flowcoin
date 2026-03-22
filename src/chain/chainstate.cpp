@@ -195,6 +195,14 @@ Result<Ok> ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
                 return Error{"tx-input-missing: " + in.prevout.txid.to_hex()};
             }
 
+            // Coinbase maturity: cannot spend coinbase until 100 confirmations
+            if (utxo_entry->is_coinbase) {
+                uint64_t confirmations = index->height - utxo_entry->height;
+                if (confirmations < consensus::COINBASE_MATURITY) {
+                    return Error{"coinbase-not-mature"};
+                }
+            }
+
             // Verify pubkey_hash matches: keccak256d(pubkey)[0..19] == utxo.pubkey_hash
             Hash256 pk_hash = keccak256d(in.pubkey.bytes(), 32);
             Blob<20> computed_pkh;

@@ -152,6 +152,7 @@ Result<Ok> UtxoSet::connect_block(const std::vector<CTransaction>& txs, uint64_t
             entry.amount = tx.vout[i].amount;
             entry.pubkey_hash = tx.vout[i].pubkey_hash;
             entry.height = height;
+            entry.is_coinbase = tx.is_coinbase();
             add(txid, i, entry);
         }
     }

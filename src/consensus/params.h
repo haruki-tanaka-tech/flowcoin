@@ -49,12 +49,8 @@ constexpr int     MAX_PEERS           = 125;
 constexpr int     FINALITY_DEPTH      = 6;
 constexpr int64_t GENESIS_TIMESTAMP   = 1742515200;    // 21 Mar 2026 00:00:00 UTC
 
-// Genesis block hash — must match on every node or startup fails.
-// "White House calls for federal AI law to preempt states
-//  21/Mar/2026 - FlowCoin: AI that no government controls"
-constexpr const char* GENESIS_HASH_HEX =
-    "e8c166a31b2743a0e34753039759b464de2f436bd9a19caf9fe45e682a9b646f";
 constexpr uint32_t PROTOCOL_VERSION   = 1;
+constexpr int      COINBASE_MATURITY  = 100;  // blocks before coinbase can be spent
 
 // ─── Network-specific parameters ─────────────────────────────
 
@@ -68,6 +64,7 @@ struct ChainParams {
     uint16_t    rpc_port;
     std::string hrp;           // bech32m human-readable prefix
     uint32_t    initial_nbits; // genesis difficulty
+    std::string genesis_hash;                // expected genesis block hash
     std::vector<std::string> seed_nodes;     // DNS seeds (primary)
     std::vector<std::string> fallback_nodes; // IP seeds (fallback if DNS fails)
 

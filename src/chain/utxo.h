@@ -20,7 +20,8 @@ namespace flow {
 struct UtxoEntry {
     Amount   amount;
     Blob<20> pubkey_hash;
-    uint64_t height; // block height where this output was created
+    uint64_t height;      // block height where this output was created
+    bool     is_coinbase; // true if this output is from a coinbase transaction
 };
 
 class UtxoSet {
