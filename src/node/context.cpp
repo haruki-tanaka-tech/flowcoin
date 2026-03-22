@@ -12,6 +12,9 @@
 #include "core/serialize.h"
 #include "net/protocol.h"
 
+#include <fstream>
+#include <sys/random.h>
+
 #include <spdlog/spdlog.h>
 
 namespace flow {
@@ -73,9 +76,34 @@ void NodeContext::init(const std::string& data_dir,
     rpc::register_blockchain_rpcs(*rpc_server, *chain);
     rpc::register_mempool_rpcs(*rpc_server, *mempool);
 
-    if (!wallet_seed.empty()) {
+    // Wallet: auto-create on first run, load existing on restart
+    {
         std::string wallet_path = data_dir + "/wallet.dat";
-        wallet = std::make_unique<Wallet>(wallet_path, wallet_seed);
+        std::string seed = wallet_seed;
+
+        if (seed.empty()) {
+            std::string seed_file = data_dir + "/wallet_seed";
+            std::ifstream sf(seed_file);
+            if (sf) {
+                // Load existing seed
+                std::getline(sf, seed);
+            } else {
+                // First run: generate new seed from system random
+                uint8_t seed_bytes[32];
+                getrandom(seed_bytes, 32, 0);
+                for (int i = 0; i < 32; ++i) {
+                    char hex[3];
+                    snprintf(hex, sizeof(hex), "%02x", seed_bytes[i]);
+                    seed += hex;
+                }
+                // Save seed to file
+                std::ofstream of(seed_file);
+                of << seed;
+                spdlog::info("New wallet created: {}", wallet_path);
+            }
+        }
+
+        wallet = std::make_unique<Wallet>(wallet_path, seed);
         rpc::register_wallet_rpcs(*rpc_server, *wallet, *chain);
     }
 
