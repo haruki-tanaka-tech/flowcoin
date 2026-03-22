@@ -209,13 +209,22 @@ def mine(args):
 
     while running:
         # Get block template from node
-        training_info = rpc_call(args.rpchost, args.rpcport, 'gettraininginfo')
-        if training_info is None:
+        tmpl = rpc_call(args.rpchost, args.rpcport, 'getblocktemplate')
+        if tmpl is None:
             print('Lost connection to flowcoind, retrying in 5s...')
             time.sleep(5)
             continue
 
-        current_height = training_info.get('height', 0)
+        target_height = tmpl['height']
+        prev_hash = tmpl['prev_hash']
+        nbits = tmpl['nbits']
+        prev_val_loss = tmpl['prev_val_loss']
+
+        # Get a fresh mining address from wallet
+        miner_addr = rpc_call(args.rpchost, args.rpcport, 'getnewaddress')
+        if miner_addr is None:
+            print('Wallet not loaded. Start flowcoind with -wallet <seed>')
+            sys.exit(1)
 
         # Save initial state for delta computation
         initial_state = {k: v.clone().cpu() for k, v in model.state_dict().items()}
@@ -253,24 +262,57 @@ def mine(args):
             tgt = tokens[1:eval_len + 1].to(device)
             loss_after = F.cross_entropy(model(inp), tgt).item()
 
-        # Compute delta hash for PoT
+        # Compute delta hash
         d_bytes, d_hash = delta_hash(model, initial_state)
 
-        print(f'Block {current_height + 1}: loss {loss_before:.4f} → {loss_after:.4f} '
-              f'({args.steps} steps, {steps_per_sec:.0f} steps/s, '
-              f'delta_hash={d_hash[:16]}...)')
+        # Check Proof-of-Training: H = Keccak256(delta_hash || dataset_hash) < target
+        dataset_hash = '0' * 64  # zero hash for v0.1
+        concat = bytes.fromhex(d_hash) + bytes.fromhex(dataset_hash)
+        training_hash = keccak256(concat).hex()
+
+        valid = meets_target(training_hash, nbits)
+        status = '✓ VALID' if valid else '  training...'
+
+        print(f'Block {target_height}: loss {loss_before:.4f} → {loss_after:.4f} '
+              f'({args.steps} steps, {steps_per_sec:.0f} steps/s) {status}')
+
+        if valid:
+            # Submit block to node
+            block_data = {
+                'prev_hash': prev_hash,
+                'height': target_height,
+                'timestamp': int(time.time()),
+                'val_loss': loss_after,
+                'prev_val_loss': prev_val_loss,
+                'nbits': nbits,
+                'train_steps': args.steps,
+                'dataset_hash': dataset_hash,
+                'delta_hash': d_hash,
+                'd_model': tmpl['d_model'],
+                'n_layers': tmpl['n_layers'],
+                'd_ff': tmpl['d_ff'],
+                'n_experts': tmpl['n_experts'],
+                'n_heads': tmpl['n_heads'],
+                'rank': tmpl['rank'],
+                'stagnation_count': 0,
+                'miner_pubkey': '',  # node fills from wallet
+                'miner_sig': '',     # node signs
+                'coinbase_pubkey_hash': '',  # derived from miner_addr
+            }
+
+            result = rpc_call(args.rpchost, args.rpcport, 'submitblock', [block_data])
+            if result and result.get('accepted'):
+                blocks_mined += 1
+                print(f'  *** BLOCK {target_height} MINED! hash={result.get("hash", "?")[:16]}... '
+                      f'(total: {blocks_mined})')
+            else:
+                reason = result.get('reason', 'unknown') if result else 'rpc error'
+                print(f'  Block rejected: {reason}')
 
         # Save model checkpoint
         torch.save(model.state_dict(), model_path)
 
-        # Save delta for submitblock
-        delta_file = os.path.join(args.datadir, 'last_delta.bin')
-        with open(delta_file, 'wb') as f:
-            f.write(d_bytes)
-
-        blocks_mined += 1
-
-    print(f'\nMiner stopped. Total: {blocks_mined} training rounds, {total_steps} steps')
+    print(f'\nMiner stopped. Blocks mined: {blocks_mined}, total steps: {total_steps}')
 
 
 # ─── Entry Point ───────────────────────────────────────────────

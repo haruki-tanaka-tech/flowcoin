@@ -2,12 +2,15 @@
 // Distributed under the MIT software license
 
 #include "context.h"
+#include "consensus/growth.h"
 #include "consensus/reward.h"
 #include "primitives/block.h"
 #include "primitives/transaction.h"
 #include "crypto/keys.h"
 #include "crypto/sign.h"
 #include "core/hash.h"
+#include "core/serialize.h"
+#include "net/protocol.h"
 
 #include <spdlog/spdlog.h>
 
@@ -119,6 +122,92 @@ void NodeContext::init(const std::string& data_dir,
             : params->p2p_port;
         net_manager->connect_to(host, port);
         return nullptr;
+    });
+
+    // Mining RPCs
+    rpc_server->register_method("getblocktemplate", [this](const rpc::json&) -> rpc::json {
+        auto tip = chain->tip();
+        if (!tip) return rpc::json{{"error", "no chain"}};
+
+        auto dims = consensus::compute_growth(tip->height + 1, tip->improving_blocks);
+
+        return rpc::json{
+            {"height", tip->height + 1},
+            {"prev_hash", tip->hash.to_hex()},
+            {"prev_val_loss", tip->val_loss},
+            {"nbits", tip->nbits},
+            {"timestamp_min", tip->timestamp + consensus::MIN_BLOCK_INTERVAL},
+            {"d_model", dims.d_model},
+            {"n_layers", dims.n_layers},
+            {"d_ff", dims.d_ff},
+            {"n_experts", dims.n_experts},
+            {"n_heads", dims.n_heads},
+            {"rank", dims.rank},
+            {"reward", consensus::get_block_subsidy(tip->height + 1).value},
+        };
+    });
+
+    rpc_server->register_method("submitblock", [this](const rpc::json& p) -> rpc::json {
+        if (p.empty()) {
+            throw std::runtime_error("submitblock requires block data");
+        }
+
+        // Parse block fields from JSON
+        auto& b = p[0];
+        CBlock block;
+        auto& h = block.header;
+
+        h.prev_hash = Hash256::from_hex(b.value("prev_hash", std::string("")));
+        h.height = b.value("height", uint64_t(0));
+        h.timestamp = b.value("timestamp", int64_t(0));
+        h.val_loss = b.value("val_loss", 0.0f);
+        h.prev_val_loss = b.value("prev_val_loss", 0.0f);
+        h.nbits = b.value("nbits", uint32_t(0));
+        h.train_steps = b.value("train_steps", uint32_t(0));
+        h.dataset_hash = Hash256::from_hex(b.value("dataset_hash", std::string("")));
+        h.delta_hash = Hash256::from_hex(b.value("delta_hash", std::string("")));
+        h.d_model = b.value("d_model", uint32_t(0));
+        h.n_layers = b.value("n_layers", uint32_t(0));
+        h.d_ff = b.value("d_ff", uint32_t(0));
+        h.n_experts = b.value("n_experts", uint32_t(0));
+        h.n_heads = b.value("n_heads", uint32_t(0));
+        h.rank = b.value("rank", uint32_t(0));
+        h.stagnation_count = b.value("stagnation_count", uint32_t(0));
+        h.miner_pubkey = PubKey::from_hex(b.value("miner_pubkey", std::string("")));
+        h.miner_sig = Signature::from_hex(b.value("miner_sig", std::string("")));
+
+        // Coinbase transaction
+        if (b.contains("coinbase_pubkey_hash")) {
+            auto pkh = Blob<20>::from_hex(b.value("coinbase_pubkey_hash", std::string("")));
+            auto reward = consensus::get_block_subsidy(h.height);
+            block.vtx.push_back(make_coinbase(reward, pkh, h.height));
+            h.merkle_root = block.compute_merkle_root();
+        }
+
+        // Accept block
+        auto state = chain->accept_block(block);
+        if (!state.valid) {
+            return rpc::json{{"accepted", false}, {"reason", state.reject_reason}};
+        }
+
+        spdlog::info("Block {} accepted via submitblock, hash={}",
+            h.height, block.get_hash().to_hex().substr(0, 16));
+
+        // Broadcast to peers
+        if (net_manager && net_manager->peer_count() > 0) {
+            VectorWriter inv_msg;
+            inv_msg.write_compact_size(1);
+            inv_msg.write_u32(static_cast<uint32_t>(net::InvType::BLOCK));
+            auto hash = block.get_hash();
+            inv_msg.write_bytes(std::span<const uint8_t>(hash.bytes(), 32));
+            net_manager->broadcast(net::cmd::INV, inv_msg.release());
+        }
+
+        return rpc::json{
+            {"accepted", true},
+            {"hash", block.get_hash().to_hex()},
+            {"height", h.height},
+        };
     });
 }
 
