@@ -60,7 +60,8 @@ static CBlock create_genesis_block(const consensus::ChainParams& params) {
     coinbase_in.prevout.vout = 0xFFFFFFFF;
     // Encode genesis message in the signature field of coinbase input
     const auto* msg = reinterpret_cast<const uint8_t*>(GENESIS_COINBASE_MSG);
-    size_t msg_len = std::min(strlen(GENESIS_COINBASE_MSG), size_t(64));
+    size_t msg_len = strlen(GENESIS_COINBASE_MSG);
+    if (msg_len > 64) msg_len = 64;
     std::memcpy(coinbase_in.sig.bytes(), msg, msg_len);
     coinbase_tx.vin.push_back(coinbase_in);
 
