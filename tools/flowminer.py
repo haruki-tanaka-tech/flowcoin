@@ -228,15 +228,17 @@ def mine(args):
         nbits = tmpl['nbits']
         prev_val_loss = tmpl['prev_val_loss']
 
-        # Reset model when new block found (by us or anyone)
+        # New block detected — shift data offset, reset optimizer (keep model weights)
         if target_height != last_height:
             last_height = target_height
             stale_count = 0
             last_loss = 999.0
-            model = FlowModel(args.vocab, args.d_model, args.d_ff).to(device)
+            # Keep model, reset optimizer to refresh gradients
             optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+            # Shift training data offset so different data = different deltas
+            total_steps += len(tokens) // 3
             if target_height > 1:
-                print(f'  → New block detected, model reset for block {target_height}')
+                print(f'  → New block {target_height}, continuing training (knowledge preserved)')
 
         # Save initial state for delta computation
         initial_state = {k: v.clone().cpu() for k, v in model.state_dict().items()}
@@ -329,10 +331,12 @@ def mine(args):
         last_loss = loss_after
 
         if stale_count >= 10:
-            model = FlowModel(args.vocab, args.d_model, args.d_ff).to(device)
-            optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+            # Boost learning rate and shift data to escape plateau
+            new_lr = args.lr * 3.0
+            optimizer = torch.optim.SGD(model.parameters(), lr=new_lr)
+            total_steps += len(tokens) // 2  # jump to different data
             stale_count = 0
-            print('  → Model converged, resetting for fresh deltas')
+            print(f'  → Plateau detected, boosting lr to {new_lr:.4f} and shifting data')
 
         # Save model checkpoint
         torch.save(model.state_dict(), model_path)
