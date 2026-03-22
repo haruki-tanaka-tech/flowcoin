@@ -75,10 +75,20 @@ int main(int argc, char* argv[]) {
                   << "  getblock <hash>        Get block by hash\n"
                   << "  gettraininginfo        Get model training status\n"
                   << "  getmempoolinfo         Get mempool status\n"
+                  << "\n  Wallet:\n"
+                  << "  getbalance             Total wallet balance\n"
+                  << "  getbalance <address>   Balance of a specific address\n"
+                  << "  listunspent            List all unspent outputs\n"
                   << "  getnewaddress          Generate new wallet address\n"
+                  << "  sendtoaddress <addr> <amount>  Send FLOW to address\n"
                   << "  listaddresses          List all wallet addresses\n"
-                  << "  importprivkey <hex>     Import a private key\n"
-                  << "  dumpwallet             Export all private keys\n";
+                  << "  importprivkey <hex>    Import a private key\n"
+                  << "  dumpwallet             Export all private keys\n"
+                  << "\n  Network:\n"
+                  << "  getnetworkinfo         Network status\n"
+                  << "  getpeerinfo            Connected peers\n"
+                  << "  getconnectioncount     Number of connections\n"
+                  << "  addnode <ip:port>      Connect to a peer\n";
         return 1;
     }
 
@@ -134,10 +144,75 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         if (response.contains("result")) {
-            if (response["result"].is_string()) {
-                std::cout << response["result"].get<std::string>() << "\n";
+            auto& r = response["result"];
+
+            if (r.is_string()) {
+                std::cout << r.get<std::string>() << "\n";
+            } else if (r.is_number()) {
+                if (r.is_number_float()) {
+                    std::cout << r.get<double>() << "\n";
+                } else {
+                    std::cout << r.get<int64_t>() << "\n";
+                }
+            } else if (method == "getpeerinfo" && r.is_array()) {
+                // Table format for peers
+                std::cout << "  ID  ADDR                        DIR    HEIGHT  VER\n";
+                for (const auto& p : r) {
+                    std::string dir = p.value("inbound", false) ? "in " : "out";
+                    printf("  %-3d %-27s %-4s   %-7d %d\n",
+                        p.value("id", 0),
+                        p.value("addr", std::string("?")).c_str(),
+                        dir.c_str(),
+                        p.value("height", 0),
+                        p.value("version", 0));
+                }
+                std::cout << "Total: " << r.size() << " peers\n";
+            } else if (method == "listaddresses" && r.is_array()) {
+                for (const auto& a : r) {
+                    std::string used = a.value("used", false) ? "*" : " ";
+                    printf("  %s %s\n", used.c_str(),
+                        a.value("address", std::string("?")).c_str());
+                }
+                std::cout << "Total: " << r.size() << " addresses\n";
+            } else if (method == "listunspent" && r.is_array()) {
+                printf("  %-16s %4s  %12s  %s\n", "TXID", "VOUT", "AMOUNT", "ADDRESS");
+                for (const auto& u : r) {
+                    std::string txid = u.value("txid", std::string("?"));
+                    printf("  %-16s %4d  %12.8f  %s\n",
+                        txid.substr(0, 16).c_str(),
+                        u.value("vout", 0),
+                        u.value("amount", 0.0),
+                        u.value("address", std::string("?")).c_str());
+                }
+                double total = 0;
+                for (const auto& u : r) total += u.value("amount", 0.0);
+                printf("Total: %zu UTXOs, %.8f FLOW\n", r.size(), total);
+            } else if (method == "getbalance" && r.is_object()) {
+                if (r.contains("address")) {
+                    printf("%s: %.8f FLOW (%d UTXOs)\n",
+                        r.value("address", std::string("?")).c_str(),
+                        r.value("balance", 0.0),
+                        r.value("utxo_count", 0));
+                } else {
+                    printf("%.8f FLOW (%d UTXOs)\n",
+                        r.value("balance", 0.0),
+                        r.value("utxo_count", 0));
+                }
+            } else if (method == "getnetworkinfo" && r.is_object()) {
+                printf("Network:     %s\n", r.value("network", std::string("?")).c_str());
+                printf("Protocol:    %d\n", r.value("protocol_version", 0));
+                printf("P2P port:    %d\n", r.value("p2p_port", 0));
+                printf("RPC port:    %d\n", r.value("rpc_port", 0));
+                printf("Connections: %d\n", r.value("connections", 0));
+            } else if (method == "gettraininginfo" && r.is_object()) {
+                printf("Height:      %d\n", r.value("height", 0));
+                printf("Val loss:    %.4f\n", r.value("val_loss", 0.0));
+                printf("d_model:     %d\n", r.value("d_model", 0));
+                printf("n_layers:    %d\n", r.value("n_layers", 0));
+                printf("n_experts:   %d\n", r.value("n_experts", 0));
+                printf("Improving:   %d blocks\n", r.value("improving_blocks", 0));
             } else {
-                std::cout << response["result"].dump(2) << "\n";
+                std::cout << r.dump(2) << "\n";
             }
         }
     } catch (const json::exception& e) {

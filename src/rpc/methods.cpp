@@ -68,8 +68,37 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet, ChainState& chain) 
         return wallet.get_new_address();
     });
 
-    server.register_method("getbalance", [&wallet, &chain](const json&) -> json {
-        // Collect all pubkey hashes from wallet
+    // getbalance [address]
+    // No args: total wallet balance (sum of all owned UTXOs)
+    // With address: balance of that specific address (any address, not just ours)
+    server.register_method("getbalance", [&wallet, &chain](const json& params) -> json {
+        if (!params.empty() && params[0].is_string()) {
+            // Balance of a specific address
+            std::string addr = params[0];
+            auto decoded = crypto::decode_address(addr);
+            if (!decoded) {
+                throw std::runtime_error("invalid address: " + decoded.error_message());
+            }
+            if (decoded.value().pubkey_hash.size() != 20) {
+                throw std::runtime_error("invalid address program length");
+            }
+            Blob<20> pkh;
+            std::memcpy(pkh.bytes(), decoded.value().pubkey_hash.data(), 20);
+
+            auto utxos = chain.utxo_set().find_by_pubkey_hashes({pkh});
+            int64_t balance = 0;
+            for (const auto& u : utxos) {
+                balance += u.entry.amount.value;
+            }
+            return json{
+                {"address", addr},
+                {"balance", static_cast<double>(balance) / consensus::COIN},
+                {"balance_sat", balance},
+                {"utxo_count", utxos.size()},
+            };
+        }
+
+        // Total wallet balance
         auto keys = wallet.get_all_keys();
         std::vector<Blob<20>> pkhs;
         pkhs.reserve(keys.size());
@@ -77,7 +106,6 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet, ChainState& chain) 
             pkhs.push_back(wk.pubkey_hash);
         }
 
-        // Scan UTXO set
         auto utxos = chain.utxo_set().find_by_pubkey_hashes(pkhs);
         int64_t balance = 0;
         for (const auto& u : utxos) {
@@ -89,6 +117,35 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet, ChainState& chain) 
             {"balance_sat", balance},
             {"utxo_count", utxos.size()},
         };
+    });
+
+    // listunspent — all UTXOs belonging to this wallet, with details
+    server.register_method("listunspent", [&wallet, &chain](const json&) -> json {
+        auto keys = wallet.get_all_keys();
+        std::vector<Blob<20>> pkhs;
+        for (const auto& wk : keys) pkhs.push_back(wk.pubkey_hash);
+
+        auto utxos = chain.utxo_set().find_by_pubkey_hashes(pkhs);
+        json result = json::array();
+        for (const auto& u : utxos) {
+            // Find the address for this pubkey_hash
+            std::string addr;
+            for (const auto& wk : keys) {
+                if (wk.pubkey_hash == u.entry.pubkey_hash) {
+                    addr = wk.address;
+                    break;
+                }
+            }
+            result.push_back(json{
+                {"txid", u.outpoint.txid.to_hex()},
+                {"vout", u.outpoint.vout},
+                {"address", addr},
+                {"amount", static_cast<double>(u.entry.amount.value) / consensus::COIN},
+                {"amount_sat", u.entry.amount.value},
+                {"height", u.entry.height},
+            });
+        }
+        return result;
     });
 
     server.register_method("sendtoaddress", [&wallet, &chain](const json& params) -> json {

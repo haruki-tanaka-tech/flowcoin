@@ -15,8 +15,8 @@ const ChainParams& ChainParams::mainnet() {
         .hrp           = "fl",
         .initial_nbits = 0x1e0fffff,
         .seed_nodes    = {
-            "seed.flowcoin.org:9333",
-            // Additional seed nodes added as network grows
+            "211.205.13.203:9333",          // Primary seed node (South Korea)
+            "seed.flowcoin.org:9333",       // DNS seed
         },
     };
     return p;
