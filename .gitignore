@@ -1,0 +1,25 @@
+# Build
+build/
+cmake-build-*/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cache/
+compile_commands.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Binaries
+*.o
+*.a
+*.so
+*.dylib
+flowcoind
+flowcoin-cli
+flowminer
