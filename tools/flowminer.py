@@ -91,7 +91,8 @@ def rpc_call(host, port, method, params=None):
 
 def keccak256(data: bytes) -> bytes:
     """Keccak-256 with pad=0x01 (NOT SHA-3 pad=0x06)."""
-    k = hashlib.sha3_256(data)
+    from Crypto.Hash import keccak
+    k = keccak.new(digest_bits=256, data=data)
     return k.digest()
 
 
@@ -115,7 +116,10 @@ def delta_hash(model, initial_state) -> tuple:
 
 
 def meets_target(hash_hex: str, nbits: int) -> bool:
-    """Check if hash < target derived from nbits (compact encoding)."""
+    """Check if hash <= target derived from nbits.
+    C++ uint256 is little-endian bytes. Keccak output is big-endian.
+    C++ compares from most-significant byte (index 31 in LE array).
+    In Python: treat hash as big-endian integer, compare to target."""
     exponent = (nbits >> 24) & 0xFF
     mantissa = nbits & 0x7FFFFF
 
@@ -125,13 +129,13 @@ def meets_target(hash_hex: str, nbits: int) -> bool:
     else:
         target = mantissa << (8 * (exponent - 3))
 
-    hash_int = int(hash_hex, 16)
-    # Hash is little-endian in C++, but hex is big-endian.
-    # Reverse bytes for comparison.
+    # Hash bytes from Keccak are in natural order.
+    # C++ stores them as little-endian uint256 and compares LE.
+    # The hash output from keccak is the same bytes — just interpret as LE int.
     hash_bytes = bytes.fromhex(hash_hex)
-    hash_le = int.from_bytes(hash_bytes, 'big')
+    hash_le_int = int.from_bytes(hash_bytes, 'little')
 
-    return hash_le <= target
+    return hash_le_int <= target
 
 
 # ─── Device Detection ──────────────────────────────────────────
