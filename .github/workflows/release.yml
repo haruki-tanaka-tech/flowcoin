@@ -1,0 +1,146 @@
+name: Build & Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
+
+      - name: Build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          mkdir -p flowcoin-linux-x64
+          cp build/tools/flowcoind flowcoin-linux-x64/
+          cp build/tools/flowcoin-cli flowcoin-linux-x64/
+          cp tools/flowminer.py flowcoin-linux-x64/
+          cp README.md flowcoin-linux-x64/
+          cat > flowcoin-linux-x64/INSTALL.txt << 'EOF'
+          FlowCoin v0.1.0 — Linux x64
+
+          1. Run the node:
+             ./flowcoind
+
+          2. Install PyTorch and mine:
+             pip install torch pycryptodome
+             python3 flowminer.py
+
+          3. Check status:
+             ./flowcoin-cli getblockcount
+             ./flowcoin-cli getbalance
+          EOF
+          tar czf flowcoin-linux-x64.tar.gz flowcoin-linux-x64/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flowcoin-linux-x64
+          path: flowcoin-linux-x64.tar.gz
+
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          mkdir -p flowcoin-macos-arm64
+          cp build/tools/flowcoind flowcoin-macos-arm64/
+          cp build/tools/flowcoin-cli flowcoin-macos-arm64/
+          cp tools/flowminer.py flowcoin-macos-arm64/
+          cp README.md flowcoin-macos-arm64/
+          tar czf flowcoin-macos-arm64.tar.gz flowcoin-macos-arm64/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flowcoin-macos-arm64
+          path: flowcoin-macos-arm64.tar.gz
+
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Package
+        run: |
+          mkdir flowcoin-windows-x64
+          copy build\tools\Release\flowcoind.exe flowcoin-windows-x64\
+          copy build\tools\Release\flowcoin-cli.exe flowcoin-windows-x64\
+          copy tools\flowminer.py flowcoin-windows-x64\
+          copy README.md flowcoin-windows-x64\
+          Compress-Archive -Path flowcoin-windows-x64 -DestinationPath flowcoin-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flowcoin-windows-x64
+          path: flowcoin-windows-x64.zip
+
+  release:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            flowcoin-linux-x64/flowcoin-linux-x64.tar.gz
+            flowcoin-macos-arm64/flowcoin-macos-arm64.tar.gz
+            flowcoin-windows-x64/flowcoin-windows-x64.zip
+          body: |
+            ## FlowCoin v0.1.0 — Proof-of-Training Blockchain
+
+            **Quick Start:**
+            ```bash
+            # Extract and run
+            ./flowcoind
+
+            # Install PyTorch and mine
+            pip install torch pycryptodome
+            python3 flowminer.py
+
+            # Check balance
+            ./flowcoin-cli getbalance
+            ```
+
+            **Requirements:**
+            - Node: no dependencies (static binary)
+            - Miner: Python 3.10+, PyTorch, pycryptodome
+
+            **GPU Support:** CUDA (NVIDIA), ROCm (AMD), MPS (Apple)
