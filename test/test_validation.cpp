@@ -163,16 +163,7 @@ TEST(ValidationTest, Check3_TimeNotAdvancing) {
 
 // ─── Check 4: too soon ──────────────────────────────────────
 
-TEST(ValidationTest, Check4_TooSoon) {
-    ValidBlockFixture f;
-    f.block.header.timestamp = GENESIS_TIMESTAMP + 299; // < 300
-    auto ub = f.block.header.unsigned_bytes();
-    f.block.header.miner_sig = sign(f.miner_kp.privkey, f.miner_kp.pubkey,
-                                    ub.data(), ub.size());
-    auto state = check_block(f.block, f.ctx);
-    EXPECT_FALSE(state.valid);
-    EXPECT_EQ(state.reject_reason, "time-too-soon");
-}
+// MIN_BLOCK_INTERVAL removed — difficulty regulates timing (like Bitcoin)
 
 // ─── Check 5: too far in future ─────────────────────────────
 

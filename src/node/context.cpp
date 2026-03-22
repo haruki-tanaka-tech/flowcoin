@@ -251,15 +251,10 @@ void NodeContext::init(const std::string& data_dir,
             return rpc::json{{"accepted", false}, {"reason", "high-hash"}};
         }
 
-        // Pre-check timestamp before generating address
+        // Pre-check timestamp
         auto* parent = chain->block_tree().find(h.prev_hash);
-        if (parent) {
-            if (h.timestamp <= parent->timestamp) {
-                return rpc::json{{"accepted", false}, {"reason", "time-too-old"}};
-            }
-            if (h.timestamp < parent->timestamp + consensus::MIN_BLOCK_INTERVAL) {
-                return rpc::json{{"accepted", false}, {"reason", "time-too-soon"}};
-            }
+        if (parent && h.timestamp <= parent->timestamp) {
+            return rpc::json{{"accepted", false}, {"reason", "time-too-old"}};
         }
 
         // All pre-checks passed — generate fresh address and sign
