@@ -38,25 +38,58 @@ uint256 arith_uint256::to_uint256() const {
     return r;
 }
 
+// Portable 64x64→128 multiply (no __uint128_t needed)
+static void mul64(uint64_t a, uint64_t b, uint64_t& lo, uint64_t& hi) {
+    uint64_t a_lo = a & 0xFFFFFFFF, a_hi = a >> 32;
+    uint64_t b_lo = b & 0xFFFFFFFF, b_hi = b >> 32;
+    uint64_t p0 = a_lo * b_lo;
+    uint64_t p1 = a_lo * b_hi;
+    uint64_t p2 = a_hi * b_lo;
+    uint64_t p3 = a_hi * b_hi;
+    uint64_t mid = p1 + (p0 >> 32);
+    mid += p2;
+    if (mid < p2) p3 += (uint64_t)1 << 32; // carry
+    lo = (mid << 32) | (p0 & 0xFFFFFFFF);
+    hi = p3 + (mid >> 32);
+}
+
 arith_uint256& arith_uint256::operator*=(uint64_t rhs) {
-    // 256-bit * 64-bit = 320-bit, but we truncate to 256
-    __uint128_t carry = 0;
+    uint64_t carry = 0;
     for (int i = 0; i < 4; ++i) {
-        __uint128_t prod = static_cast<__uint128_t>(d[i]) * rhs + carry;
-        d[i] = static_cast<uint64_t>(prod);
-        carry = prod >> 64;
+        uint64_t lo, hi;
+        mul64(d[i], rhs, lo, hi);
+        lo += carry;
+        if (lo < carry) hi++;
+        d[i] = lo;
+        carry = hi;
     }
-    // carry overflow is lost (target should never be that large)
     return *this;
 }
 
 arith_uint256& arith_uint256::operator/=(uint64_t rhs) {
-    // 256-bit / 64-bit using long division
-    __uint128_t rem = 0;
+    uint64_t rem = 0;
     for (int i = 3; i >= 0; --i) {
-        __uint128_t dividend = (rem << 64) | d[i];
-        d[i] = static_cast<uint64_t>(dividend / rhs);
-        rem = dividend % rhs;
+        // Divide (rem:d[i]) by rhs using 32-bit steps for portability
+        uint64_t hi = rem;
+        uint64_t lo = d[i];
+
+        // Two-step division: divide 128-bit by 64-bit
+        // Split into two 64-bit divisions via shifting
+        if (hi == 0) {
+            d[i] = lo / rhs;
+            rem = lo % rhs;
+        } else {
+            // Full 128/64 division using iteration
+            uint64_t quot = 0;
+            for (int bit = 63; bit >= 0; --bit) {
+                rem = (rem << 1) | ((lo >> bit) & 1);
+                if (rem >= rhs) {
+                    rem -= rhs;
+                    quot |= (uint64_t)1 << bit;
+                }
+            }
+            d[i] = quot;
+        }
     }
     return *this;
 }
