@@ -42,8 +42,13 @@ int main(int argc, char* argv[]) {
     auto& params = flow::consensus::ChainParams::get(network);
 
     if (data_dir.empty()) {
-        auto home = std::filesystem::path(getenv("HOME") ? getenv("HOME") : ".");
-        data_dir = home / ".flowcoin";
+#ifdef _WIN32
+        const char* home_env = getenv("USERPROFILE");
+#else
+        const char* home_env = getenv("HOME");
+#endif
+        auto home = std::filesystem::path(home_env ? home_env : ".");
+        data_dir = (home / ".flowcoin").string();
         if (network != flow::consensus::Network::MAINNET) {
             data_dir += "/" + params.name;
         }
