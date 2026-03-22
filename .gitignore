@@ -15,6 +15,15 @@ compile_commands.json
 .DS_Store
 Thumbs.db
 
+# Keys — NEVER commit private keys
+keys/
+*.key
+wallet_seed
+
+# Python cache
+__pycache__/
+*.pyc
+
 # Binaries
 *.o
 *.a
