@@ -2,7 +2,17 @@
 // Distributed under the MIT software license
 
 #include "keys.h"
+
+#if defined(__linux__)
 #include <sys/random.h>
+#elif defined(__APPLE__)
+#include <Security/SecRandom.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#include <bcrypt.h>
+#else
+#include <cstdio>
+#endif
 
 extern "C" {
 #include <ed25519.h>
@@ -10,14 +20,22 @@ extern "C" {
 
 namespace flow::crypto {
 
+static void secure_random(uint8_t* buf, size_t len) {
+#if defined(__linux__)
+    getrandom(buf, len, 0);
+#elif defined(__APPLE__)
+    SecRandomCopyBytes(kSecRandomDefault, len, buf);
+#elif defined(_WIN32)
+    BCryptGenRandom(NULL, buf, static_cast<ULONG>(len), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+#else
+    FILE* f = fopen("/dev/urandom", "rb");
+    if (f) { fread(buf, 1, len, f); fclose(f); }
+#endif
+}
+
 PrivKey generate_privkey() {
     PrivKey key;
-    // Use Linux getrandom() — blocks until entropy is available
-    ssize_t ret = getrandom(key.bytes(), 32, 0);
-    if (ret != 32) {
-        // getrandom should always succeed for 32 bytes after boot
-        __builtin_trap();
-    }
+    secure_random(key.bytes(), 32);
     return key;
 }
 

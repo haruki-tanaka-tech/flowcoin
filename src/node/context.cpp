@@ -14,7 +14,7 @@
 #include "net/protocol.h"
 
 #include <fstream>
-#include <sys/random.h>
+#include "crypto/keys.h" // for secure_random
 
 #include <spdlog/spdlog.h>
 
@@ -123,9 +123,9 @@ void NodeContext::init(const std::string& data_dir,
                 // Load existing seed
                 std::getline(sf, seed);
             } else {
-                // First run: generate new seed from system random
-                uint8_t seed_bytes[32];
-                getrandom(seed_bytes, 32, 0);
+                // First run: generate new seed using platform CSPRNG
+                auto random_key = crypto::generate_privkey();
+                const uint8_t* seed_bytes = random_key.bytes();
                 for (int i = 0; i < 32; ++i) {
                     char hex[3];
                     snprintf(hex, sizeof(hex), "%02x", seed_bytes[i]);
