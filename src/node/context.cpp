@@ -20,9 +20,13 @@
 
 namespace flow {
 
+// Genesis coinbase message (like Bitcoin's "Chancellor on brink of second bailout for banks")
+static const char* GENESIS_COINBASE_MSG =
+    "White House calls for federal AI law to preempt states "
+    "21/Mar/2026 - FlowCoin: AI that no government controls.";
+
 static CBlock create_genesis_block(const consensus::ChainParams& params) {
-    // Genesis key: derived deterministically from "flowcoin genesis" seed.
-    // This key is publicly known — genesis coinbase is unspendable anyway.
+    // Genesis key: deterministic from fixed seed. Publicly known.
     static const uint8_t genesis_seed[] = "flowcoin genesis key v0.1";
     Hash256 seed_hash = keccak256(genesis_seed, sizeof(genesis_seed) - 1);
     PrivKey genesis_privkey(seed_hash.bytes());
@@ -36,7 +40,7 @@ static CBlock create_genesis_block(const consensus::ChainParams& params) {
     auto& h = genesis.header;
     h.prev_hash = Hash256::ZERO;
     h.height = 0;
-    h.timestamp = consensus::GENESIS_TIMESTAMP;
+    h.timestamp = consensus::GENESIS_TIMESTAMP;  // 21 Mar 2026 00:00:00 UTC
     h.val_loss = consensus::GENESIS_VAL_LOSS;
     h.prev_val_loss = consensus::GENESIS_VAL_LOSS;
     h.nbits = params.initial_nbits;
@@ -47,8 +51,25 @@ static CBlock create_genesis_block(const consensus::ChainParams& params) {
     h.n_heads = consensus::GENESIS_N_HEADS;
     h.rank = consensus::GENESIS_RANK;
 
-    genesis.vtx.push_back(make_coinbase(
-        consensus::get_block_subsidy(0), genesis_pkh, 0));
+    // Coinbase with genesis message
+    CTransaction coinbase_tx;
+    coinbase_tx.version = CTransaction::CURRENT_VERSION;
+
+    CTxIn coinbase_in;
+    coinbase_in.prevout.txid.set_zero();
+    coinbase_in.prevout.vout = 0xFFFFFFFF;
+    // Encode genesis message in the signature field of coinbase input
+    const auto* msg = reinterpret_cast<const uint8_t*>(GENESIS_COINBASE_MSG);
+    size_t msg_len = std::min(strlen(GENESIS_COINBASE_MSG), size_t(64));
+    std::memcpy(coinbase_in.sig.bytes(), msg, msg_len);
+    coinbase_tx.vin.push_back(coinbase_in);
+
+    CTxOut coinbase_out;
+    coinbase_out.amount = consensus::get_block_subsidy(0);
+    coinbase_out.pubkey_hash = genesis_pkh;
+    coinbase_tx.vout.push_back(coinbase_out);
+
+    genesis.vtx.push_back(coinbase_tx);
     h.merkle_root = genesis.compute_merkle_root();
 
     // Sign genesis block
@@ -73,6 +94,17 @@ void NodeContext::init(const std::string& data_dir,
 
     auto genesis = create_genesis_block(*params);
     chain->init_genesis(genesis);
+
+    // Verify genesis block hash matches hardcoded value
+    Hash256 expected_genesis = Hash256::from_hex(consensus::GENESIS_HASH_HEX);
+    Hash256 actual_genesis = genesis.get_hash();
+    if (actual_genesis != expected_genesis) {
+        spdlog::error("Genesis hash mismatch!");
+        spdlog::error("  Expected: {}", expected_genesis.to_hex());
+        spdlog::error("  Got:      {}", actual_genesis.to_hex());
+        throw std::runtime_error("genesis hash mismatch — corrupted binary");
+    }
+    spdlog::info("Genesis: {} (verified)", actual_genesis.to_hex().substr(0, 16));
 
     rpc::register_blockchain_rpcs(*rpc_server, *chain);
     rpc::register_mempool_rpcs(*rpc_server, *mempool);
