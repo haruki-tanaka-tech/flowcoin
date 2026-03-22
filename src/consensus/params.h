@@ -9,6 +9,7 @@
 #include "core/types.h"
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace flow::consensus {
 
@@ -61,6 +62,7 @@ struct ChainParams {
     uint16_t    rpc_port;
     std::string hrp;           // bech32m human-readable prefix
     uint32_t    initial_nbits; // genesis difficulty
+    std::vector<std::string> seed_nodes; // ip:port of bootstrap nodes
 
     static const ChainParams& mainnet();
     static const ChainParams& testnet();

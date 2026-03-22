@@ -7,6 +7,8 @@
 #include "core/hash.h"
 #include "core/time.h"
 
+#include <spdlog/spdlog.h>
+
 namespace flow::mining {
 
 BlockTemplate assemble_block(ChainState& chain,
@@ -21,7 +23,7 @@ BlockTemplate assemble_block(ChainState& chain,
     h.height = tip->height + 1;
     h.timestamp = std::max(get_time(), tip->timestamp + consensus::MIN_BLOCK_INTERVAL);
     h.prev_val_loss = tip->val_loss;
-    h.val_loss = tip->val_loss; // will be updated after real training
+    h.val_loss = tip->val_loss;
     h.nbits = tip->nbits;
     h.train_steps = 0;
 
@@ -35,7 +37,6 @@ BlockTemplate assemble_block(ChainState& chain,
     h.n_heads = dims.n_heads;
     h.rank = dims.rank;
 
-    // Dataset hash (fixed for now)
     h.dataset_hash = Hash256::ZERO;
 
     // Fresh mining address — NEVER reuse
@@ -50,52 +51,85 @@ BlockTemplate assemble_block(ChainState& chain,
 
     h.miner_pubkey = miner_key->keypair.pubkey;
 
-    // Coinbase reward
+    // Coinbase
     Amount subsidy = consensus::get_block_subsidy(h.height);
-
-    // Collect mempool transactions
     auto mempool_txs = mempool.get_sorted(max_txs);
     tmpl.total_fees = Amount{0};
     for (const auto& tx : mempool_txs) {
-        // Fee calculation would require UTXO lookup.
-        // For now, include txs without fee tracking.
         tmpl.block.vtx.push_back(tx);
     }
 
     Amount total_reward = subsidy + tmpl.total_fees;
-
-    // Coinbase tx (first transaction)
     auto coinbase = make_coinbase(total_reward, miner_key->pubkey_hash, h.height);
     tmpl.block.vtx.insert(tmpl.block.vtx.begin(), coinbase);
 
-    // Merkle root
     h.merkle_root = tmpl.block.compute_merkle_root();
 
     return tmpl;
 }
 
-bool try_mine(CBlock& block, uint32_t max_attempts) {
+// ─── Proof-of-Training mining ─────────────────────────────────
+//
+// Each training step modifies model weights → new delta_hash.
+// H = Keccak256(delta_hash || dataset_hash)
+// If H < target → block valid AND model improved.
+// P(valid per step) = target / 2^256 — identical to Bitcoin.
+
+bool mine_with_training(CBlock& block, Trainer& trainer,
+                         const std::vector<int32_t>& training_data,
+                         uint32_t max_steps) {
     auto& h = block.header;
 
-    for (uint32_t i = 0; i < max_attempts; ++i) {
-        // Generate candidate delta_hash
-        uint8_t nonce_data[12];
-        write_le32(nonce_data, i);
-        write_le64(nonce_data + 4, h.height);
-        h.delta_hash = keccak256(nonce_data, sizeof(nonce_data));
+    for (uint32_t step = 0; step < max_steps; ++step) {
+        // Train one step — this modifies the model weights
+        auto result = trainer.train_step(training_data, training_data);
 
-        // H = Keccak256(D || V) per whitepaper §3
+        // Update block header with training results
+        h.val_loss = result.loss_after;
+        h.train_steps = step + 1;
+
+        // Delta hash = hash of weight changes
+        h.delta_hash = keccak256(
+            reinterpret_cast<const uint8_t*>(result.weight_deltas.data()),
+            result.weight_deltas.size());
+
+        // Store delta in block
+        block.delta_payload = result.weight_deltas;
+
+        // Check: H = Keccak256(D || V) < target?
         Keccak256Hasher hasher;
         hasher.update(h.delta_hash.bytes(), 32);
         hasher.update(h.dataset_hash.bytes(), 32);
         Hash256 training_hash = hasher.finalize();
 
         if (consensus::meets_target(training_hash, h.nbits)) {
-            // Update merkle root (delta_hash changed doesn't affect it,
-            // but we need to re-sign since unsigned bytes changed)
-            // Actually delta_hash IS in the unsigned portion, so re-sign:
-            // (miner_pubkey must already be set)
-            // Caller is responsible for signing after try_mine succeeds.
+            spdlog::debug("PoT: valid hash found after {} training steps, "
+                          "loss: {:.4f} → {:.4f}",
+                          step + 1, result.loss_before, result.loss_after);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// ─── Brute-force mining (regtest only) ────────────────────────
+
+bool mine_brute_force(CBlock& block, uint32_t max_attempts) {
+    auto& h = block.header;
+
+    for (uint32_t i = 0; i < max_attempts; ++i) {
+        uint8_t nonce_data[12];
+        write_le32(nonce_data, i);
+        write_le64(nonce_data + 4, h.height);
+        h.delta_hash = keccak256(nonce_data, sizeof(nonce_data));
+
+        Keccak256Hasher hasher;
+        hasher.update(h.delta_hash.bytes(), 32);
+        hasher.update(h.dataset_hash.bytes(), 32);
+        Hash256 training_hash = hasher.finalize();
+
+        if (consensus::meets_target(training_hash, h.nbits)) {
             return true;
         }
     }

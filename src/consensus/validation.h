@@ -8,11 +8,11 @@
 
 #include "core/types.h"
 #include "primitives/block.h"
+#include <functional>
 #include <string>
 
 namespace flow::consensus {
 
-// Validation result with specific rejection reason
 struct ValidationState {
     bool valid{true};
     std::string reject_reason;
@@ -25,7 +25,11 @@ struct ValidationState {
     explicit operator bool() const { return valid; }
 };
 
-// Context about the parent block, needed for contextual checks.
+// Forward eval callback: apply deltas, evaluate, return computed val_loss.
+// If not provided, val_loss verification is skipped (genesis, regtest).
+// Whitepaper §9: "single-threaded, IEEE 754, fixed accumulation order"
+using EvalCallback = std::function<float(const std::vector<uint8_t>& delta_payload)>;
+
 struct BlockContext {
     Hash256  parent_hash;
     uint64_t parent_height{0};
@@ -38,14 +42,16 @@ struct BlockContext {
     uint32_t parent_n_experts{0};
     uint32_t parent_n_heads{0};
     uint32_t parent_rank{0};
-    uint32_t improving_blocks{0}; // total improving blocks up to parent
-    int64_t  current_time{0};     // current node time
+    uint32_t improving_blocks{0};
+    int64_t  current_time{0};
     Hash256  expected_dataset_hash;
+
+    // Optional: forward eval for val_loss verification.
+    // If set, check_block verifies that claimed val_loss matches computed.
+    EvalCallback eval_fn;
 };
 
-// Run all 14 validation checks on a block.
-// Returns ValidationState with reject_reason if any check fails.
-//
+// Run all validation checks on a block.
 //  1. prev_hash == parent.hash
 //  2. height == parent.height + 1
 //  3. timestamp > parent.timestamp
@@ -60,6 +66,7 @@ struct BlockContext {
 // 12. dataset_hash == expected
 // 13. growth fields match compute_growth(parent)
 // 14. ed25519_verify(pubkey, header[0..243], sig)
+// 15. (if eval_fn) computed val_loss == claimed val_loss (bit-identical)
 ValidationState check_block(const CBlock& block, const BlockContext& ctx);
 
 } // namespace flow::consensus

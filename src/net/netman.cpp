@@ -60,15 +60,23 @@ void NetManager::run_loop() {
 
     struct sockaddr_in addr;
     uv_ip4_addr(config_.bind_addr.c_str(), config_.port, &addr);
-    uv_tcp_bind(server_, reinterpret_cast<const struct sockaddr*>(&addr), 0);
 
-    int r = uv_listen(reinterpret_cast<uv_stream_t*>(server_), 128, on_new_connection);
-    if (r) {
-        spdlog::error("P2P listen failed on port {}: {}", config_.port, uv_strerror(r));
-        delete server_;
+    int rb = uv_tcp_bind(server_, reinterpret_cast<const struct sockaddr*>(&addr), 0);
+    if (rb) {
+        spdlog::error("P2P bind failed on port {}: {}", config_.port, uv_strerror(rb));
+        uv_close(reinterpret_cast<uv_handle_t*>(server_), nullptr);
         server_ = nullptr;
-    } else {
-        spdlog::info("P2P listening on {}:{}", config_.bind_addr, config_.port);
+    }
+
+    if (server_) {
+        int r = uv_listen(reinterpret_cast<uv_stream_t*>(server_), 128, on_new_connection);
+        if (r) {
+            spdlog::error("P2P listen failed on port {}: {}", config_.port, uv_strerror(r));
+            uv_close(reinterpret_cast<uv_handle_t*>(server_), nullptr);
+            server_ = nullptr;
+        } else {
+            spdlog::info("P2P listening on {}:{}", config_.bind_addr, config_.port);
+        }
     }
 
     // Connect to seed nodes
@@ -105,6 +113,16 @@ void NetManager::run_loop() {
 void NetManager::on_new_connection(uv_stream_t* server, int status) {
     if (status < 0) return;
     auto* mgr = static_cast<NetManager*>(server->data);
+
+    // Enforce connection limit
+    if (mgr->peer_count() >= static_cast<size_t>(mgr->config_.max_inbound + mgr->config_.max_outbound)) {
+        uv_tcp_t reject;
+        uv_tcp_init(server->loop, &reject);
+        uv_accept(server, reinterpret_cast<uv_stream_t*>(&reject));
+        uv_close(reinterpret_cast<uv_handle_t*>(&reject), nullptr);
+        spdlog::warn("P2P rejected connection: max peers reached ({})", mgr->peer_count());
+        return;
+    }
 
     auto* ctx = new ConnContext;
     ctx->mgr = mgr;

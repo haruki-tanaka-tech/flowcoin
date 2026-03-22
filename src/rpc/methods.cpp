@@ -132,18 +132,19 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet, ChainState& chain) 
 
         // Build transaction
         std::vector<COutPoint> inputs;
+        std::vector<Blob<20>> input_pkhs;
         for (const auto& c : selection.value().selected) {
             inputs.push_back(c.outpoint);
+            input_pkhs.push_back(c.pubkey_hash);
         }
 
         std::vector<CTxOut> outputs;
-        // Destination output
         CTxOut dest_out;
         dest_out.amount = Amount{amount_sat};
         dest_out.pubkey_hash = dest_pkh;
         outputs.push_back(dest_out);
 
-        // Change output (if any)
+        // Change output to a new address (never reuse)
         if (selection.value().change.value > 0) {
             std::string change_addr = wallet.get_new_address();
             auto change_decoded = crypto::decode_address(change_addr);
@@ -154,7 +155,7 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet, ChainState& chain) 
             outputs.push_back(change_out);
         }
 
-        auto tx_result = wallet.create_transaction(inputs, outputs);
+        auto tx_result = wallet.create_transaction(inputs, input_pkhs, outputs);
         if (!tx_result) {
             throw std::runtime_error(tx_result.error_message());
         }

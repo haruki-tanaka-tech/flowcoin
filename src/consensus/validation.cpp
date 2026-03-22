@@ -130,6 +130,23 @@ ValidationState check_block(const CBlock& block, const BlockContext& ctx) {
         }
     }
 
+    // ─── Check 15: forward eval verification ──────────────────
+    // Whitepaper §3, §9: every node independently evaluates the model
+    // after applying deltas. Claimed val_loss must match computed val_loss
+    // as a raw 32-bit integer (bit-identical, no float comparison ambiguity).
+    if (ctx.eval_fn && !block.delta_payload.empty()) {
+        float computed_loss = ctx.eval_fn(block.delta_payload);
+
+        uint32_t claimed_bits, computed_bits;
+        std::memcpy(&claimed_bits, &h.val_loss, 4);
+        std::memcpy(&computed_bits, &computed_loss, 4);
+
+        if (claimed_bits != computed_bits) {
+            state.invalid("bad-eval-loss");
+            return state;
+        }
+    }
+
     return state; // all checks passed
 }
 

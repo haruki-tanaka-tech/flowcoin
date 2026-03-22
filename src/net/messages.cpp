@@ -3,8 +3,10 @@
 
 #include "messages.h"
 #include "core/time.h"
+#include "consensus/params.h"
 
 #include <spdlog/spdlog.h>
+#include <arpa/inet.h>
 
 namespace flow::net {
 
@@ -22,6 +24,8 @@ void MessageHandler::handle(uint64_t peer_id, const std::string& command,
     else if (command == cmd::GETDATA)   handle_getdata(peer_id, payload);
     else if (command == cmd::BLOCK)     handle_block(peer_id, payload);
     else if (command == cmd::TX)        handle_tx(peer_id, payload);
+    else if (command == cmd::ADDR)      handle_addr(peer_id, payload);
+    else if (command == cmd::GETADDR)   handle_getaddr(peer_id);
     else {
         spdlog::debug("P2P unknown command '{}' from peer {}", command, peer_id);
     }
@@ -90,13 +94,15 @@ void MessageHandler::handle_verack(uint64_t peer_id) {
     }
 
     if (their_height > our_height) {
-        // Request blocks — send getblocks with our height
         VectorWriter w;
         w.write_u64(our_height);
         net_.send_to(peer_id, cmd::GETBLOCKS, w.release());
         spdlog::info("P2P requesting blocks from {} (we have {}, they have {})",
             peer_id, our_height, their_height);
     }
+
+    // Request peer addresses for discovery
+    net_.send_to(peer_id, cmd::GETADDR, {});
 }
 
 void MessageHandler::handle_ping(uint64_t peer_id, const std::vector<uint8_t>& payload) {
@@ -220,6 +226,79 @@ void MessageHandler::handle_tx(uint64_t peer_id, const std::vector<uint8_t>& pay
         }
     } catch (const std::exception& e) {
         spdlog::debug("P2P bad tx from peer {}: {}", peer_id, e.what());
+    }
+}
+
+// ─── Peer Discovery: addr/getaddr ─────────────────────────────
+//
+// addr message format: compact_size(count) + count * (ip4:port as 4+2 bytes)
+// getaddr: empty payload, requests peer to send its known addresses.
+// This is how nodes discover each other beyond seed nodes (Bitcoin-style).
+
+void MessageHandler::handle_getaddr(uint64_t peer_id) {
+    auto peers = net_.get_peer_info();
+
+    VectorWriter w;
+    uint64_t count = 0;
+    VectorWriter addrs;
+
+    for (const auto& p : peers) {
+        if (p.id == peer_id) continue; // don't send back their own address
+        if (p.address.empty()) continue;
+
+        // Encode: 4 bytes IP + 2 bytes port
+        struct in_addr ip_addr;
+        if (inet_pton(AF_INET, p.address.c_str(), &ip_addr) == 1) {
+            addrs.write(reinterpret_cast<const uint8_t*>(&ip_addr.s_addr), 4);
+            uint8_t port_buf[2];
+            port_buf[0] = static_cast<uint8_t>(p.port >> 8);
+            port_buf[1] = static_cast<uint8_t>(p.port);
+            addrs.write(port_buf, 2);
+            count++;
+        }
+    }
+
+    if (count > 0) {
+        w.write_compact_size(count);
+        auto addr_data = addrs.release();
+        w.write_bytes(addr_data);
+        net_.send_to(peer_id, cmd::ADDR, w.release());
+        spdlog::debug("P2P sent {} addresses to peer {}", count, peer_id);
+    }
+}
+
+void MessageHandler::handle_addr(uint64_t peer_id, const std::vector<uint8_t>& payload) {
+    if (payload.empty()) return;
+
+    SpanReader reader(payload);
+    uint64_t count = reader.read_compact_size();
+
+    for (uint64_t i = 0; i < count && reader.remaining() >= 6; ++i) {
+        uint8_t ip_bytes[4];
+        reader.read_bytes(ip_bytes, 4);
+        uint8_t port_buf[2];
+        reader.read_bytes(port_buf, 2);
+        uint16_t port = (static_cast<uint16_t>(port_buf[0]) << 8) | port_buf[1];
+
+        char ip_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, ip_bytes, ip_str, sizeof(ip_str));
+
+        std::string addr = ip_str;
+        spdlog::debug("P2P received addr {}:{} from peer {}", addr, port, peer_id);
+
+        // Connect if we don't already have this peer
+        bool already_connected = false;
+        auto peers = net_.get_peer_info();
+        for (const auto& p : peers) {
+            if (p.address == addr && p.port == port) {
+                already_connected = true;
+                break;
+            }
+        }
+
+        if (!already_connected && net_.peer_count() < consensus::MAX_PEERS) {
+            net_.connect_to(addr, port);
+        }
     }
 }
 

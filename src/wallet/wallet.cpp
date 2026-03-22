@@ -224,35 +224,38 @@ std::vector<std::pair<std::string, std::string>> Wallet::dump_keys() const {
 
 Result<CTransaction> Wallet::create_transaction(
         const std::vector<COutPoint>& inputs,
+        const std::vector<Blob<20>>& input_pubkey_hashes,
         const std::vector<CTxOut>& outputs) {
+
+    if (inputs.size() != input_pubkey_hashes.size()) {
+        return Error{"inputs and pubkey_hashes size mismatch"};
+    }
 
     CTransaction tx;
     tx.version = CTransaction::CURRENT_VERSION;
     tx.vout = outputs;
 
-    for (const auto& outpoint : inputs) {
+    // Build inputs and assign correct pubkeys
+    for (size_t i = 0; i < inputs.size(); ++i) {
         CTxIn in;
-        in.prevout = outpoint;
-        tx.vin.push_back(in);
-    }
+        in.prevout = inputs[i];
 
-    // First pass: assign pubkeys
-    for (size_t i = 0; i < tx.vin.size(); ++i) {
-        if (keys_.empty()) {
-            return Error{"no keys in wallet"};
+        const WalletKey* wk = find_key(input_pubkey_hashes[i]);
+        if (!wk) {
+            return Error{"no key for input " + std::to_string(i)};
         }
-        tx.vin[i].pubkey = keys_[0].keypair.pubkey;
+        in.pubkey = wk->keypair.pubkey;
+        tx.vin.push_back(in);
     }
 
     // Compute sighash
     auto sign_data = tx.signing_data();
     Hash256 sighash = keccak256d(sign_data.data(), sign_data.size());
 
-    // Sign each input
+    // Sign each input with the correct key
     for (size_t i = 0; i < tx.vin.size(); ++i) {
-        const auto& wk = keys_[0];
-        tx.vin[i].pubkey = wk.keypair.pubkey;
-        tx.vin[i].sig = crypto::sign(wk.keypair.privkey, wk.keypair.pubkey,
+        const WalletKey* wk = find_key(input_pubkey_hashes[i]);
+        tx.vin[i].sig = crypto::sign(wk->keypair.privkey, wk->keypair.pubkey,
                                       sighash.bytes(), 32);
     }
 

@@ -41,6 +41,8 @@ private:
     void handle_getdata(uint64_t peer_id, const std::vector<uint8_t>& payload);
     void handle_block(uint64_t peer_id, const std::vector<uint8_t>& payload);
     void handle_tx(uint64_t peer_id, const std::vector<uint8_t>& payload);
+    void handle_addr(uint64_t peer_id, const std::vector<uint8_t>& payload);
+    void handle_getaddr(uint64_t peer_id);
 
     // Send version message to initiate handshake
     void send_version(uint64_t peer_id);

@@ -3,6 +3,7 @@
 //
 // Block assembler: builds candidate blocks for mining.
 // Each block gets a new address from the wallet (never reuse).
+// Mining = training the model via ggml, not brute-force hashing.
 
 #pragma once
 
@@ -10,6 +11,7 @@
 #include "chain/chainstate.h"
 #include "mempool/mempool.h"
 #include "wallet/wallet.h"
+#include "trainer.h"
 #include "consensus/params.h"
 #include "consensus/reward.h"
 #include "consensus/growth.h"
@@ -24,16 +26,20 @@ struct BlockTemplate {
 };
 
 // Build a candidate block template on top of the current chain tip.
-// Uses wallet.get_mining_address() for a fresh coinbase address.
-// Includes top-fee transactions from mempool.
 BlockTemplate assemble_block(ChainState& chain,
                               Mempool& mempool,
                               Wallet& wallet,
                               size_t max_txs = 1000);
 
-// Attempt to mine (find valid delta_hash) for a block template.
-// For v0.1: brute-force search without real ggml training.
-// Returns true if a valid hash was found within max_attempts.
-bool try_mine(CBlock& block, uint32_t max_attempts = 1'000'000);
+// Mine a block using real training (Proof-of-Training).
+// Each training step produces a new delta_hash. If H = Keccak256(D||V) < target,
+// the block is valid. Training improves the model AND searches for valid hash.
+// Returns true if a valid block was produced within max_steps.
+bool mine_with_training(CBlock& block, Trainer& trainer,
+                         const std::vector<int32_t>& training_data,
+                         uint32_t max_steps = 10'000);
+
+// Fallback: brute-force nonce search (no real training, for regtest only).
+bool mine_brute_force(CBlock& block, uint32_t max_attempts = 1'000'000);
 
 } // namespace flow::mining

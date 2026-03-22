@@ -129,6 +129,10 @@ consensus::ValidationState ChainState::accept_block(const CBlock& block) {
     auto block_data = block.serialize();
     store_->write_block(block_data);
     block_cache_[inserted->hash.to_hex()] = block_data;
+    // Keep cache bounded to last 1000 blocks
+    while (block_cache_.size() > 1000) {
+        block_cache_.erase(block_cache_.begin());
+    }
     inserted->add_status(BlockStatus::DATA_STORED);
 
     // Persist block index to chain.db

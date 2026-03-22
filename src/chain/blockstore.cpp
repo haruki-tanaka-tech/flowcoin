@@ -60,6 +60,11 @@ BlockPos BlockStore::write_block(const std::vector<uint8_t>& block_data) {
     write_le32(size_buf, pos.size);
     out.write(reinterpret_cast<const char*>(size_buf), 4);
     out.write(reinterpret_cast<const char*>(block_data.data()), block_data.size());
+    out.flush();
+
+    if (!out.good()) {
+        throw std::runtime_error("BlockStore: write failed (disk full?) " + path);
+    }
 
     current_offset_ += 4 + block_data.size();
     return pos;

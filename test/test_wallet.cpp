@@ -98,7 +98,8 @@ TEST_F(WalletTest, CreateTransaction) {
     output.amount = Amount{100};
     output.pubkey_hash[0] = 0x42;
 
-    auto result = w.create_transaction({input}, {output});
+    auto keys = w.get_all_keys();
+    auto result = w.create_transaction({input}, {keys[0].pubkey_hash}, {output});
     ASSERT_TRUE(result.ok()) << result.error_message();
 
     auto& tx = result.value();

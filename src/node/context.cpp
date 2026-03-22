@@ -5,6 +5,8 @@
 #include "consensus/reward.h"
 #include "primitives/block.h"
 #include "primitives/transaction.h"
+#include "crypto/keys.h"
+#include "crypto/sign.h"
 #include "core/hash.h"
 
 #include <spdlog/spdlog.h>
@@ -12,6 +14,17 @@
 namespace flow {
 
 static CBlock create_genesis_block(const consensus::ChainParams& params) {
+    // Genesis key: derived deterministically from "flowcoin genesis" seed.
+    // This key is publicly known — genesis coinbase is unspendable anyway.
+    static const uint8_t genesis_seed[] = "flowcoin genesis key v0.1";
+    Hash256 seed_hash = keccak256(genesis_seed, sizeof(genesis_seed) - 1);
+    PrivKey genesis_privkey(seed_hash.bytes());
+    PubKey genesis_pubkey = crypto::derive_pubkey(genesis_privkey);
+
+    Hash256 pk_hash = keccak256d(genesis_pubkey.bytes(), 32);
+    Blob<20> genesis_pkh;
+    std::memcpy(genesis_pkh.bytes(), pk_hash.bytes(), 20);
+
     CBlock genesis;
     auto& h = genesis.header;
     h.prev_hash = Hash256::ZERO;
@@ -27,10 +40,14 @@ static CBlock create_genesis_block(const consensus::ChainParams& params) {
     h.n_heads = consensus::GENESIS_N_HEADS;
     h.rank = consensus::GENESIS_RANK;
 
-    Blob<20> genesis_hash;
     genesis.vtx.push_back(make_coinbase(
-        consensus::get_block_subsidy(0), genesis_hash, 0));
+        consensus::get_block_subsidy(0), genesis_pkh, 0));
     h.merkle_root = genesis.compute_merkle_root();
+
+    // Sign genesis block
+    h.miner_pubkey = genesis_pubkey;
+    auto ub = h.unsigned_bytes();
+    h.miner_sig = crypto::sign(genesis_privkey, genesis_pubkey, ub.data(), ub.size());
 
     return genesis;
 }
@@ -115,6 +132,11 @@ void NodeContext::start_p2p(const net::NetConfig& config) {
     net::NetConfig cfg = config;
     if (cfg.port == consensus::MAINNET_PORT && params->network != consensus::Network::MAINNET) {
         cfg.port = params->p2p_port;
+    }
+
+    // Add hardcoded seed nodes from ChainParams (unless user provided their own)
+    if (cfg.seed_nodes.empty()) {
+        cfg.seed_nodes = params->seed_nodes;
     }
 
     net_manager = std::make_unique<net::NetManager>(cfg);

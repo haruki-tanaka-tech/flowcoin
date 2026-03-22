@@ -2,10 +2,12 @@
 // Distributed under the MIT software license
 //
 // FlowCoin miner — mines blocks using Proof-of-Training.
-// Usage: flowminer [-regtest] [-datadir DIR] [-wallet SEED] [-addnode ip:port]
+// mainnet/testnet: real SGD training via ggml (each step = one "nonce attempt")
+// regtest: brute-force nonce for instant blocks (testing only)
 
 #include "node/context.h"
 #include "mining/assembler.h"
+#include "mining/trainer.h"
 #include "crypto/sign.h"
 #include "core/time.h"
 #include "net/protocol.h"
@@ -42,6 +44,7 @@ int main(int argc, char* argv[]) {
     }
 
     auto& params = flow::consensus::ChainParams::get(network);
+    bool is_regtest = (network == flow::consensus::Network::REGTEST);
 
     if (data_dir.empty()) {
         auto home = std::filesystem::path(getenv("HOME") ? getenv("HOME") : ".");
@@ -56,14 +59,29 @@ int main(int argc, char* argv[]) {
     flow::NodeContext node;
     node.init(data_dir, network, seed_hex);
 
-    // Start RPC + P2P
     node.start_rpc("127.0.0.1", rpc_port);
-
     if (enable_p2p) {
         flow::net::NetConfig p2p_config;
         p2p_config.port = (p2p_port != 0) ? p2p_port : params.p2p_port;
         p2p_config.seed_nodes = seed_nodes;
         node.start_p2p(p2p_config);
+    }
+
+    // Initialize trainer for real PoT mining (not used in regtest)
+    std::unique_ptr<flow::mining::Trainer> trainer;
+    std::vector<int32_t> training_data;
+    if (!is_regtest) {
+        uint32_t d_model = flow::consensus::GENESIS_D_MODEL;
+        uint32_t d_ff = flow::consensus::GENESIS_D_FF;
+        uint32_t vocab = 256; // byte-level for v0.1
+        trainer = std::make_unique<flow::mining::Trainer>(d_model, d_ff, vocab);
+
+        // Training data: simple repeating pattern for v0.1
+        // Production: miners provide their own training data
+        for (int i = 0; i < 128; ++i) {
+            training_data.push_back(i % vocab);
+        }
+        spdlog::info("Trainer initialized: d_model={}, d_ff={}, vocab={}", d_model, d_ff, vocab);
     }
 
     spdlog::info("Chain height: {}, Wallet keys: {}",
@@ -75,7 +93,6 @@ int main(int argc, char* argv[]) {
     uint64_t blocks_mined = 0;
 
     while (!g_shutdown.load()) {
-        // Brief yield to let RPC/P2P threads process
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
         auto tmpl = flow::mining::assemble_block(*node.chain, *node.mempool, *node.wallet);
@@ -83,12 +100,19 @@ int main(int argc, char* argv[]) {
         spdlog::info("Mining block {} to {}...",
             tmpl.block.header.height, tmpl.miner_address);
 
-        if (!flow::mining::try_mine(tmpl.block)) {
+        bool mined = false;
+        if (is_regtest) {
+            mined = flow::mining::mine_brute_force(tmpl.block);
+        } else {
+            mined = flow::mining::mine_with_training(tmpl.block, *trainer, training_data);
+        }
+
+        if (!mined) {
             spdlog::warn("Failed to mine block {}", tmpl.block.header.height);
             continue;
         }
 
-        // Sign
+        // Sign the block
         const auto* miner_key = node.wallet->find_key(
             [&]() {
                 flow::Blob<20> pkh;
@@ -109,12 +133,13 @@ int main(int argc, char* argv[]) {
             blocks_mined++;
             node.mempool->remove_for_block(tmpl.block.vtx);
 
-            spdlog::info("Block {} mined! Hash: {} (total: {})",
+            spdlog::info("Block {} mined! Hash: {} loss: {:.4f} steps: {} (total: {})",
                 tmpl.block.header.height,
                 tmpl.block.get_hash().to_hex().substr(0, 16),
+                tmpl.block.header.val_loss,
+                tmpl.block.header.train_steps,
                 blocks_mined);
 
-            // Broadcast to peers
             if (node.net_manager && node.net_manager->peer_count() > 0) {
                 flow::VectorWriter inv_msg;
                 inv_msg.write_compact_size(1);
@@ -122,7 +147,6 @@ int main(int argc, char* argv[]) {
                 auto hash = tmpl.block.get_hash();
                 inv_msg.write_bytes(std::span<const uint8_t>(hash.bytes(), 32));
                 node.net_manager->broadcast(flow::net::cmd::INV, inv_msg.release());
-                spdlog::info("Broadcast to {} peers", node.net_manager->peer_count());
             }
         } else {
             spdlog::error("Block rejected: {}", state.reject_reason);

@@ -58,8 +58,10 @@ public:
     const WalletKey* find_key(const Blob<20>& pubkey_hash) const;
 
     // Build and sign a transaction.
+    // input_pubkey_hashes: parallel to inputs — which key owns each input.
     Result<CTransaction> create_transaction(
         const std::vector<COutPoint>& inputs,
+        const std::vector<Blob<20>>& input_pubkey_hashes,
         const std::vector<CTxOut>& outputs);
 
     // Import a private key (adds to wallet, derives pubkey + address).
