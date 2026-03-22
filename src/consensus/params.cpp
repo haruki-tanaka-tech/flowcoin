@@ -13,7 +13,7 @@ const ChainParams& ChainParams::mainnet() {
         .p2p_port      = 9333,
         .rpc_port      = 9334,
         .hrp           = "fl",
-        .initial_nbits = 0x1e0fffff,
+        .initial_nbits = 0x1f2d82d8,  // ~10 min per block with single GPU miner
         .seed_nodes    = {
             "seed.flowcoin.org:9333",
         },
