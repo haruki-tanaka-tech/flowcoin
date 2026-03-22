@@ -224,12 +224,6 @@ def mine(args):
         nbits = tmpl['nbits']
         prev_val_loss = tmpl['prev_val_loss']
 
-        # Get a fresh mining address from wallet
-        miner_addr = rpc_call(args.rpchost, args.rpcport, 'getnewaddress')
-        if miner_addr is None:
-            print('Wallet not loaded. Start flowcoind with -wallet <seed>')
-            sys.exit(1)
-
         # Save initial state for delta computation
         initial_state = {k: v.clone().cpu() for k, v in model.state_dict().items()}
 

@@ -2,6 +2,7 @@
 // Distributed under the MIT software license
 
 #include "context.h"
+#include "consensus/difficulty.h"
 #include "consensus/growth.h"
 #include "consensus/reward.h"
 #include "primitives/block.h"
@@ -204,7 +205,29 @@ void NodeContext::init(const std::string& data_dir,
         h.rank = b.value("rank", uint32_t(0));
         h.stagnation_count = b.value("stagnation_count", uint32_t(0));
 
-        // Get fresh mining address from wallet (new address per block)
+        // Quick check: does training_hash meet difficulty target?
+        // H = Keccak256(delta_hash || dataset_hash)
+        Keccak256Hasher hasher;
+        hasher.update(h.delta_hash.bytes(), 32);
+        hasher.update(h.dataset_hash.bytes(), 32);
+        Hash256 training_hash = hasher.finalize();
+
+        if (!consensus::meets_target(training_hash, h.nbits)) {
+            return rpc::json{{"accepted", false}, {"reason", "high-hash"}};
+        }
+
+        // Pre-check timestamp before generating address
+        auto* parent = chain->block_tree().find(h.prev_hash);
+        if (parent) {
+            if (h.timestamp <= parent->timestamp) {
+                return rpc::json{{"accepted", false}, {"reason", "time-too-old"}};
+            }
+            if (h.timestamp < parent->timestamp + consensus::MIN_BLOCK_INTERVAL) {
+                return rpc::json{{"accepted", false}, {"reason", "time-too-soon"}};
+            }
+        }
+
+        // All pre-checks passed — generate fresh address and sign
         std::string addr = wallet->get_mining_address();
         auto keys = wallet->get_all_keys();
         const WalletKey* miner_key = nullptr;
@@ -215,15 +238,13 @@ void NodeContext::init(const std::string& data_dir,
             throw std::runtime_error("failed to get mining key");
         }
 
-        // Set miner pubkey
         h.miner_pubkey = miner_key->keypair.pubkey;
 
-        // Coinbase to miner's address
         auto reward = consensus::get_block_subsidy(h.height);
         block.vtx.push_back(make_coinbase(reward, miner_key->pubkey_hash, h.height));
         h.merkle_root = block.compute_merkle_root();
 
-        // Sign the block
+        // Sign
         auto ub = h.unsigned_bytes();
         h.miner_sig = crypto::sign(miner_key->keypair.privkey, miner_key->keypair.pubkey,
                                     ub.data(), ub.size());
