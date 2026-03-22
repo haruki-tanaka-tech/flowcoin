@@ -35,15 +35,24 @@ static std::string http_post(const std::string& host, uint16_t port,
     inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
 
     if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+#ifdef _WIN32
+        closesocket(sock);
+#else
         close(sock);
+#endif
         return "";
     }
 
     // Set receive timeout (2 seconds)
+#ifdef _WIN32
+    DWORD timeout_ms = 2000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms));
+#else
     struct timeval tv;
     tv.tv_sec = 2;
     tv.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
 
     std::string request =
         "POST / HTTP/1.1\r\n"

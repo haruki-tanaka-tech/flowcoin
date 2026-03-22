@@ -6,6 +6,9 @@ target_link_libraries(flowcoind PRIVATE flow_node spdlog::spdlog)
 
 add_executable(flowcoin-cli flowcoin-cli.cpp)
 target_link_libraries(flowcoin-cli PRIVATE nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_link_libraries(flowcoin-cli PRIVATE ws2_32)
+endif()
 
 # flowminer is Python: tools/flowminer.py
 # Requires: pip install torch
