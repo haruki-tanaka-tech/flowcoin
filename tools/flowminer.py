@@ -211,6 +211,10 @@ def mine(args):
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
+    last_height = 0
+    stale_count = 0
+    last_loss = 999.0
+
     while running:
         # Get block template from node
         tmpl = rpc_call(args.rpchost, args.rpcport, 'getblocktemplate')
@@ -223,6 +227,16 @@ def mine(args):
         prev_hash = tmpl['prev_hash']
         nbits = tmpl['nbits']
         prev_val_loss = tmpl['prev_val_loss']
+
+        # Reset model when new block found (by us or anyone)
+        if target_height != last_height:
+            last_height = target_height
+            stale_count = 0
+            last_loss = 999.0
+            model = FlowModel(args.vocab, args.d_model, args.d_ff).to(device)
+            optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+            if target_height > 1:
+                print(f'  → New block detected, model reset for block {target_height}')
 
         # Save initial state for delta computation
         initial_state = {k: v.clone().cpu() for k, v in model.state_dict().items()}
@@ -306,6 +320,19 @@ def mine(args):
             else:
                 reason = result.get('reason', 'unknown') if result else 'rpc error'
                 print(f'  Block rejected: {reason}')
+
+        # Detect stale model (loss not improving → delta_hash repeats)
+        if abs(loss_after - last_loss) < 0.001:
+            stale_count += 1
+        else:
+            stale_count = 0
+        last_loss = loss_after
+
+        if stale_count >= 10:
+            model = FlowModel(args.vocab, args.d_model, args.d_ff).to(device)
+            optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+            stale_count = 0
+            print('  → Model converged, resetting for fresh deltas')
 
         # Save model checkpoint
         torch.save(model.state_dict(), model_path)
