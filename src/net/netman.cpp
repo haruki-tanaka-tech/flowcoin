@@ -6,8 +6,9 @@
 
 #include <uv.h>
 #include <spdlog/spdlog.h>
-#include <netdb.h>
 #include <arpa/inet.h>
+#include <netdb.h>
+#include <set>
 
 #include <cstring>
 
@@ -81,12 +82,33 @@ void NetManager::run_loop() {
         }
     }
 
-    // Connect to seed nodes
-    for (const auto& seed : config_.seed_nodes) {
-        auto colon = seed.find(':');
-        if (colon != std::string::npos) {
+    // Connect to seed nodes — resolve all first, deduplicate by IP
+    {
+        std::set<std::string> seen_ips;
+        for (const auto& seed : config_.seed_nodes) {
+            auto colon = seed.find(':');
+            if (colon == std::string::npos) continue;
             std::string host = seed.substr(0, colon);
             uint16_t port = static_cast<uint16_t>(std::stoi(seed.substr(colon + 1)));
+
+            // Resolve to IP
+            std::string ip = host;
+            struct addrinfo hints{}, *res = nullptr;
+            hints.ai_family = AF_INET;
+            if (getaddrinfo(host.c_str(), nullptr, &hints, &res) == 0 && res) {
+                char buf[INET_ADDRSTRLEN];
+                auto* sa = reinterpret_cast<struct sockaddr_in*>(res->ai_addr);
+                inet_ntop(AF_INET, &sa->sin_addr, buf, sizeof(buf));
+                ip = buf;
+                freeaddrinfo(res);
+            }
+
+            std::string key = ip + ":" + std::to_string(port);
+            if (seen_ips.count(key)) {
+                spdlog::debug("P2P skipping duplicate seed {} (resolves to {})", seed, ip);
+                continue;
+            }
+            seen_ips.insert(key);
             connect_to(host, port);
         }
     }
