@@ -46,7 +46,5 @@ add_executable(test_net test_net.cpp)
 target_link_libraries(test_net PRIVATE flow_net GTest::gtest_main)
 add_test(NAME test_net COMMAND test_net)
 
-# Phase 7 — ggml training
-add_executable(test_trainer test_trainer.cpp)
-target_link_libraries(test_trainer PRIVATE flow_mining GTest::gtest_main)
-add_test(NAME test_trainer COMMAND test_trainer)
+# Mining: flowminer.py (Python + PyTorch)
+# No C++ trainer tests — training is done via PyTorch

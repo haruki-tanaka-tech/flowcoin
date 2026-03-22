@@ -63,8 +63,7 @@ public:
     CBlockIndex* find(const Hash256& hash);
     const CBlockIndex* find(const Hash256& hash) const;
 
-    // Get the tip with the most work (lowest cumulative val_loss).
-    // For now, longest chain wins (highest height).
+    // Get the tip with the most work (highest height).
     const CBlockIndex* get_best_tip() const;
 
     // Get the chain from genesis to a given tip as a vector of pointers.

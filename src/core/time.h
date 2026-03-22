@@ -3,9 +3,9 @@
 
 #pragma once
 
-#include <cstdint>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 
 namespace flow {
 

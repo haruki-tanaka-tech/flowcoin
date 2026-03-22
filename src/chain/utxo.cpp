@@ -2,6 +2,8 @@
 // Distributed under the MIT software license
 
 #include "utxo.h"
+
+#include <cstring>
 #include <sqlite3.h>
 #include <stdexcept>
 
@@ -195,8 +197,6 @@ std::vector<UtxoSet::OwnedUtxo> UtxoSet::find_by_pubkey_hashes(
         const std::vector<Blob<20>>& pubkey_hashes) const {
     std::vector<OwnedUtxo> result;
 
-    // Query all UTXOs and filter by pubkey_hash
-    // For large UTXO sets, an index on pubkey_hash would be better.
     sqlite3_stmt* stmt;
     sqlite3_prepare_v2(db_,
         "SELECT txid, vout, amount, pubkey_hash, height FROM utxos;",

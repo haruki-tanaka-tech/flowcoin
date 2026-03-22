@@ -92,7 +92,7 @@ struct CBlockHeader {
 struct CBlock {
     CBlockHeader header;
     std::vector<CTransaction> vtx;
-    std::vector<uint8_t> delta_payload; // raw delta bytes (Phase 2)
+    std::vector<uint8_t> delta_payload;
 
     // Serialize entire block: header + compact_size(tx_count) + txs + delta
     std::vector<uint8_t> serialize() const;

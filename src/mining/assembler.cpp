@@ -7,8 +7,6 @@
 #include "core/hash.h"
 #include "core/time.h"
 
-#include <spdlog/spdlog.h>
-
 namespace flow::mining {
 
 BlockTemplate assemble_block(ChainState& chain,
@@ -68,52 +66,8 @@ BlockTemplate assemble_block(ChainState& chain,
     return tmpl;
 }
 
-// ─── Proof-of-Training mining ─────────────────────────────────
-//
-// Each training step modifies model weights → new delta_hash.
-// H = Keccak256(delta_hash || dataset_hash)
-// If H < target → block valid AND model improved.
-// P(valid per step) = target / 2^256 — identical to Bitcoin.
-
-bool mine_with_training(CBlock& block, Trainer& trainer,
-                         const std::vector<int32_t>& training_data,
-                         uint32_t max_steps) {
-    auto& h = block.header;
-
-    for (uint32_t step = 0; step < max_steps; ++step) {
-        // Train one step — this modifies the model weights
-        auto result = trainer.train_step(training_data, training_data);
-
-        // Update block header with training results
-        h.val_loss = result.loss_after;
-        h.train_steps = step + 1;
-
-        // Delta hash = hash of weight changes
-        h.delta_hash = keccak256(
-            reinterpret_cast<const uint8_t*>(result.weight_deltas.data()),
-            result.weight_deltas.size());
-
-        // Store delta in block
-        block.delta_payload = result.weight_deltas;
-
-        // Check: H = Keccak256(D || V) < target?
-        Keccak256Hasher hasher;
-        hasher.update(h.delta_hash.bytes(), 32);
-        hasher.update(h.dataset_hash.bytes(), 32);
-        Hash256 training_hash = hasher.finalize();
-
-        if (consensus::meets_target(training_hash, h.nbits)) {
-            spdlog::debug("PoT: valid hash found after {} training steps, "
-                          "loss: {:.4f} → {:.4f}",
-                          step + 1, result.loss_before, result.loss_after);
-            return true;
-        }
-    }
-
-    return false;
-}
-
 // ─── Brute-force mining (regtest only) ────────────────────────
+// Real mining is done by flowminer.py (Python + PyTorch GPU)
 
 bool mine_brute_force(CBlock& block, uint32_t max_attempts) {
     auto& h = block.header;

@@ -12,13 +12,12 @@ add_subdirectory(xkcp)
 # SQLite embedded database (public domain)
 add_subdirectory(sqlite)
 
-# llama.cpp + ggml (MIT) — tensor ops for Proof-of-Training
-set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
-set(GGML_CUDA OFF CACHE BOOL "" FORCE)
-set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
-set(GGML_METAL OFF CACHE BOOL "" FORCE)
-set(GGML_SYCL OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-add_subdirectory(llama.cpp)
+# llama.cpp + ggml (MIT) — for model inference (not training)
+# Training uses PyTorch via flowminer.py
+# Inference uses ggml/llama.cpp for on-device model execution
+# Uncomment when inference integration is ready:
+# set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+# set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+# set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+# set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+# add_subdirectory(llama.cpp)

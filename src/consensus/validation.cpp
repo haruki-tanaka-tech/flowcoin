@@ -98,8 +98,8 @@ ValidationState check_block(const CBlock& block, const BlockContext& ctx) {
 
     // ─── Check 11: nbits == expected difficulty ──────────────
     if (h.nbits != ctx.parent_nbits) {
-        // Simplified: at retarget boundaries, caller provides expected nbits
-        // For non-retarget blocks, nbits must match parent
+        // At retarget boundaries, caller provides expected nbits.
+        // For non-retarget blocks, nbits must match parent.
         state.invalid("bad-diffbits");
         return state;
     }

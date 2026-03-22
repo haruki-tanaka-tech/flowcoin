@@ -6,8 +6,8 @@
 
 #pragma once
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 
 namespace flow::crypto {
