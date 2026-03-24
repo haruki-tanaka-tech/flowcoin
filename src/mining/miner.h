@@ -26,8 +26,11 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
+#include <iomanip>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -207,6 +210,90 @@ private:
 
     /// Emit training step progress through the callback.
     void emit_train_step(uint32_t step, float loss);
+
+public:
+    /// Mine with session and reward tracking.
+    SubmitResult mine_cycle_with_session(MiningSession& session, RewardTracker& tracker);
+
+    /// Train using a learning rate schedule.
+    TrainingResult train_with_schedule(const BlockTemplate& tmpl,
+                                        const TrainingConfig& schedule);
+
+    /// Detect available hardware (CPU, RAM).
+    static std::string detect_hardware();
+
+    /// Estimate mining difficulty and expected block time.
+    std::string estimate_mining_difficulty() const;
+};
+
+// ---------------------------------------------------------------------------
+// MiningSession -- per-session statistics with detailed tracking
+// ---------------------------------------------------------------------------
+
+struct MiningSession {
+    int64_t start_time;
+    uint64_t blocks_found;
+    uint64_t total_steps;
+    uint64_t total_hash_checks;
+    double avg_steps_per_block;
+    double avg_time_per_block;
+    double current_hashrate;
+    float best_val_loss;
+    float current_val_loss;
+
+    MiningSession();
+    std::string format_stats() const;
+    void record_block(uint32_t steps, uint64_t hash_checks,
+                      float val_loss, double block_time);
+};
+
+// ---------------------------------------------------------------------------
+// TrainingConfig -- learning rate schedule with cosine annealing + warmup
+// ---------------------------------------------------------------------------
+
+struct TrainingConfig {
+    float initial_lr = 0.001f;
+    float min_lr = 0.0001f;
+    float warmup_ratio = 0.05f;
+    float weight_decay = 0.01f;
+    int gradient_clip = 1;
+    int steps_per_hash_check = 100;
+    int log_interval = 10;
+
+    float get_lr(int step, int total_steps) const;
+    float get_weight_decay_factor(int step, int total_steps) const;
+    int get_gradient_clip_norm() const;
+    bool should_log(int step) const;
+    bool should_check_hash(int step) const;
+    std::string describe() const;
+};
+
+// ---------------------------------------------------------------------------
+// RewardHistory / RewardTracker -- track mining rewards over time
+// ---------------------------------------------------------------------------
+
+struct RewardHistory {
+    uint64_t height;
+    Amount reward;
+    Amount fees;
+    Amount total;
+    int64_t timestamp;
+    float val_loss;
+    uint32_t train_steps;
+};
+
+class RewardTracker {
+public:
+    void record(const RewardHistory& entry);
+    Amount total_earned() const;
+    Amount total_fees_earned() const;
+    double avg_reward_per_hour() const;
+    double avg_reward_per_block() const;
+    std::vector<RewardHistory> get_history(int limit = 100) const;
+    std::string format_summary() const;
+
+private:
+    std::deque<RewardHistory> history_;
 };
 
 // ---------------------------------------------------------------------------

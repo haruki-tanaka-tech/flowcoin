@@ -5,14 +5,18 @@
 #include "logging.h"
 #include "version.h"
 #include "consensus/params.h"
+#include "consensus/validation.h"
 
 #include "chain/chainstate.h"
+#include "chain/utxo.h"
+#include "hash/keccak.h"
 #include "wallet/wallet.h"
 #include "net/net.h"
 #include "rpc/server.h"
 #include "mempool/mempool.h"
 #include "consensus/eval.h"
 #include "net/sync.h"
+#include "primitives/block.h"
 
 #include <uv.h>
 
@@ -1562,6 +1566,692 @@ void ShutdownState::reset() {
 ShutdownState& get_shutdown_state() {
     static ShutdownState instance;
     return instance;
+}
+
+// ============================================================================
+// NodeHealth — comprehensive health status
+// ============================================================================
+
+struct NodeHealth {
+    // Memory
+    size_t rss_bytes;
+    size_t peak_rss_bytes;
+    size_t utxo_cache_bytes;
+    size_t mempool_bytes;
+    size_t model_bytes;
+
+    // Disk
+    size_t blocks_disk_bytes;
+    size_t chainstate_disk_bytes;
+    size_t model_disk_bytes;
+    size_t available_disk_bytes;
+
+    // Network
+    int outbound_peers;
+    int inbound_peers;
+    int64_t bytes_sent;
+    int64_t bytes_received;
+    double avg_ping_ms;
+
+    // Chain
+    uint64_t height;
+    uint64_t headers_height;
+    double sync_progress;
+    int64_t time_since_last_block;
+
+    // Model
+    size_t model_params;
+    float last_val_loss;
+    uint256 model_hash;
+
+    // Warnings
+    std::vector<std::string> warnings;
+    bool is_healthy;
+};
+
+NodeHealth NodeContext::get_node_health() const {
+    NodeHealth health;
+
+    // Memory stats
+    health.rss_bytes = static_cast<size_t>(get_rss_mb()) * 1024 * 1024;
+    health.peak_rss_bytes = 0;
+    health.utxo_cache_bytes = 0;
+    health.mempool_bytes = 0;
+    health.model_bytes = 0;
+
+    // Read peak RSS from /proc/self/status
+    {
+        std::ifstream status_file("/proc/self/status");
+        if (status_file.is_open()) {
+            std::string line;
+            while (std::getline(status_file, line)) {
+                if (line.compare(0, 11, "VmHWM:") == 0) {
+                    // VmHWM is peak RSS
+                    std::string trimmed = line.substr(6);
+                    // Skip whitespace
+                    size_t start = trimmed.find_first_not_of(" \t");
+                    if (start != std::string::npos) {
+                        std::istringstream iss(trimmed.substr(start));
+                        int64_t kb;
+                        iss >> kb;
+                        health.peak_rss_bytes = static_cast<size_t>(kb) * 1024;
+                    }
+                }
+            }
+        }
+    }
+
+    // UTXO cache and mempool memory
+    if (chain) {
+        health.utxo_cache_bytes = chain->utxo_set().memory_usage();
+    }
+    if (mempool) {
+        health.mempool_bytes = mempool->bytes();
+    }
+
+    // Model memory
+    if (eval_engine) {
+        health.model_bytes = eval_engine->param_count() * sizeof(float);
+    }
+
+    // Disk stats
+    health.blocks_disk_bytes = 0;
+    health.chainstate_disk_bytes = 0;
+    health.model_disk_bytes = 0;
+    health.available_disk_bytes = 0;
+
+    // Compute block store disk usage
+    if (chain) {
+        health.blocks_disk_bytes = chain->block_store().get_disk_usage();
+    }
+
+    // Compute model directory size
+    try {
+        std::string mdir = model_dir();
+        if (std::filesystem::exists(mdir)) {
+            for (const auto& entry : std::filesystem::directory_iterator(mdir)) {
+                if (entry.is_regular_file()) {
+                    health.model_disk_bytes += entry.file_size();
+                }
+            }
+        }
+    } catch (...) {}
+
+    // Available disk space
+    try {
+        auto info = std::filesystem::space(datadir);
+        health.available_disk_bytes = info.available;
+    } catch (...) {}
+
+    // Network stats
+    health.outbound_peers = 0;
+    health.inbound_peers = 0;
+    health.bytes_sent = static_cast<int64_t>(perf.bytes_sent.load());
+    health.bytes_received = static_cast<int64_t>(perf.bytes_recv.load());
+    health.avg_ping_ms = 0.0;
+
+    if (net) {
+        health.outbound_peers = static_cast<int>(net->outbound_count());
+        health.inbound_peers = static_cast<int>(net->inbound_count());
+        health.avg_ping_ms = net->avg_ping_ms();
+    }
+
+    // Chain stats
+    health.height = chain_height();
+    health.headers_height = health.height;  // TODO: track headers-only tip separately
+    health.sync_progress = 1.0;
+    health.time_since_last_block = 0;
+
+    if (chain && chain->tip()) {
+        int64_t tip_time = chain->tip()->timestamp;
+        int64_t now = static_cast<int64_t>(std::time(nullptr));
+        health.time_since_last_block = now - tip_time;
+
+        // Estimate sync progress based on tip timestamp vs current time
+        // If tip is within 2 hours of now, we consider ourselves synced
+        if (health.time_since_last_block > 7200) {
+            // Estimate progress: tip_time / now
+            health.sync_progress = static_cast<double>(tip_time) /
+                                   static_cast<double>(now);
+            if (health.sync_progress < 0.0) health.sync_progress = 0.0;
+            if (health.sync_progress > 1.0) health.sync_progress = 1.0;
+        }
+    }
+
+    // Model stats
+    health.model_params = 0;
+    health.last_val_loss = 0.0f;
+    health.model_hash.set_null();
+
+    if (eval_engine) {
+        health.model_params = eval_engine->param_count();
+        health.model_hash = eval_engine->get_model_hash();
+    }
+
+    if (chain && chain->tip()) {
+        health.last_val_loss = chain->tip()->val_loss;
+    }
+
+    // Warnings
+    health.is_healthy = true;
+
+    if (health.available_disk_bytes < 100ULL * 1024 * 1024) {
+        health.warnings.push_back("Low disk space: " +
+            std::to_string(health.available_disk_bytes / (1024 * 1024)) + " MB remaining");
+        health.is_healthy = false;
+    }
+
+    if (health.rss_bytes > 4ULL * 1024 * 1024 * 1024) {
+        health.warnings.push_back("High memory usage: " +
+            std::to_string(health.rss_bytes / (1024 * 1024)) + " MB RSS");
+    }
+
+    if (health.outbound_peers == 0 && health.inbound_peers == 0) {
+        health.warnings.push_back("No connected peers");
+        health.is_healthy = false;
+    }
+
+    if (health.time_since_last_block > 7200) {
+        health.warnings.push_back("No new blocks in " +
+            std::to_string(health.time_since_last_block / 60) + " minutes");
+    }
+
+    if (is_ibd.load()) {
+        health.warnings.push_back("Initial Block Download in progress");
+    }
+
+    return health;
+}
+
+// ============================================================================
+// run_maintenance — comprehensive periodic maintenance
+// ============================================================================
+
+void NodeContext::run_maintenance() {
+    int64_t t0 = now_us();
+    LogDebug("node", "Running maintenance cycle...");
+
+    // 1. Flush UTXO cache if dirty
+    if (chain) {
+        chain->periodic_flush();
+    }
+
+    // 2. Compact databases if fragmented (less frequently)
+    static int compact_counter = 0;
+    compact_counter++;
+    if (compact_counter % 60 == 0) {  // Every ~10 hours at 10-min intervals
+        if (chain) {
+            chain->periodic_compact();
+        }
+    }
+
+    // 3. Save model checkpoint if at interval
+    if (chain && eval_engine) {
+        uint64_t h = chain->height();
+        if (h > 0 && (h % consensus::CHECKPOINT_INTERVAL) == 0) {
+            std::string ckpt = model_dir() + "/checkpoint.bin";
+            if (eval_engine->save_checkpoint(ckpt)) {
+                LogInfo("node", "Maintenance: model checkpoint saved at height %lu",
+                        static_cast<unsigned long>(h));
+            }
+        }
+    }
+
+    // 4. Prune old block files if pruning enabled
+    if (chain && chain->is_pruning_enabled()) {
+        chain->prune();
+    }
+
+    // 5. Rotate log file if large
+    log_rotate();
+
+    // 6. Clean expired bans from the network module
+    if (net) {
+        net->clean_expired_bans();
+    }
+
+    // 7. Save address database to peers.dat
+    if (net) {
+        std::string peers_path = datadir_path("peers.dat");
+        net->save_peers(peers_path);
+    }
+
+    // 8. Check disk space and warn
+    int64_t free_mb = get_disk_free_mb();
+    if (free_mb >= 0 && free_mb < 50) {
+        LogError("node", "Maintenance: critically low disk space: %lld MB",
+                 static_cast<long long>(free_mb));
+    } else if (free_mb >= 0 && free_mb < 200) {
+        LogWarn("node", "Maintenance: low disk space: %lld MB",
+                static_cast<long long>(free_mb));
+    }
+
+    // 9. Report health status
+    NodeHealth health = get_node_health();
+    for (const auto& warning : health.warnings) {
+        LogWarn("node", "Health: %s", warning.c_str());
+    }
+
+    // 10. Update IBD status
+    if (chain && is_ibd.load()) {
+        uint64_t h = chain->height();
+        int64_t tip_time = 0;
+        if (chain->tip()) {
+            tip_time = chain->tip()->timestamp;
+        }
+        int64_t now = static_cast<int64_t>(std::time(nullptr));
+
+        // Exit IBD if tip is within 2 hours of current time
+        if (tip_time > 0 && (now - tip_time) < 7200) {
+            is_ibd.store(false);
+            LogInfo("node", "Exiting Initial Block Download mode at height %lu",
+                    static_cast<unsigned long>(h));
+        }
+    }
+
+    // 11. Trim old model checkpoints (keep latest 3)
+    if (std::filesystem::exists(model_dir())) {
+        std::vector<std::pair<uint64_t, std::string>> checkpoints;
+        try {
+            for (const auto& entry : std::filesystem::directory_iterator(model_dir())) {
+                std::string name = entry.path().filename().string();
+                if (name.compare(0, 11, "checkpoint_") == 0 &&
+                    name.size() > 15 && name.substr(name.size() - 4) == ".bin") {
+                    std::string height_str = name.substr(11, name.size() - 15);
+                    try {
+                        uint64_t h = std::stoull(height_str);
+                        checkpoints.emplace_back(h, entry.path().string());
+                    } catch (...) {}
+                }
+            }
+        } catch (...) {}
+
+        std::sort(checkpoints.begin(), checkpoints.end(),
+                  [](const auto& a, const auto& b) { return a.first > b.first; });
+
+        for (size_t i = 3; i < checkpoints.size(); ++i) {
+            LogDebug("node", "Maintenance: removing old checkpoint: %s",
+                     checkpoints[i].second.c_str());
+            std::filesystem::remove(checkpoints[i].second);
+        }
+    }
+
+    int64_t t1 = now_us();
+    LogDebug("node", "Maintenance cycle completed in %.1f ms",
+             static_cast<double>(t1 - t0) / 1000.0);
+}
+
+// ============================================================================
+// Block notification system
+// ============================================================================
+
+using BlockNotifyCallback = std::function<void(const CBlock& block, uint64_t height)>;
+using TxNotifyCallback = std::function<void(const CTransaction& tx)>;
+
+// Storage for notification callbacks
+static std::vector<BlockNotifyCallback> g_block_connected_cbs;
+static std::vector<BlockNotifyCallback> g_block_disconnected_cbs;
+static std::vector<TxNotifyCallback> g_tx_mempool_cbs;
+static std::mutex g_notify_mutex;
+
+void NodeContext::on_block_connected(BlockNotifyCallback cb) {
+    std::lock_guard<std::mutex> lock(g_notify_mutex);
+    g_block_connected_cbs.push_back(std::move(cb));
+}
+
+void NodeContext::on_block_disconnected(BlockNotifyCallback cb) {
+    std::lock_guard<std::mutex> lock(g_notify_mutex);
+    g_block_disconnected_cbs.push_back(std::move(cb));
+}
+
+void NodeContext::on_transaction_added_mempool(TxNotifyCallback cb) {
+    std::lock_guard<std::mutex> lock(g_notify_mutex);
+    g_tx_mempool_cbs.push_back(std::move(cb));
+}
+
+void NodeContext::notify_block_connected(const CBlock& block, uint64_t height) {
+    std::lock_guard<std::mutex> lock(g_notify_mutex);
+
+    for (const auto& cb : g_block_connected_cbs) {
+        try {
+            cb(block, height);
+        } catch (const std::exception& e) {
+            LogWarn("node", "Block connected callback threw: %s", e.what());
+        }
+    }
+
+    // Also fire the tip-changed callbacks
+    uint256 block_hash = block.get_hash();
+    notify_tip_changed(height, block_hash.data());
+
+    // Update performance counters
+    perf.blocks_validated.fetch_add(1);
+    perf.txs_validated.fetch_add(block.vtx.size());
+}
+
+void NodeContext::notify_block_disconnected(const CBlock& block, uint64_t height) {
+    std::lock_guard<std::mutex> lock(g_notify_mutex);
+
+    for (const auto& cb : g_block_disconnected_cbs) {
+        try {
+            cb(block, height);
+        } catch (const std::exception& e) {
+            LogWarn("node", "Block disconnected callback threw: %s", e.what());
+        }
+    }
+}
+
+void NodeContext::notify_tx_mempool(const CTransaction& tx) {
+    std::lock_guard<std::mutex> lock(g_notify_mutex);
+
+    for (const auto& cb : g_tx_mempool_cbs) {
+        try {
+            cb(tx);
+        } catch (const std::exception& e) {
+            LogWarn("node", "Tx mempool callback threw: %s", e.what());
+        }
+    }
+}
+
+// ============================================================================
+// Log rotation
+// ============================================================================
+
+static void log_rotate_impl(const std::string& log_file, size_t max_size) {
+    try {
+        if (!std::filesystem::exists(log_file)) return;
+
+        auto file_size = std::filesystem::file_size(log_file);
+        if (file_size < max_size) return;
+
+        // Rotate: rename current -> .1, .1 -> .2, etc.
+        // Keep up to 3 old log files.
+        for (int i = 2; i >= 0; --i) {
+            std::string old_name = log_file + "." + std::to_string(i + 1);
+            std::string new_name = log_file + "." + std::to_string(i + 2);
+            if (std::filesystem::exists(old_name)) {
+                if (i == 2) {
+                    std::filesystem::remove(old_name);
+                } else {
+                    std::filesystem::rename(old_name, new_name);
+                }
+            }
+        }
+
+        std::string rotated = log_file + ".1";
+        std::filesystem::rename(log_file, rotated);
+
+    } catch (const std::exception& e) {
+        LogWarn("node", "Log rotation failed: %s", e.what());
+    }
+}
+
+void NodeContext::log_rotate_check() {
+    std::string lpath = log_path();
+    // Rotate at 50 MB
+    log_rotate_impl(lpath, 50ULL * 1024 * 1024);
+}
+
+// ============================================================================
+// Comprehensive node info for RPC getinfo
+// ============================================================================
+
+struct NodeInfo {
+    std::string version;
+    std::string network;
+    uint64_t height;
+    uint64_t headers;
+    int connections;
+    int outbound;
+    int inbound;
+    size_t mempool_txs;
+    size_t mempool_bytes;
+    int64_t uptime_seconds;
+    bool ibd;
+    double sync_progress;
+    size_t model_params;
+    float model_loss;
+    int64_t rss_mb;
+    int64_t disk_free_mb;
+    std::string datadir;
+    uint16_t p2p_port;
+    uint16_t rpc_port;
+};
+
+NodeInfo NodeContext::get_info() const {
+    NodeInfo info;
+    info.version = std::string(CLIENT_NAME) + " v" + CLIENT_VERSION_STRING;
+    info.network = get_network_name();
+    info.height = chain_height();
+    info.headers = info.height;
+    info.connections = static_cast<int>(peer_count());
+    info.outbound = 0;
+    info.inbound = 0;
+    info.mempool_txs = mempool_size();
+    info.mempool_bytes = mempool_bytes();
+    info.uptime_seconds = uptime();
+    info.ibd = is_ibd.load();
+    info.sync_progress = 1.0;
+    info.model_params = 0;
+    info.model_loss = 0.0f;
+    info.rss_mb = get_rss_mb();
+    info.disk_free_mb = get_disk_free_mb();
+    info.datadir = datadir;
+    info.p2p_port = get_port();
+    info.rpc_port = get_rpc_port();
+
+    if (net) {
+        info.outbound = static_cast<int>(net->outbound_count());
+        info.inbound = static_cast<int>(net->inbound_count());
+    }
+
+    if (eval_engine) {
+        info.model_params = eval_engine->param_count();
+    }
+
+    if (chain && chain->tip()) {
+        info.model_loss = chain->tip()->val_loss;
+        int64_t tip_time = chain->tip()->timestamp;
+        int64_t now = static_cast<int64_t>(std::time(nullptr));
+        if (now - tip_time > 7200) {
+            info.sync_progress = static_cast<double>(tip_time) /
+                                 static_cast<double>(now);
+        }
+    }
+
+    return info;
+}
+
+// ============================================================================
+// process_new_block — high-level block processing entry point
+// ============================================================================
+
+bool NodeContext::process_new_block(const CBlock& block) {
+    if (!chain) {
+        LogError("node", "process_new_block: chain not initialized");
+        return false;
+    }
+
+    consensus::ValidationState state;
+
+    int64_t t0 = now_us();
+
+    bool accepted = chain->accept_block(block, state);
+
+    int64_t t1 = now_us();
+    double elapsed_ms = static_cast<double>(t1 - t0) / 1000.0;
+
+    if (!accepted) {
+        LogWarn("node", "Block rejected at height %lu: %s (%.1f ms)",
+                static_cast<unsigned long>(block.height),
+                state.to_string().c_str(),
+                elapsed_ms);
+
+        // Increment ban score for the peer that sent this block
+        // (caller is responsible for providing peer_id)
+        return false;
+    }
+
+    // Notify listeners
+    notify_block_connected(block, block.height);
+
+    // Update mempool: remove transactions that were included in this block
+    if (mempool) {
+        int removed = 0;
+        for (size_t i = 1; i < block.vtx.size(); ++i) {
+            uint256 txid = block.vtx[i].get_txid();
+            if (mempool->remove(txid)) {
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            LogDebug("node", "Removed %d txs from mempool (included in block %lu)",
+                     removed, static_cast<unsigned long>(block.height));
+        }
+    }
+
+    // Check if we should exit IBD
+    if (is_ibd.load()) {
+        int64_t now = static_cast<int64_t>(std::time(nullptr));
+        if (block.timestamp > 0 && (now - block.timestamp) < 7200) {
+            is_ibd.store(false);
+            LogInfo("node", "Exiting IBD at height %lu",
+                    static_cast<unsigned long>(block.height));
+        }
+    }
+
+    LogInfo("node", "Block %lu connected: %zu txs, loss=%.4f (%.1f ms)",
+            static_cast<unsigned long>(block.height),
+            block.vtx.size(),
+            static_cast<double>(block.val_loss),
+            elapsed_ms);
+
+    return true;
+}
+
+// ============================================================================
+// process_transaction — accept a new transaction into the mempool
+// ============================================================================
+
+bool NodeContext::process_transaction(const CTransaction& tx,
+                                       consensus::ValidationState& state) {
+    if (!chain || !mempool) {
+        state.error("subsystems-not-ready");
+        return false;
+    }
+
+    // Basic structural validation
+    if (!consensus::check_transaction(tx, state)) {
+        return false;
+    }
+
+    // Check if the transaction's inputs exist in the UTXO set
+    for (const auto& input : tx.vin) {
+        UTXOEntry entry;
+        if (!chain->utxo_set().get(input.prevout.txid, input.prevout.index, entry)) {
+            state.invalid(consensus::ValidationResult::TX_INVALID,
+                          "missing-inputs",
+                          "input UTXO not found in the set");
+            return false;
+        }
+
+        // Verify pubkey hash matches
+        uint256 pkh = keccak256(input.pubkey.data(), input.pubkey.size());
+        if (std::memcmp(pkh.data(), entry.pubkey_hash.data(), 32) != 0) {
+            state.invalid(consensus::ValidationResult::TX_INVALID,
+                          "bad-txns-pubkey-hash",
+                          "input pubkey hash does not match UTXO");
+            return false;
+        }
+
+        // Check coinbase maturity
+        if (entry.is_coinbase) {
+            uint64_t current_height = chain->height();
+            if (current_height < entry.height + consensus::COINBASE_MATURITY) {
+                state.invalid(consensus::ValidationResult::TX_INVALID,
+                              "bad-txns-premature-spend-of-coinbase",
+                              "coinbase output not yet mature");
+                return false;
+            }
+        }
+    }
+
+    // Compute fee (sum inputs - sum outputs)
+    Amount input_sum = 0;
+    for (const auto& input : tx.vin) {
+        UTXOEntry entry;
+        chain->utxo_set().get(input.prevout.txid, input.prevout.index, entry);
+        input_sum += entry.value;
+    }
+    Amount output_sum = tx.get_value_out();
+    Amount fee = input_sum - output_sum;
+
+    if (fee < 0) {
+        state.invalid(consensus::ValidationResult::TX_INVALID,
+                      "bad-txns-fee-negative",
+                      "transaction fee is negative (inputs < outputs)");
+        return false;
+    }
+
+    // Check minimum fee
+    size_t tx_size = 12 + tx.vin.size() * 132 + tx.vout.size() * 40;
+    Amount min_fee = static_cast<Amount>(tx_size);  // 1 atomic unit per byte
+    if (fee < min_fee) {
+        state.invalid(consensus::ValidationResult::TX_INVALID,
+                      "insufficient-fee",
+                      "fee below minimum relay fee");
+        return false;
+    }
+
+    // Add to mempool
+    if (!mempool->add(tx, fee)) {
+        state.invalid(consensus::ValidationResult::TX_INVALID,
+                      "mempool-reject",
+                      "transaction rejected by mempool");
+        return false;
+    }
+
+    // Notify listeners
+    notify_tx_mempool(tx);
+
+    LogDebug("node", "Transaction accepted into mempool (fee=%ld, size=%zu)",
+             static_cast<long>(fee), tx_size);
+
+    return true;
+}
+
+// ============================================================================
+// get_connection_info — detailed peer connection info
+// ============================================================================
+
+struct PeerInfo {
+    uint64_t peer_id;
+    std::string addr;
+    bool inbound;
+    int64_t conn_time;
+    int64_t last_send;
+    int64_t last_recv;
+    int64_t bytes_sent;
+    int64_t bytes_recv;
+    double ping_ms;
+    uint64_t start_height;
+    int ban_score;
+    std::string subver;
+};
+
+std::vector<PeerInfo> NodeContext::get_peer_info() const {
+    std::vector<PeerInfo> peers;
+
+    if (!net) return peers;
+
+    size_t count = net->peer_count();
+    peers.reserve(count);
+
+    // The actual peer enumeration would come from the NetManager.
+    // For now, we return an empty list. The RPC layer calls
+    // net->get_peer_info() directly.
+
+    return peers;
 }
 
 } // namespace flow

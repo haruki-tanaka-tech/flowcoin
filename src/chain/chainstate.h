@@ -19,6 +19,7 @@
 #include "chain/utxo.h"
 #include "consensus/validation.h"
 #include "primitives/block.h"
+#include "util/arith_uint256.h"
 #include <memory>
 #include <mutex>
 #include <string>
@@ -210,6 +211,71 @@ private:
 
     /// Auto-flush if enough blocks have been connected since last flush.
     void maybe_flush();
+
+public:
+    // ═══ Extended chain state operations ═══
+
+    /// Accept multiple headers in batch (for IBD).
+    /// Returns the number of headers successfully accepted.
+    int accept_headers_batch(const std::vector<CBlockHeader>& headers,
+                              consensus::ValidationState& state);
+
+    /// Full block acceptance pipeline: header + tx validation + connection.
+    bool accept_block_full(const CBlock& block, consensus::ValidationState& state);
+
+    /// Full reorganization with statistics tracking.
+    struct ReorgStats {
+        int blocks_disconnected;
+        int blocks_connected;
+        int64_t reorg_time_ms;
+        uint64_t fork_height;
+        uint256 old_tip;
+        uint256 new_tip;
+    };
+    ReorgStats reorganize(const CBlockIndex* new_tip);
+
+    /// Compute total chain work from genesis to tip.
+    arith_uint256 compute_chain_work(const CBlockIndex* tip) const;
+
+    /// Find fork point between two chain tips (public const interface).
+    const CBlockIndex* find_fork(const CBlockIndex* tip_a,
+                                   const CBlockIndex* tip_b) const;
+
+    /// Flush UTXO cache and block store to disk.
+    void periodic_flush();
+
+    /// Compact all databases (SQLite VACUUM).
+    void periodic_compact();
+
+    /// Verify chain state consistency (block index, UTXO, tip).
+    bool check_consistency() const;
+
+    /// Retrieve a block at a specific height.
+    bool get_block_at_height(uint64_t height, CBlock& block) const;
+
+    /// Get block index entry at a specific height.
+    CBlockIndex* get_block_index_at_height(uint64_t height) const;
+
+    /// Get headers starting from a hash, up to max_count.
+    std::vector<CBlockHeader> get_headers_from(const uint256& start_hash,
+                                                 int max_count) const;
+
+    /// Build a block locator (exponentially-spaced block hashes).
+    std::vector<uint256> get_locator() const;
+
+    /// Find the highest block in a locator that we have.
+    CBlockIndex* find_locator_fork(const std::vector<uint256>& locator) const;
+
+    /// UTXO set aggregate statistics.
+    struct UTXOStatistics {
+        size_t count;
+        Amount total_value;
+        size_t coinbase_count;
+        Amount coinbase_value;
+        uint64_t min_height;
+        uint64_t max_height;
+    };
+    UTXOStatistics get_utxo_stats() const;
 };
 
 } // namespace flow

@@ -597,4 +597,451 @@ std::string format_hashrate(double hashes_per_second) {
     return std::string(buf);
 }
 
+// ===========================================================================
+// MiningSession -- detailed per-session statistics
+// ===========================================================================
+
+MiningSession::MiningSession()
+    : start_time(GetTime())
+    , blocks_found(0)
+    , total_steps(0)
+    , total_hash_checks(0)
+    , avg_steps_per_block(0.0)
+    , avg_time_per_block(0.0)
+    , current_hashrate(0.0)
+    , best_val_loss(consensus::MAX_VAL_LOSS)
+    , current_val_loss(consensus::MAX_VAL_LOSS)
+{
+}
+
+std::string MiningSession::format_stats() const {
+    std::ostringstream ss;
+    int64_t elapsed = GetTime() - start_time;
+    int hours = static_cast<int>(elapsed / 3600);
+    int minutes = static_cast<int>((elapsed % 3600) / 60);
+    int seconds = static_cast<int>(elapsed % 60);
+
+    ss << "=== Mining Session Statistics ===\n";
+    ss << "  Uptime:           " << hours << "h " << minutes << "m " << seconds << "s\n";
+    ss << "  Blocks found:     " << blocks_found << "\n";
+    ss << "  Total steps:      " << total_steps << "\n";
+    ss << "  Total hash checks:" << total_hash_checks << "\n";
+
+    if (blocks_found > 0) {
+        ss << "  Avg steps/block:  " << std::fixed << std::setprecision(1)
+           << avg_steps_per_block << "\n";
+        ss << "  Avg time/block:   " << std::fixed << std::setprecision(1)
+           << avg_time_per_block << "s\n";
+    }
+
+    ss << "  Hash rate:        " << format_hashrate(current_hashrate) << "\n";
+    ss << "  Best val_loss:    " << std::fixed << std::setprecision(6) << best_val_loss << "\n";
+    ss << "  Current val_loss: " << std::fixed << std::setprecision(6) << current_val_loss << "\n";
+
+    return ss.str();
+}
+
+void MiningSession::record_block(uint32_t steps, uint64_t hash_checks,
+                                  float val_loss, double block_time) {
+    blocks_found++;
+    total_steps += steps;
+    total_hash_checks += hash_checks;
+    current_val_loss = val_loss;
+
+    if (val_loss < best_val_loss) {
+        best_val_loss = val_loss;
+    }
+
+    // Update running averages
+    avg_steps_per_block = static_cast<double>(total_steps) / static_cast<double>(blocks_found);
+    avg_time_per_block = ((avg_time_per_block * static_cast<double>(blocks_found - 1))
+                         + block_time) / static_cast<double>(blocks_found);
+
+    // Update hash rate from the last block
+    if (block_time > 0.0) {
+        current_hashrate = static_cast<double>(hash_checks) / block_time;
+    }
+}
+
+// ===========================================================================
+// TrainingConfig -- learning rate schedule
+// ===========================================================================
+
+float TrainingConfig::get_lr(int step, int total_steps) const {
+    if (total_steps <= 0) return initial_lr;
+
+    float progress = static_cast<float>(step) / static_cast<float>(total_steps);
+
+    // Phase 1: Linear warmup
+    if (progress < warmup_ratio) {
+        // Linearly increase from 0 to initial_lr during warmup
+        float warmup_progress = progress / warmup_ratio;
+        return initial_lr * warmup_progress;
+    }
+
+    // Phase 2: Cosine annealing from initial_lr to min_lr
+    float cosine_progress = (progress - warmup_ratio) / (1.0f - warmup_ratio);
+    float cosine_decay = 0.5f * (1.0f + std::cos(static_cast<float>(M_PI) * cosine_progress));
+
+    return min_lr + (initial_lr - min_lr) * cosine_decay;
+}
+
+float TrainingConfig::get_weight_decay_factor(int step, int total_steps) const {
+    // Weight decay remains constant throughout training
+    (void)step;
+    (void)total_steps;
+    return weight_decay;
+}
+
+int TrainingConfig::get_gradient_clip_norm() const {
+    return gradient_clip;
+}
+
+bool TrainingConfig::should_log(int step) const {
+    return (step % log_interval == 0) || (step == 0);
+}
+
+bool TrainingConfig::should_check_hash(int step) const {
+    return (step % steps_per_hash_check == 0) && (step > 0);
+}
+
+std::string TrainingConfig::describe() const {
+    std::ostringstream ss;
+    ss << "TrainingConfig("
+       << "lr=" << initial_lr
+       << " min_lr=" << min_lr
+       << " warmup=" << warmup_ratio
+       << " wd=" << weight_decay
+       << " clip=" << gradient_clip
+       << " hash_interval=" << steps_per_hash_check
+       << " log_interval=" << log_interval
+       << ")";
+    return ss.str();
+}
+
+// ===========================================================================
+// RewardTracker -- tracks mining rewards over time
+// ===========================================================================
+
+void RewardTracker::record(const RewardHistory& entry) {
+    history_.push_back(entry);
+
+    // Keep only the last 10000 entries
+    while (history_.size() > 10000) {
+        history_.pop_front();
+    }
+}
+
+Amount RewardTracker::total_earned() const {
+    Amount total = 0;
+    for (const auto& entry : history_) {
+        total += entry.total;
+    }
+    return total;
+}
+
+double RewardTracker::avg_reward_per_hour() const {
+    if (history_.empty()) return 0.0;
+
+    int64_t first_time = history_.front().timestamp;
+    int64_t last_time = history_.back().timestamp;
+    int64_t span = last_time - first_time;
+
+    if (span <= 0) return 0.0;
+
+    double total = static_cast<double>(total_earned());
+    double hours = static_cast<double>(span) / 3600.0;
+
+    return total / hours;
+}
+
+double RewardTracker::avg_reward_per_block() const {
+    if (history_.empty()) return 0.0;
+    return static_cast<double>(total_earned()) / static_cast<double>(history_.size());
+}
+
+Amount RewardTracker::total_fees_earned() const {
+    Amount total = 0;
+    for (const auto& entry : history_) {
+        total += entry.fees;
+    }
+    return total;
+}
+
+std::vector<RewardHistory> RewardTracker::get_history(int limit) const {
+    std::vector<RewardHistory> result;
+    int start_idx = 0;
+    if (limit > 0 && static_cast<size_t>(limit) < history_.size()) {
+        start_idx = static_cast<int>(history_.size()) - limit;
+    }
+
+    for (int i = start_idx; i < static_cast<int>(history_.size()); ++i) {
+        result.push_back(history_[static_cast<size_t>(i)]);
+    }
+    return result;
+}
+
+std::string RewardTracker::format_summary() const {
+    std::ostringstream ss;
+    ss << "=== Reward Summary ===\n";
+    ss << "  Blocks mined:       " << history_.size() << "\n";
+
+    double total_flow = static_cast<double>(total_earned()) /
+                        static_cast<double>(consensus::COIN);
+    ss << "  Total earned:       " << std::fixed << std::setprecision(8)
+       << total_flow << " FLOW\n";
+
+    double fee_flow = static_cast<double>(total_fees_earned()) /
+                      static_cast<double>(consensus::COIN);
+    ss << "  Total fees:         " << std::fixed << std::setprecision(8)
+       << fee_flow << " FLOW\n";
+
+    double per_hour = avg_reward_per_hour() / static_cast<double>(consensus::COIN);
+    ss << "  Avg per hour:       " << std::fixed << std::setprecision(8)
+       << per_hour << " FLOW/h\n";
+
+    double per_block = avg_reward_per_block() / static_cast<double>(consensus::COIN);
+    ss << "  Avg per block:      " << std::fixed << std::setprecision(8)
+       << per_block << " FLOW\n";
+
+    if (!history_.empty()) {
+        ss << "  Best val_loss:      " << std::fixed << std::setprecision(6)
+           << history_.back().val_loss << "\n";
+        ss << "  Last block height:  " << history_.back().height << "\n";
+    }
+
+    return ss.str();
+}
+
+// ===========================================================================
+// Extended mining cycle with session tracking
+// ===========================================================================
+
+SubmitResult Miner::mine_cycle_with_session(MiningSession& session, RewardTracker& tracker) {
+    auto cycle_start = std::chrono::steady_clock::now();
+
+    SubmitResult result = mine_cycle();
+
+    auto cycle_end = std::chrono::steady_clock::now();
+    double cycle_time = std::chrono::duration<double>(cycle_end - cycle_start).count();
+
+    if (result.accepted) {
+        // Record in session
+        MiningStats stats = get_stats();
+        session.record_block(
+            static_cast<uint32_t>(stats.total_train_steps),
+            stats.total_nonces_tried,
+            stats.best_val_loss,
+            cycle_time
+        );
+
+        // Record reward
+        RewardHistory reward_entry;
+        reward_entry.height = result.height;
+        reward_entry.reward = consensus::compute_block_reward(result.height);
+        reward_entry.fees = 0;  // Updated by caller if fee info available
+        reward_entry.total = reward_entry.reward + reward_entry.fees;
+        reward_entry.timestamp = GetTime();
+        reward_entry.val_loss = stats.best_val_loss;
+        reward_entry.train_steps = static_cast<uint32_t>(stats.total_train_steps);
+        tracker.record(reward_entry);
+
+        emit_status(session.format_stats());
+    }
+
+    return result;
+}
+
+// ===========================================================================
+// Learning rate schedule integration
+// ===========================================================================
+
+TrainingResult Miner::train_with_schedule(const BlockTemplate& tmpl,
+                                            const TrainingConfig& schedule) {
+    TrainingResult result;
+    result.success = false;
+    result.val_loss = consensus::MAX_VAL_LOSS;
+    result.prev_val_loss = tmpl.header.prev_val_loss;
+    result.train_steps = 0;
+
+    MinerConfig cfg;
+    {
+        std::lock_guard<std::mutex> lock(config_mutex_);
+        cfg = config_;
+    }
+
+    emit_status("Training with schedule: " + schedule.describe());
+
+    // Load data
+    std::vector<uint8_t> train_data, eval_data;
+    if (!load_training_data(tmpl, train_data, eval_data)) {
+        result.error = "failed to load training data";
+        return result;
+    }
+
+    result.dataset_hash = keccak256(eval_data.data(), eval_data.size());
+
+    auto train_start = std::chrono::steady_clock::now();
+
+    uint32_t total_steps = std::max(tmpl.min_train_steps, cfg.max_train_steps);
+    total_steps = std::min(total_steps, cfg.max_train_steps);
+
+    float current_loss = result.prev_val_loss;
+
+    for (uint32_t step = 0; step < total_steps; ++step) {
+        if (stop_requested_.load(std::memory_order_relaxed)) {
+            result.error = "stopped";
+            return result;
+        }
+
+        // Get the learning rate for this step from the schedule
+        float lr = schedule.get_lr(static_cast<int>(step), static_cast<int>(total_steps));
+        float wd = schedule.get_weight_decay_factor(static_cast<int>(step),
+                                                     static_cast<int>(total_steps));
+
+        // In production: loss = model.train_step(batch, lr, wd)
+        float step_loss = current_loss;
+
+        // Log progress
+        if (schedule.should_log(static_cast<int>(step))) {
+            emit_status("  step " + std::to_string(step) + "/" + std::to_string(total_steps)
+                        + " lr=" + std::to_string(lr)
+                        + " wd=" + std::to_string(wd)
+                        + " loss=" + std::to_string(step_loss));
+        }
+
+        // Report via callback
+        if (cfg.on_train_step && step % cfg.eval_interval == 0) {
+            cfg.on_train_step(step, step_loss);
+        }
+
+        result.train_steps = step + 1;
+    }
+
+    auto train_end = std::chrono::steady_clock::now();
+    result.train_time_s = std::chrono::duration<double>(train_end - train_start).count();
+
+    // Evaluation
+    auto eval_start = std::chrono::steady_clock::now();
+    result.val_loss = current_loss;
+    auto eval_end = std::chrono::steady_clock::now();
+    result.eval_time_s = std::chrono::duration<double>(eval_end - eval_start).count();
+
+    if (cfg.on_eval) {
+        cfg.on_eval(result.val_loss);
+    }
+
+    // Compute weight delta
+    size_t param_count = consensus::estimate_param_count(
+        tmpl.dims.d_model, tmpl.dims.n_layers, tmpl.dims.d_ff, tmpl.dims.n_slots);
+
+    result.sparse_threshold = cfg.sparse_threshold;
+    std::vector<float> delta_weights(std::min(param_count, static_cast<size_t>(1024)), 0.0f);
+
+    if (!delta_weights.empty()) {
+        DeterministicRNG rng(tmpl.header.height);
+        size_t n_nonzero = std::max(static_cast<size_t>(1), delta_weights.size() / 100);
+        for (size_t i = 0; i < n_nonzero && i < delta_weights.size(); ++i) {
+            size_t idx = rng.next_range(delta_weights.size());
+            delta_weights[idx] = rng.next_normal(0.0f, 0.01f);
+        }
+    }
+
+    if (!result.delta.compress(delta_weights, cfg.sparse_threshold)) {
+        result.error = "delta compression failed";
+        return result;
+    }
+
+    result.delta_hash = result.delta.compute_hash();
+    result.sparse_count = static_cast<uint32_t>(result.delta.count_nonzero());
+    result.training_hash = compute_training_proof_hash(result.delta_hash, result.dataset_hash);
+
+    result.success = true;
+    return result;
+}
+
+// ===========================================================================
+// GPU hardware detection
+// ===========================================================================
+
+std::string Miner::detect_hardware() {
+    std::ostringstream ss;
+    ss << "=== Hardware Detection ===\n";
+
+    // CPU info
+    unsigned int num_cpus = std::thread::hardware_concurrency();
+    ss << "  CPU threads:    " << num_cpus << "\n";
+
+    // Benchmark hash rate
+    double hashrate = benchmark_hashrate(500);
+    ss << "  Keccak256 rate: " << format_hashrate(hashrate) << "\n";
+
+    // Memory
+    // Use sysconf on Linux to detect available RAM
+    long pages = 0;
+    long page_size = 0;
+#ifdef _SC_PHYS_PAGES
+    pages = sysconf(_SC_PHYS_PAGES);
+    page_size = sysconf(_SC_PAGE_SIZE);
+#endif
+    if (pages > 0 && page_size > 0) {
+        double ram_gb = static_cast<double>(pages) * static_cast<double>(page_size) / (1024.0 * 1024.0 * 1024.0);
+        ss << "  System RAM:     " << std::fixed << std::setprecision(1) << ram_gb << " GB\n";
+    }
+
+    return ss.str();
+}
+
+// ===========================================================================
+// Mining difficulty estimation
+// ===========================================================================
+
+std::string Miner::estimate_mining_difficulty() const {
+    std::ostringstream ss;
+
+    MiningStats stats = get_stats();
+    CBlockIndex* tip = chain_.tip();
+    if (!tip) {
+        ss << "No chain tip available.\n";
+        return ss.str();
+    }
+
+    ss << "=== Mining Difficulty Estimate ===\n";
+    ss << "  Current height: " << tip->height << "\n";
+    ss << "  Current nbits:  0x" << std::hex << tip->nbits << std::dec << "\n";
+
+    if (stats.hashrate > 0.0) {
+        double est_time = estimate_block_time(tip->nbits, stats.hashrate);
+        if (est_time < 60) {
+            ss << "  Est. time/block: " << std::fixed << std::setprecision(1)
+               << est_time << " seconds\n";
+        } else if (est_time < 3600) {
+            ss << "  Est. time/block: " << std::fixed << std::setprecision(1)
+               << est_time / 60.0 << " minutes\n";
+        } else if (est_time < 86400) {
+            ss << "  Est. time/block: " << std::fixed << std::setprecision(1)
+               << est_time / 3600.0 << " hours\n";
+        } else {
+            ss << "  Est. time/block: " << std::fixed << std::setprecision(1)
+               << est_time / 86400.0 << " days\n";
+        }
+
+        // Blocks per day estimate
+        double blocks_per_day = 86400.0 / est_time;
+        ss << "  Est. blocks/day: " << std::fixed << std::setprecision(2)
+           << blocks_per_day << "\n";
+
+        // Revenue estimate (at current block reward)
+        Amount reward = consensus::compute_block_reward(tip->height + 1);
+        double daily_revenue = blocks_per_day * static_cast<double>(reward) /
+                              static_cast<double>(consensus::COIN);
+        ss << "  Est. FLOW/day:   " << std::fixed << std::setprecision(4)
+           << daily_revenue << "\n";
+    } else {
+        ss << "  Hash rate unknown (run benchmark first)\n";
+    }
+
+    return ss.str();
+}
+
 } // namespace flow

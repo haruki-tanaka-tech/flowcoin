@@ -143,6 +143,15 @@ struct EvalMetrics {
 /// Used for debugging determinism issues across different hardware.
 bool verify_determinism(float loss_a, float loss_b);
 
+// ═══ Extended evaluation functions ═══
+
+/// Compute comprehensive evaluation metrics (non-consensus).
+EvalMetrics compute_eval_metrics(const ConsensusModel& model,
+                                  const std::vector<uint8_t>& val_data);
+
+/// Human-readable summary of model quality.
+std::string model_quality_summary(const EvalMetrics& metrics);
+
 } // namespace flow::consensus
 
 #endif // FLOWCOIN_CONSENSUS_EVAL_H

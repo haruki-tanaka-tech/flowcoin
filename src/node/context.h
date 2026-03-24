@@ -11,6 +11,9 @@
 
 #include "config.h"
 #include "consensus/params.h"
+#include "consensus/validation.h"
+#include "primitives/block.h"
+#include "chain/utxo.h"
 
 #include <atomic>
 #include <chrono>
@@ -338,6 +341,104 @@ struct NodeContext {
 
     /// Dump comprehensive debug information for diagnostics.
     std::string dump_debug_info() const;
+
+    // -- Extended health monitoring -------------------------------------------
+
+    /// Comprehensive health status including memory, disk, network, chain.
+    struct NodeHealthInfo {
+        size_t rss_bytes;
+        size_t peak_rss_bytes;
+        size_t utxo_cache_bytes;
+        size_t mempool_bytes_used;
+        size_t model_bytes;
+        size_t blocks_disk_bytes;
+        size_t available_disk_bytes;
+        int outbound_peers;
+        int inbound_peers;
+        int64_t bytes_sent_total;
+        int64_t bytes_recv_total;
+        double avg_ping_ms;
+        uint64_t chain_height_val;
+        double sync_progress;
+        int64_t time_since_last_block;
+        size_t model_params;
+        float last_val_loss;
+        std::vector<std::string> warnings;
+        bool is_healthy;
+    };
+
+    /// Get comprehensive health information.
+    NodeHealthInfo get_node_health() const;
+
+    // -- Maintenance tasks ----------------------------------------------------
+
+    /// Run comprehensive periodic maintenance (10-minute interval).
+    void run_maintenance();
+
+    // -- Block notification system --------------------------------------------
+
+    using BlockNotifyCallback = std::function<void(const CBlock& block, uint64_t height)>;
+    using TxNotifyCallback = std::function<void(const CTransaction& tx)>;
+
+    void on_block_connected(BlockNotifyCallback cb);
+    void on_block_disconnected(BlockNotifyCallback cb);
+    void on_transaction_added_mempool(TxNotifyCallback cb);
+    void notify_block_connected(const CBlock& block, uint64_t height);
+    void notify_block_disconnected(const CBlock& block, uint64_t height);
+    void notify_tx_mempool(const CTransaction& tx);
+
+    // -- High-level block/tx processing ---------------------------------------
+
+    /// Process a newly received block through the full validation pipeline.
+    bool process_new_block(const CBlock& block);
+
+    /// Accept a transaction into the mempool after validation.
+    bool process_transaction(const CTransaction& tx,
+                              consensus::ValidationState& state);
+
+    // -- Node info for RPC ----------------------------------------------------
+
+    struct NodeInfo {
+        std::string version;
+        std::string network;
+        uint64_t height;
+        uint64_t headers;
+        int connections;
+        int outbound;
+        int inbound;
+        size_t mempool_txs;
+        size_t mempool_bytes_used;
+        int64_t uptime_seconds;
+        bool ibd;
+        double sync_progress;
+        size_t model_params;
+        float model_loss;
+        int64_t rss_mb_val;
+        int64_t disk_free_mb_val;
+        std::string datadir_str;
+        uint16_t p2p_port;
+        uint16_t rpc_port;
+    };
+
+    NodeInfo get_info() const;
+
+    // -- Peer info for RPC ----------------------------------------------------
+
+    struct PeerInfo {
+        uint64_t peer_id;
+        std::string addr;
+        bool inbound;
+        int64_t conn_time;
+        int64_t bytes_sent;
+        int64_t bytes_recv;
+        double ping_ms;
+    };
+
+    std::vector<PeerInfo> get_peer_info() const;
+
+    // -- Log rotation ---------------------------------------------------------
+
+    void log_rotate_check();
 
     // -- Construction / destruction -------------------------------------------
 

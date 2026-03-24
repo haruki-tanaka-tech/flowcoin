@@ -70,6 +70,16 @@ void test_walletdb_full();
 void test_rpc_handlers();
 void test_policy();
 void test_network_full();
+void test_block_connection();
+void test_reorg_full();
+void test_block_template_full();
+void test_inventory_relay();
+void test_bandwidth();
+void test_model_evaluation();
+void test_full_chain();
+void test_wallet_transactions();
+void test_mining_session();
+void test_protocol_spec();
 
 struct TestCase {
     std::string name;
@@ -139,6 +149,16 @@ int main() {
         {"rpc_handlers", test_rpc_handlers},
         {"policy", test_policy},
         {"network_full", test_network_full},
+        {"block_connection", test_block_connection},
+        {"reorg_full", test_reorg_full},
+        {"block_template_full", test_block_template_full},
+        {"inventory_relay", test_inventory_relay},
+        {"bandwidth", test_bandwidth},
+        {"model_evaluation", test_model_evaluation},
+        {"full_chain", test_full_chain},
+        {"wallet_transactions", test_wallet_transactions},
+        {"mining_session", test_mining_session},
+        {"protocol_spec", test_protocol_spec},
     };
 
     int passed = 0, failed = 0;

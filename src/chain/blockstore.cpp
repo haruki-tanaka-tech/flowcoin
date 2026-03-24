@@ -687,5 +687,590 @@ void BlockStore::release_lock() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// BlockFileInfo — metadata about a single blk file
+// ---------------------------------------------------------------------------
+
+struct BlockFileInfo {
+    int file_num;
+    size_t size;
+    size_t max_size;
+    uint64_t height_lo;
+    uint64_t height_hi;
+    int block_count;
+};
+
+// ---------------------------------------------------------------------------
+// get_file_info — enumerate block files with metadata
+// ---------------------------------------------------------------------------
+
+std::vector<BlockFileInfo> BlockStore::get_file_info() const {
+    std::vector<BlockFileInfo> infos;
+
+    for (int i = 0; i <= current_file_ + 1; ++i) {
+        std::string path = get_block_path(i);
+        size_t fsize = get_file_size(path);
+        if (fsize == 0 && i > current_file_) break;
+
+        BlockFileInfo info;
+        info.file_num = i;
+        info.size = fsize;
+        info.max_size = MAX_FILE_SIZE;
+        info.height_lo = UINT64_MAX;
+        info.height_hi = 0;
+        info.block_count = 0;
+
+        // Scan the file to count blocks and find height range
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (f) {
+            size_t pos = 0;
+            while (pos + 8 < fsize) {
+                // Seek to the entry position
+                if (std::fseek(f, static_cast<long>(pos), SEEK_SET) != 0) break;
+
+                // Read magic bytes
+                uint8_t magic_bytes[4];
+                if (std::fread(magic_bytes, 1, 4, f) != 4) break;
+
+                uint32_t magic = (static_cast<uint32_t>(magic_bytes[0]) << 24)
+                               | (static_cast<uint32_t>(magic_bytes[1]) << 16)
+                               | (static_cast<uint32_t>(magic_bytes[2]) << 8)
+                               |  static_cast<uint32_t>(magic_bytes[3]);
+
+                if (magic != consensus::MAINNET_MAGIC) break;
+
+                // Read block size
+                uint8_t size_bytes[4];
+                if (std::fread(size_bytes, 1, 4, f) != 4) break;
+
+                uint32_t block_size = static_cast<uint32_t>(size_bytes[0])
+                                    | (static_cast<uint32_t>(size_bytes[1]) << 8)
+                                    | (static_cast<uint32_t>(size_bytes[2]) << 16)
+                                    | (static_cast<uint32_t>(size_bytes[3]) << 24);
+
+                if (block_size > consensus::MAX_BLOCK_SIZE) break;
+
+                // Read enough of the block data to extract the height.
+                // Height is at offset 128 in the header (after prev_hash[32] +
+                // merkle_root[32] + training_hash[32] + dataset_hash[32] = 128).
+                if (block_size >= 136) {
+                    uint8_t height_buf[8];
+                    // Seek to height field
+                    if (std::fseek(f, static_cast<long>(pos + 8 + 128), SEEK_SET) == 0) {
+                        if (std::fread(height_buf, 1, 8, f) == 8) {
+                            uint64_t block_height = 0;
+                            for (int j = 0; j < 8; ++j) {
+                                block_height |= static_cast<uint64_t>(height_buf[j]) << (j * 8);
+                            }
+
+                            if (block_height < info.height_lo) {
+                                info.height_lo = block_height;
+                            }
+                            if (block_height > info.height_hi) {
+                                info.height_hi = block_height;
+                            }
+                        }
+                    }
+                }
+
+                info.block_count++;
+                pos += 8 + block_size;
+            }
+
+            std::fclose(f);
+        }
+
+        if (info.height_lo == UINT64_MAX) {
+            info.height_lo = 0;
+        }
+
+        infos.push_back(info);
+    }
+
+    return infos;
+}
+
+// ---------------------------------------------------------------------------
+// read_block_at — read block at a known position (O(1) disk seek)
+// ---------------------------------------------------------------------------
+
+bool BlockStore::read_block_at(const BlockPos& pos, CBlock& block) const {
+    return read_block(pos, block);
+}
+
+// ---------------------------------------------------------------------------
+// UndoData — structured undo data for reorg support
+// ---------------------------------------------------------------------------
+
+struct UndoData {
+    uint64_t height;
+    std::vector<uint8_t> spent_outputs_raw;
+    uint256 model_hash_before;
+};
+
+// ---------------------------------------------------------------------------
+// write_undo_structured — write structured undo data
+// ---------------------------------------------------------------------------
+
+bool BlockStore::write_undo_structured(uint64_t height, const UndoData& undo) {
+    // Serialize the structured undo data
+    std::vector<uint8_t> data;
+
+    // Height (8 bytes LE)
+    for (int i = 0; i < 8; ++i) {
+        data.push_back(static_cast<uint8_t>(undo.height >> (i * 8)));
+    }
+
+    // Model hash before (32 bytes)
+    data.insert(data.end(), undo.model_hash_before.begin(),
+                undo.model_hash_before.end());
+
+    // Spent outputs raw data length (4 bytes LE)
+    uint32_t raw_len = static_cast<uint32_t>(undo.spent_outputs_raw.size());
+    data.push_back(static_cast<uint8_t>(raw_len));
+    data.push_back(static_cast<uint8_t>(raw_len >> 8));
+    data.push_back(static_cast<uint8_t>(raw_len >> 16));
+    data.push_back(static_cast<uint8_t>(raw_len >> 24));
+
+    // Spent outputs raw data
+    data.insert(data.end(), undo.spent_outputs_raw.begin(),
+                undo.spent_outputs_raw.end());
+
+    return write_undo(height, data);
+}
+
+// ---------------------------------------------------------------------------
+// read_undo_structured — read structured undo data
+// ---------------------------------------------------------------------------
+
+bool BlockStore::read_undo_structured(uint64_t height, UndoData& undo) const {
+    std::vector<uint8_t> raw;
+    if (!read_undo(height, raw)) {
+        return false;
+    }
+
+    // Minimum size: 8 (height) + 32 (model_hash) + 4 (raw_len) = 44
+    if (raw.size() < 44) {
+        return false;
+    }
+
+    size_t pos = 0;
+
+    // Height (8 bytes LE)
+    undo.height = 0;
+    for (int i = 0; i < 8; ++i) {
+        undo.height |= static_cast<uint64_t>(raw[pos + i]) << (i * 8);
+    }
+    pos += 8;
+
+    // Model hash before (32 bytes)
+    std::memcpy(undo.model_hash_before.data(), raw.data() + pos, 32);
+    pos += 32;
+
+    // Spent outputs raw length (4 bytes LE)
+    uint32_t raw_len = static_cast<uint32_t>(raw[pos])
+                     | (static_cast<uint32_t>(raw[pos + 1]) << 8)
+                     | (static_cast<uint32_t>(raw[pos + 2]) << 16)
+                     | (static_cast<uint32_t>(raw[pos + 3]) << 24);
+    pos += 4;
+
+    if (pos + raw_len > raw.size()) {
+        return false;
+    }
+
+    undo.spent_outputs_raw.assign(raw.begin() + static_cast<ptrdiff_t>(pos),
+                                   raw.begin() + static_cast<ptrdiff_t>(pos + raw_len));
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// read_undo_for_height — convenience wrapper
+// ---------------------------------------------------------------------------
+
+bool BlockStore::read_undo_for_height(uint64_t height, std::vector<uint8_t>& undo_data) const {
+    return read_undo(height, undo_data);
+}
+
+// ---------------------------------------------------------------------------
+// prune_files_below — prune blk/rev/undo files below a given height
+// ---------------------------------------------------------------------------
+
+size_t BlockStore::prune_files_below(uint64_t min_height) {
+    size_t bytes_freed = 0;
+
+    // Step 1: Delete per-height undo files below min_height
+    int undo_deleted = prune_files(min_height);
+    if (undo_deleted > 0) {
+        fprintf(stderr, "BlockStore: pruned %d undo files below height %lu\n",
+                undo_deleted, static_cast<unsigned long>(min_height));
+    }
+
+    // Step 2: Check if any blk files can be pruned entirely.
+    // A blk file can be pruned if ALL blocks in it are below min_height.
+    // We determine this by scanning the file info.
+    auto infos = get_file_info();
+
+    for (const auto& info : infos) {
+        // Don't prune the current write file
+        if (info.file_num >= current_file_) continue;
+
+        // Only prune if the highest block in this file is below min_height
+        if (info.height_hi < min_height && info.block_count > 0) {
+            // Delete the blk file
+            std::string blk_path = get_block_path(info.file_num);
+            size_t blk_size = get_file_size(blk_path);
+            if (::unlink(blk_path.c_str()) == 0) {
+                bytes_freed += blk_size;
+                fprintf(stderr, "BlockStore: pruned %s (heights %lu-%lu, %zu bytes)\n",
+                        blk_path.c_str(),
+                        static_cast<unsigned long>(info.height_lo),
+                        static_cast<unsigned long>(info.height_hi),
+                        blk_size);
+            }
+
+            // Delete the corresponding rev file if it exists
+            std::string rev_path = get_undo_path(info.file_num);
+            size_t rev_size = get_file_size(rev_path);
+            if (rev_size > 0) {
+                if (::unlink(rev_path.c_str()) == 0) {
+                    bytes_freed += rev_size;
+                }
+            }
+        }
+    }
+
+    return bytes_freed;
+}
+
+// ---------------------------------------------------------------------------
+// can_prune — check if a specific file can be safely pruned
+// ---------------------------------------------------------------------------
+
+bool BlockStore::can_prune(int file_num, uint64_t min_height) const {
+    if (file_num >= current_file_) {
+        return false;  // Can't prune the active file
+    }
+
+    std::string path = get_block_path(file_num);
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+
+    // Scan the file to find the maximum height
+    uint64_t max_height_in_file = 0;
+    size_t pos = 0;
+
+    while (true) {
+        if (std::fseek(f, static_cast<long>(pos), SEEK_SET) != 0) break;
+
+        uint8_t magic_bytes[4];
+        if (std::fread(magic_bytes, 1, 4, f) != 4) break;
+
+        uint32_t magic = (static_cast<uint32_t>(magic_bytes[0]) << 24)
+                       | (static_cast<uint32_t>(magic_bytes[1]) << 16)
+                       | (static_cast<uint32_t>(magic_bytes[2]) << 8)
+                       |  static_cast<uint32_t>(magic_bytes[3]);
+
+        if (magic != consensus::MAINNET_MAGIC) break;
+
+        uint8_t size_bytes[4];
+        if (std::fread(size_bytes, 1, 4, f) != 4) break;
+
+        uint32_t block_size = static_cast<uint32_t>(size_bytes[0])
+                            | (static_cast<uint32_t>(size_bytes[1]) << 8)
+                            | (static_cast<uint32_t>(size_bytes[2]) << 16)
+                            | (static_cast<uint32_t>(size_bytes[3]) << 24);
+
+        if (block_size > consensus::MAX_BLOCK_SIZE) break;
+
+        // Read height from block data
+        if (block_size >= 136) {
+            if (std::fseek(f, static_cast<long>(pos + 8 + 128), SEEK_SET) == 0) {
+                uint8_t height_buf[8];
+                if (std::fread(height_buf, 1, 8, f) == 8) {
+                    uint64_t block_height = 0;
+                    for (int j = 0; j < 8; ++j) {
+                        block_height |= static_cast<uint64_t>(height_buf[j]) << (j * 8);
+                    }
+                    if (block_height > max_height_in_file) {
+                        max_height_in_file = block_height;
+                    }
+                }
+            }
+        }
+
+        pos += 8 + block_size;
+    }
+
+    std::fclose(f);
+
+    return max_height_in_file < min_height;
+}
+
+// ---------------------------------------------------------------------------
+// verify_block_file — verify integrity of a blk file
+// ---------------------------------------------------------------------------
+
+bool BlockStore::verify_block_file(int file_num) const {
+    std::string path = get_block_path(file_num);
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+
+    // Get file size
+    std::fseek(f, 0, SEEK_END);
+    long fsize = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+
+    if (fsize <= 0) {
+        std::fclose(f);
+        return false;
+    }
+
+    size_t file_size = static_cast<size_t>(fsize);
+    size_t pos = 0;
+    int block_count = 0;
+
+    while (pos + 8 <= file_size) {
+        // Read magic
+        if (std::fseek(f, static_cast<long>(pos), SEEK_SET) != 0) break;
+
+        uint8_t magic_bytes[4];
+        if (std::fread(magic_bytes, 1, 4, f) != 4) break;
+
+        uint32_t magic = (static_cast<uint32_t>(magic_bytes[0]) << 24)
+                       | (static_cast<uint32_t>(magic_bytes[1]) << 16)
+                       | (static_cast<uint32_t>(magic_bytes[2]) << 8)
+                       |  static_cast<uint32_t>(magic_bytes[3]);
+
+        if (magic != consensus::MAINNET_MAGIC) {
+            fprintf(stderr, "BlockStore: verify: bad magic 0x%08x at file %d offset %zu\n",
+                    magic, file_num, pos);
+            std::fclose(f);
+            return false;
+        }
+
+        // Read size
+        uint8_t size_bytes[4];
+        if (std::fread(size_bytes, 1, 4, f) != 4) {
+            std::fclose(f);
+            return false;
+        }
+
+        uint32_t block_size = static_cast<uint32_t>(size_bytes[0])
+                            | (static_cast<uint32_t>(size_bytes[1]) << 8)
+                            | (static_cast<uint32_t>(size_bytes[2]) << 16)
+                            | (static_cast<uint32_t>(size_bytes[3]) << 24);
+
+        if (block_size > consensus::MAX_BLOCK_SIZE) {
+            fprintf(stderr, "BlockStore: verify: block size %u exceeds max at file %d offset %zu\n",
+                    block_size, file_num, pos);
+            std::fclose(f);
+            return false;
+        }
+
+        // Verify we can read the full block
+        if (pos + 8 + block_size > file_size) {
+            fprintf(stderr, "BlockStore: verify: truncated block at file %d offset %zu "
+                    "(need %u bytes, file has %zu remaining)\n",
+                    file_num, pos, block_size,
+                    file_size - pos - 8);
+            std::fclose(f);
+            return false;
+        }
+
+        // Try to deserialize the block to verify its integrity
+        std::vector<uint8_t> block_data(block_size);
+        if (std::fread(block_data.data(), 1, block_size, f) != block_size) {
+            std::fclose(f);
+            return false;
+        }
+
+        CBlock test_block;
+        if (!deserialize_block(block_data.data(), block_data.size(), test_block)) {
+            fprintf(stderr, "BlockStore: verify: deserialization failed at file %d offset %zu\n",
+                    file_num, pos);
+            std::fclose(f);
+            return false;
+        }
+
+        pos += 8 + block_size;
+        block_count++;
+    }
+
+    std::fclose(f);
+
+    fprintf(stderr, "BlockStore: verify: file %d OK (%d blocks, %zu bytes)\n",
+            file_num, block_count, file_size);
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// count_blocks — count total number of blocks across all files
+// ---------------------------------------------------------------------------
+
+int BlockStore::count_blocks() const {
+    int total = 0;
+
+    for (int i = 0; i <= current_file_; ++i) {
+        std::string path = get_block_path(i);
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) continue;
+
+        std::fseek(f, 0, SEEK_END);
+        long fsize = std::ftell(f);
+        std::fseek(f, 0, SEEK_SET);
+
+        if (fsize <= 0) {
+            std::fclose(f);
+            continue;
+        }
+
+        size_t pos = 0;
+        size_t file_size = static_cast<size_t>(fsize);
+
+        while (pos + 8 <= file_size) {
+            if (std::fseek(f, static_cast<long>(pos), SEEK_SET) != 0) break;
+
+            uint8_t header[8];
+            if (std::fread(header, 1, 8, f) != 8) break;
+
+            uint32_t magic = (static_cast<uint32_t>(header[0]) << 24)
+                           | (static_cast<uint32_t>(header[1]) << 16)
+                           | (static_cast<uint32_t>(header[2]) << 8)
+                           |  static_cast<uint32_t>(header[3]);
+
+            if (magic != consensus::MAINNET_MAGIC) break;
+
+            uint32_t block_size = static_cast<uint32_t>(header[4])
+                                | (static_cast<uint32_t>(header[5]) << 8)
+                                | (static_cast<uint32_t>(header[6]) << 16)
+                                | (static_cast<uint32_t>(header[7]) << 24);
+
+            if (block_size > consensus::MAX_BLOCK_SIZE) break;
+
+            total++;
+            pos += 8 + block_size;
+        }
+
+        std::fclose(f);
+    }
+
+    return total;
+}
+
+// ---------------------------------------------------------------------------
+// compact — defragment block files by removing gaps
+// ---------------------------------------------------------------------------
+
+bool BlockStore::compact(int file_num) {
+    std::string path = get_block_path(file_num);
+    std::string tmp_path = path + ".compact.tmp";
+
+    FILE* fin = std::fopen(path.c_str(), "rb");
+    if (!fin) return false;
+
+    std::fseek(fin, 0, SEEK_END);
+    long fsize = std::ftell(fin);
+    std::fseek(fin, 0, SEEK_SET);
+
+    if (fsize <= 0) {
+        std::fclose(fin);
+        return true;
+    }
+
+    FILE* fout = std::fopen(tmp_path.c_str(), "wb");
+    if (!fout) {
+        std::fclose(fin);
+        return false;
+    }
+
+    size_t pos = 0;
+    size_t file_size = static_cast<size_t>(fsize);
+    int blocks_written = 0;
+
+    while (pos + 8 <= file_size) {
+        if (std::fseek(fin, static_cast<long>(pos), SEEK_SET) != 0) break;
+
+        uint8_t entry_header[8];
+        if (std::fread(entry_header, 1, 8, fin) != 8) break;
+
+        uint32_t magic = (static_cast<uint32_t>(entry_header[0]) << 24)
+                       | (static_cast<uint32_t>(entry_header[1]) << 16)
+                       | (static_cast<uint32_t>(entry_header[2]) << 8)
+                       |  static_cast<uint32_t>(entry_header[3]);
+
+        if (magic != consensus::MAINNET_MAGIC) break;
+
+        uint32_t block_size = static_cast<uint32_t>(entry_header[4])
+                            | (static_cast<uint32_t>(entry_header[5]) << 8)
+                            | (static_cast<uint32_t>(entry_header[6]) << 16)
+                            | (static_cast<uint32_t>(entry_header[7]) << 24);
+
+        if (block_size > consensus::MAX_BLOCK_SIZE) break;
+
+        // Read the block data
+        std::vector<uint8_t> block_data(block_size);
+        if (std::fread(block_data.data(), 1, block_size, fin) != block_size) break;
+
+        // Write to output
+        if (std::fwrite(entry_header, 1, 8, fout) != 8) break;
+        if (std::fwrite(block_data.data(), 1, block_size, fout) != block_size) break;
+
+        blocks_written++;
+        pos += 8 + block_size;
+    }
+
+    std::fclose(fin);
+    std::fclose(fout);
+
+    // Replace original with compacted file
+    if (blocks_written > 0) {
+        ::unlink(path.c_str());
+        ::rename(tmp_path.c_str(), path.c_str());
+    } else {
+        ::unlink(tmp_path.c_str());
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// read_block_header — read just the header from a block position
+// ---------------------------------------------------------------------------
+
+bool BlockStore::read_block_header(const BlockPos& pos, CBlockHeader& header) const {
+    if (pos.is_null()) return false;
+
+    std::string path = get_block_path(pos.file_num);
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+
+    // Seek past the entry header (magic + size = 8 bytes)
+    if (std::fseek(f, static_cast<long>(pos.offset + 8), SEEK_SET) != 0) {
+        std::fclose(f);
+        return false;
+    }
+
+    // Read enough data for the header (308 bytes)
+    static constexpr size_t HEADER_SIZE = 308;
+    if (pos.size < HEADER_SIZE) {
+        std::fclose(f);
+        return false;
+    }
+
+    uint8_t header_data[HEADER_SIZE];
+    if (std::fread(header_data, 1, HEADER_SIZE, f) != HEADER_SIZE) {
+        std::fclose(f);
+        return false;
+    }
+
+    std::fclose(f);
+
+    // Deserialize just the header
+    DataReader r(header_data, HEADER_SIZE);
+    return deserialize_header(r, header);
+}
+
 } // namespace flow
 
