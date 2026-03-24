@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -435,6 +436,24 @@ float EvalEngine::eval_function_adapter(
     }
 
     return instance_->evaluate_with_delta(delta, dataset_hash);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// evaluate_with_metrics — extended evaluation with detailed metrics
+// ════════════════════════════════════════════════════════════════════════════
+
+// evaluate_with_metrics removed (was incorrectly declared outside class)
+
+// ════════════════════════════════════════════════════════════════════════════
+// verify_determinism
+// ════════════════════════════════════════════════════════════════════════════
+
+bool verify_determinism(float loss_a, float loss_b) {
+    // Bit-exact comparison via memcpy
+    uint32_t bits_a, bits_b;
+    std::memcpy(&bits_a, &loss_a, sizeof(uint32_t));
+    std::memcpy(&bits_b, &loss_b, sizeof(uint32_t));
+    return bits_a == bits_b;
 }
 
 } // namespace flow::consensus

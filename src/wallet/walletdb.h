@@ -76,6 +76,12 @@ public:
     bool store_tx(const WalletTx& tx);
     std::vector<WalletTx> load_transactions(int count, int skip) const;
 
+    // ---- Labels ----
+
+    bool store_label(const std::string& address, const std::string& label);
+    std::string load_label(const std::string& address) const;
+    std::vector<std::pair<std::string, std::string>> load_all_labels() const;
+
 private:
     sqlite3* db_ = nullptr;
     void init_tables();

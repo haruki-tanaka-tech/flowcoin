@@ -10,9 +10,10 @@
 
 #include "params.h"
 #include "../util/types.h"
-#include <vector>
-#include <string>
 #include <cstdint>
+#include <mutex>
+#include <string>
+#include <vector>
 
 struct ggml_context;
 struct ggml_tensor;
@@ -87,6 +88,48 @@ public:
     // Expand model to new dimensions (zero-pad new weights, copy existing)
     bool expand_to(const consensus::ModelDimensions& new_dims);
 
+    // ════════════════════════════════════════════════════════════
+    // Architecture validation and introspection
+    // ════════════════════════════════════════════════════════════
+
+    /// Validate that all model tensors match the expected dimensions.
+    /// Returns true if every tensor has the correct shape for dims_.
+    bool validate_architecture() const;
+
+    /// Deep-copy all weights into a new ConsensusModel instance.
+    /// The clone is independent: modifying it does not affect the original.
+    ConsensusModel clone() const;
+
+    /// Compute the element-wise difference (this - other) of all weights.
+    /// Both models must have the same dimensions. Returns the diff as
+    /// a flat float32 vector in serialization order.
+    std::vector<float> diff(const ConsensusModel& other) const;
+
+    /// Per-layer weight statistics for debugging and monitoring.
+    struct LayerStats {
+        uint32_t layer_index;
+        double mean;        // Mean of absolute weight values
+        double stddev;      // Standard deviation
+        double l2_norm;     // L2 norm (sqrt of sum of squares)
+        size_t num_params;  // Number of parameters in this layer
+    };
+
+    /// Get per-layer statistics for all model weights.
+    std::vector<LayerStats> get_layer_stats() const;
+
+    /// Get total memory usage of the model (bytes).
+    /// Includes ggml context overhead, tensor data, and metadata.
+    size_t memory_usage() const;
+
+    /// Quantize weights to int8 for compact storage.
+    /// Returns a packed buffer: [scale:float32][zero_point:int8][data:int8*N]
+    /// per tensor, where N is the number of elements.
+    /// The model weights are NOT modified (read-only operation).
+    std::vector<uint8_t> quantize_weights_int8() const;
+
+    /// Load weights from an int8 quantized buffer (reverses quantize_weights_int8).
+    bool load_quantized_int8(const std::vector<uint8_t>& quantized);
+
 private:
     consensus::ModelDimensions dims_{};
 
@@ -154,6 +197,9 @@ private:
     // logits_out: [seq_len * vocab] float32 output
     void forward_sequence(const uint8_t* tokens, int seq_len,
                           float* logits_out) const;
+
+    // Thread safety: protects weight modification operations
+    mutable std::mutex weights_mutex_;
 };
 
 // ════════════════════════════════════════════════════════════════

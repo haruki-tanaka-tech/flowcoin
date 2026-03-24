@@ -173,6 +173,8 @@ add_library(flowcoin_consensus STATIC
     src/consensus/merkle.cpp
     src/consensus/eval.cpp
     src/consensus/consensus_model.cpp
+    src/consensus/genesis.cpp
+    src/consensus/pow.cpp
 )
 target_include_directories(flowcoin_consensus PUBLIC src)
 target_link_libraries(flowcoin_consensus PUBLIC flowcoin_hash flowcoin_util ggml zstd)
@@ -194,6 +196,7 @@ add_library(flowcoin_chain STATIC
     src/chain/utxo.cpp
     src/chain/txindex.cpp
     src/chain/modelstate.cpp
+    src/chain/chaindb.cpp
 )
 target_include_directories(flowcoin_chain PUBLIC src)
 target_link_libraries(flowcoin_chain PUBLIC flowcoin_consensus flowcoin_primitives sqlite)
@@ -205,6 +208,10 @@ add_library(flowcoin_net STATIC
     src/net/peer.cpp
     src/net/messages.cpp
     src/net/addrman.cpp
+    src/net/banman.cpp
+    src/net/sync.cpp
+    src/net/netaddress.cpp
+    src/net/netbase.cpp
 )
 target_include_directories(flowcoin_net PUBLIC src)
 target_link_libraries(flowcoin_net PUBLIC flowcoin_chain uv_a)
@@ -218,6 +225,9 @@ add_library(flowcoin_wallet STATIC
     src/wallet/txbuilder.cpp
     src/wallet/fees.cpp
     src/wallet/walletutil.cpp
+    src/wallet/encryption.cpp
+    src/wallet/keypool.cpp
+    src/wallet/backup.cpp
 )
 target_include_directories(flowcoin_wallet PUBLIC src)
 target_link_libraries(flowcoin_wallet PUBLIC flowcoin_chain flowcoin_crypto sqlite)
@@ -231,6 +241,8 @@ add_library(flowcoin_rpc STATIC
     src/rpc/net.cpp
     src/rpc/rawtransaction.cpp
     src/rpc/training.cpp
+    src/rpc/util.cpp
+    src/rpc/debug.cpp
 )
 target_include_directories(flowcoin_rpc PUBLIC src)
 target_link_libraries(flowcoin_rpc PUBLIC
@@ -326,6 +338,7 @@ option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)
     enable_testing()
     add_executable(flowcoin_tests
+        src/logging.cpp
         src/test/test_main.cpp
         src/test/test_keccak.cpp
         src/test/test_arith_uint256.cpp
@@ -351,6 +364,20 @@ if(BUILD_TESTS)
         src/test/test_txbuilder.cpp
         src/test/test_walletutil.cpp
         src/test/test_banman.cpp
+        src/test/test_encryption.cpp
+        src/test/test_keypool.cpp
+        src/test/test_chaindb.cpp
+        src/test/test_genesis.cpp
+        src/test/test_rpc.cpp
+        src/test/test_reorg.cpp
+        src/test/test_compact_blocks.cpp
+        src/test/test_netaddress.cpp
+        src/test/test_wallet_full.cpp
+        src/test/test_block_validation.cpp
+        src/test/test_coin_selection.cpp
+        src/test/test_strencodings.cpp
+        src/test/test_transaction_ext.cpp
+        src/test/test_backup.cpp
     )
     target_include_directories(flowcoin_tests PRIVATE src)
     target_link_libraries(flowcoin_tests PRIVATE

@@ -8,6 +8,7 @@
 #include "consensus/params.h"
 #include "hash/keccak.h"
 #include "util/serialize.h"
+#include "util/strencodings.h"
 #include "util/time.h"
 #include "util/random.h"
 
@@ -70,6 +71,20 @@ void MessageHandler::process_message(Peer& peer, const std::string& command,
         handle_getheaders(peer, payload, payload_len);
     } else if (command == NetCmd::HEADERS) {
         handle_headers(peer, payload, payload_len);
+    } else if (command == NetCmd::REJECT) {
+        handle_reject(peer, payload, payload_len);
+    } else if (command == NetCmd::SENDHEADERS) {
+        handle_sendheaders(peer);
+    } else if (command == NetCmd::SENDCMPCT) {
+        handle_sendcmpct(peer, payload, payload_len);
+    } else if (command == NetCmd::CMPCTBLOCK) {
+        handle_cmpctblock(peer, payload, payload_len);
+    } else if (command == NetCmd::GETBLOCKTXN) {
+        handle_getblocktxn(peer, payload, payload_len);
+    } else if (command == NetCmd::BLOCKTXN) {
+        handle_blocktxn(peer, payload, payload_len);
+    } else if (command == NetCmd::FEEFILTER) {
+        handle_feefilter(peer, payload, payload_len);
     } else {
         // Unknown command -- ignore
         fprintf(stderr, "net: unknown command '%s' from peer %lu\n",
@@ -878,4 +893,607 @@ void MessageHandler::relay_tx(const uint256& txid) {
     netman_.broadcast(NetCmd::INV, w.release());
 }
 
+// ===========================================================================
+// reject message — log and update misbehavior
+// ===========================================================================
+
+void MessageHandler::handle_reject(Peer& peer, const uint8_t* data, size_t len) {
+    DataReader r(data, len);
+
+    // Rejected message type (compact size string)
+    uint64_t msg_len = r.read_compact_size();
+    if (r.error() || msg_len > 12) {
+        peer.add_misbehavior(5);
+        return;
+    }
+    auto msg_bytes = r.read_bytes(static_cast<size_t>(msg_len));
+    if (r.error()) return;
+    std::string rejected_msg(reinterpret_cast<const char*>(msg_bytes.data()),
+                             msg_bytes.size());
+
+    // Rejection code
+    uint8_t code = r.read_u8();
+    if (r.error()) return;
+
+    // Reason string
+    uint64_t reason_len = r.read_compact_size();
+    if (r.error() || reason_len > 256) return;
+    std::string reason;
+    if (reason_len > 0) {
+        auto reason_bytes = r.read_bytes(static_cast<size_t>(reason_len));
+        if (r.error()) return;
+        reason.assign(reinterpret_cast<const char*>(reason_bytes.data()),
+                      reason_bytes.size());
+    }
+
+    // Optional: 32-byte hash of the rejected data (for blocks/txs)
+    uint256 rejected_hash;
+    if (r.remaining() >= 32) {
+        auto hash_bytes = r.read_bytes(32);
+        if (!r.error()) {
+            std::memcpy(rejected_hash.data(), hash_bytes.data(), 32);
+        }
+    }
+
+    const char* code_str = "unknown";
+    switch (code) {
+        case 0x01: code_str = "REJECT_MALFORMED"; break;
+        case 0x10: code_str = "REJECT_INVALID"; break;
+        case 0x11: code_str = "REJECT_OBSOLETE"; break;
+        case 0x12: code_str = "REJECT_DUPLICATE"; break;
+        case 0x40: code_str = "REJECT_NONSTANDARD"; break;
+        case 0x41: code_str = "REJECT_DUST"; break;
+        case 0x42: code_str = "REJECT_INSUFFICIENTFEE"; break;
+        case 0x43: code_str = "REJECT_CHECKPOINT"; break;
+        default: break;
+    }
+
+    fprintf(stderr, "net: peer %lu rejected %s: %s (code=%s, hash=%.8s...)\n",
+            (unsigned long)peer.id(),
+            rejected_msg.c_str(),
+            reason.c_str(),
+            code_str,
+            hex_encode(rejected_hash.data(), 32).c_str());
+
+    // Update misbehavior score based on the rejection
+    // Rejecting our blocks or txs might indicate protocol incompatibility
+    // but isn't necessarily malicious. Only penalize for certain codes.
+    if (code == 0x01 || code == 0x10) {
+        // Malformed or invalid from their perspective -- minor penalty
+        peer.add_misbehavior(1);
+    }
+}
+
+// ===========================================================================
+// sendheaders — peer wants headers-first announcements
+// ===========================================================================
+
+void MessageHandler::handle_sendheaders(Peer& peer) {
+    peer.set_prefers_headers(true);
+    fprintf(stderr, "net: peer %lu prefers header announcements\n",
+            (unsigned long)peer.id());
+}
+
+// ===========================================================================
+// sendcmpct — enable compact block relay
+// ===========================================================================
+
+void MessageHandler::handle_sendcmpct(Peer& peer, const uint8_t* data, size_t len) {
+    if (len < 9) {
+        peer.add_misbehavior(5);
+        return;
+    }
+
+    DataReader r(data, len);
+
+    // announce (bool): whether to use high-bandwidth mode
+    uint8_t announce = r.read_u8();
+    // version (uint64_t): compact block protocol version
+    uint64_t version = r.read_u64_le();
+
+    if (r.error()) {
+        peer.add_misbehavior(5);
+        return;
+    }
+
+    // We support compact block version 1
+    if (version == 1) {
+        peer.set_supports_compact_blocks(true);
+        peer.set_compact_block_version(version);
+        peer.set_wants_cmpct_high_bandwidth(announce != 0);
+        peer.set_prefers_compact_blocks(announce != 0);
+
+        fprintf(stderr, "net: peer %lu supports compact blocks v%lu (high-bw: %s)\n",
+                (unsigned long)peer.id(),
+                (unsigned long)version,
+                announce ? "yes" : "no");
+    }
+}
+
+// ===========================================================================
+// Compact block short txid computation
+// ===========================================================================
+
+uint64_t MessageHandler::compute_short_txid(const uint256& txid,
+                                             uint64_t nonce,
+                                             const uint256& block_hash) {
+    // SipHash-style short ID: hash(block_hash || nonce || txid) and take 6 bytes
+    DataWriter w(80);
+    w.write_bytes(block_hash.data(), 32);
+    w.write_u64_le(nonce);
+    w.write_bytes(txid.data(), 32);
+
+    uint256 h = keccak256(w.data().data(), w.data().size());
+    uint64_t result = 0;
+    std::memcpy(&result, h.data(), 6);
+    return result & 0xFFFFFFFFFFFFULL;  // Mask to 6 bytes (48 bits)
+}
+
+// ===========================================================================
+// cmpctblock — receive a compact block
+// ===========================================================================
+
+void MessageHandler::handle_cmpctblock(Peer& peer, const uint8_t* data, size_t len) {
+    DataReader r(data, len);
+
+    // Read the block header (same format as in headers message)
+    CBlockHeader hdr;
+
+    auto prev_hash_bytes = r.read_bytes(32);
+    if (r.error()) { peer.add_misbehavior(10); return; }
+    std::memcpy(hdr.prev_hash.data(), prev_hash_bytes.data(), 32);
+
+    auto merkle_bytes = r.read_bytes(32);
+    if (r.error()) { peer.add_misbehavior(10); return; }
+    std::memcpy(hdr.merkle_root.data(), merkle_bytes.data(), 32);
+
+    auto training_bytes = r.read_bytes(32);
+    if (r.error()) { peer.add_misbehavior(10); return; }
+    std::memcpy(hdr.training_hash.data(), training_bytes.data(), 32);
+
+    auto dataset_bytes = r.read_bytes(32);
+    if (r.error()) { peer.add_misbehavior(10); return; }
+    std::memcpy(hdr.dataset_hash.data(), dataset_bytes.data(), 32);
+
+    hdr.height = r.read_u64_le();
+    hdr.timestamp = r.read_i64_le();
+    hdr.nbits = r.read_u32_le();
+    hdr.val_loss = r.read_float_le();
+    hdr.prev_val_loss = r.read_float_le();
+    hdr.d_model = r.read_u32_le();
+    hdr.n_layers = r.read_u32_le();
+    hdr.d_ff = r.read_u32_le();
+    hdr.n_heads = r.read_u32_le();
+    hdr.gru_dim = r.read_u32_le();
+    hdr.n_slots = r.read_u32_le();
+    hdr.train_steps = r.read_u32_le();
+    hdr.stagnation = r.read_u32_le();
+    hdr.delta_offset = r.read_u32_le();
+    hdr.delta_length = r.read_u32_le();
+    hdr.sparse_count = r.read_u32_le();
+    hdr.sparse_threshold = r.read_float_le();
+    hdr.nonce = r.read_u32_le();
+    hdr.version = r.read_u32_le();
+
+    auto pubkey_bytes = r.read_bytes(32);
+    if (r.error()) { peer.add_misbehavior(10); return; }
+    std::memcpy(hdr.miner_pubkey.data(), pubkey_bytes.data(), 32);
+
+    auto sig_bytes = r.read_bytes(64);
+    if (r.error()) { peer.add_misbehavior(10); return; }
+    std::memcpy(hdr.miner_sig.data(), sig_bytes.data(), 64);
+
+    // Nonce for short txid computation
+    uint64_t cmpct_nonce = r.read_u64_le();
+    if (r.error()) { peer.add_misbehavior(10); return; }
+
+    uint256 block_hash = hdr.get_hash();
+
+    // Check if we already have this block
+    if (chain_.block_tree().find(block_hash)) {
+        return;
+    }
+
+    // Read short transaction IDs
+    uint64_t short_id_count = r.read_compact_size();
+    if (r.error() || short_id_count > 100000) {
+        peer.add_misbehavior(20);
+        return;
+    }
+
+    std::vector<uint64_t> short_ids;
+    short_ids.reserve(static_cast<size_t>(short_id_count));
+    for (uint64_t i = 0; i < short_id_count; i++) {
+        // Each short ID is 6 bytes
+        auto id_bytes = r.read_bytes(6);
+        if (r.error()) { peer.add_misbehavior(10); return; }
+        uint64_t short_id = 0;
+        std::memcpy(&short_id, id_bytes.data(), 6);
+        short_ids.push_back(short_id);
+    }
+
+    // Read prefilled transactions
+    uint64_t prefilled_count = r.read_compact_size();
+    if (r.error() || prefilled_count > short_id_count + 1) {
+        peer.add_misbehavior(20);
+        return;
+    }
+
+    std::vector<uint32_t> prefilled_indices;
+    std::vector<CTransaction> prefilled_txs;
+    prefilled_indices.reserve(static_cast<size_t>(prefilled_count));
+    prefilled_txs.reserve(static_cast<size_t>(prefilled_count));
+
+    for (uint64_t i = 0; i < prefilled_count; i++) {
+        uint64_t diff_index = r.read_compact_size();
+        if (r.error()) { peer.add_misbehavior(10); return; }
+
+        // Deserialize the transaction
+        CTransaction tx;
+        tx.version = r.read_u32_le();
+        uint64_t vin_count = r.read_compact_size();
+        if (r.error() || vin_count > 10000) { peer.add_misbehavior(10); return; }
+
+        tx.vin.resize(static_cast<size_t>(vin_count));
+        for (uint64_t j = 0; j < vin_count; j++) {
+            auto txid_bytes = r.read_bytes(32);
+            if (r.error()) return;
+            std::memcpy(tx.vin[j].prevout.txid.data(), txid_bytes.data(), 32);
+            tx.vin[j].prevout.index = r.read_u32_le();
+            auto pk_bytes = r.read_bytes(32);
+            if (r.error()) return;
+            std::memcpy(tx.vin[j].pubkey.data(), pk_bytes.data(), 32);
+            auto sig_b = r.read_bytes(64);
+            if (r.error()) return;
+            std::memcpy(tx.vin[j].signature.data(), sig_b.data(), 64);
+        }
+
+        uint64_t vout_count = r.read_compact_size();
+        if (r.error() || vout_count > 10000) { peer.add_misbehavior(10); return; }
+
+        tx.vout.resize(static_cast<size_t>(vout_count));
+        for (uint64_t j = 0; j < vout_count; j++) {
+            tx.vout[j].amount = r.read_i64_le();
+            auto pkh_bytes = r.read_bytes(32);
+            if (r.error()) return;
+            std::memcpy(tx.vout[j].pubkey_hash.data(), pkh_bytes.data(), 32);
+        }
+
+        tx.locktime = r.read_i64_le();
+        if (r.error()) return;
+
+        prefilled_indices.push_back(static_cast<uint32_t>(diff_index));
+        prefilled_txs.push_back(std::move(tx));
+    }
+
+    // Store the compact block state for reconstruction
+    CompactBlockState& cbs = compact_states_[peer.id()];
+    cbs.block_hash = block_hash;
+    cbs.header = hdr;
+    cbs.short_txids = std::move(short_ids);
+    cbs.prefilled_txs = std::move(prefilled_txs);
+    cbs.prefilled_indices = std::move(prefilled_indices);
+    cbs.waiting_for_txns = false;
+
+    // Attempt reconstruction from mempool
+    // Build the expected transaction list
+    size_t total_tx = cbs.short_txids.size() + cbs.prefilled_indices.size();
+    cbs.reconstructed_txs.resize(total_tx);
+
+    // Place prefilled transactions
+    uint32_t last_idx = 0;
+    for (size_t i = 0; i < cbs.prefilled_indices.size(); i++) {
+        uint32_t actual_idx = last_idx + cbs.prefilled_indices[i];
+        if (actual_idx >= total_tx) {
+            peer.add_misbehavior(20);
+            compact_states_.erase(peer.id());
+            return;
+        }
+        cbs.reconstructed_txs[actual_idx] = cbs.prefilled_txs[i];
+        last_idx = actual_idx + 1;
+    }
+
+    // For now, since we don't have a full mempool, we need to request
+    // all missing transactions via getblocktxn.
+    // In a full implementation, we'd match short_txids against the mempool.
+
+    std::vector<uint32_t> missing_indices;
+    uint32_t short_idx = 0;
+    for (uint32_t i = 0; i < total_tx; i++) {
+        // Check if this position is prefilled
+        bool is_prefilled = false;
+        uint32_t check_idx = 0;
+        for (size_t p = 0; p < cbs.prefilled_indices.size(); p++) {
+            check_idx += cbs.prefilled_indices[p];
+            if (p > 0) check_idx++;
+            if (check_idx == i) {
+                is_prefilled = true;
+                break;
+            }
+        }
+        if (!is_prefilled) {
+            missing_indices.push_back(i);
+            short_idx++;
+        }
+    }
+
+    if (missing_indices.empty()) {
+        // All transactions are available. Reconstruct the full block.
+        CBlock block;
+        // Copy header fields
+        block.prev_hash = cbs.header.prev_hash;
+        block.merkle_root = cbs.header.merkle_root;
+        block.training_hash = cbs.header.training_hash;
+        block.dataset_hash = cbs.header.dataset_hash;
+        block.height = cbs.header.height;
+        block.timestamp = cbs.header.timestamp;
+        block.nbits = cbs.header.nbits;
+        block.val_loss = cbs.header.val_loss;
+        block.prev_val_loss = cbs.header.prev_val_loss;
+        block.d_model = cbs.header.d_model;
+        block.n_layers = cbs.header.n_layers;
+        block.d_ff = cbs.header.d_ff;
+        block.n_heads = cbs.header.n_heads;
+        block.gru_dim = cbs.header.gru_dim;
+        block.n_slots = cbs.header.n_slots;
+        block.train_steps = cbs.header.train_steps;
+        block.stagnation = cbs.header.stagnation;
+        block.delta_offset = cbs.header.delta_offset;
+        block.delta_length = cbs.header.delta_length;
+        block.sparse_count = cbs.header.sparse_count;
+        block.sparse_threshold = cbs.header.sparse_threshold;
+        block.nonce = cbs.header.nonce;
+        block.version = cbs.header.version;
+        block.miner_pubkey = cbs.header.miner_pubkey;
+        block.miner_sig = cbs.header.miner_sig;
+        block.vtx = std::move(cbs.reconstructed_txs);
+
+        compact_states_.erase(peer.id());
+
+        consensus::ValidationState vstate;
+        if (chain_.accept_block(block, vstate)) {
+            fprintf(stderr, "net: accepted compact block at height %lu from peer %lu\n",
+                    (unsigned long)block.height, (unsigned long)peer.id());
+            relay_block(block_hash);
+        } else {
+            fprintf(stderr, "net: rejected compact block from peer %lu: %s\n",
+                    (unsigned long)peer.id(), vstate.reject_reason().c_str());
+            peer.add_misbehavior(10);
+        }
+    } else {
+        // Request missing transactions
+        cbs.waiting_for_txns = true;
+
+        DataWriter w;
+        w.write_bytes(block_hash.data(), 32);
+        w.write_compact_size(missing_indices.size());
+        for (uint32_t idx : missing_indices) {
+            w.write_compact_size(idx);
+        }
+        send(peer, NetCmd::GETBLOCKTXN, w.release());
+
+        fprintf(stderr, "net: compact block from peer %lu missing %zu txs, requesting\n",
+                (unsigned long)peer.id(), missing_indices.size());
+    }
+}
+
+// ===========================================================================
+// getblocktxn — serve missing transactions for compact block
+// ===========================================================================
+
+void MessageHandler::handle_getblocktxn(Peer& peer, const uint8_t* data, size_t len) {
+    DataReader r(data, len);
+
+    auto hash_bytes = r.read_bytes(32);
+    if (r.error()) { peer.add_misbehavior(10); return; }
+    uint256 block_hash;
+    std::memcpy(block_hash.data(), hash_bytes.data(), 32);
+
+    uint64_t index_count = r.read_compact_size();
+    if (r.error() || index_count > 100000) {
+        peer.add_misbehavior(20);
+        return;
+    }
+
+    std::vector<uint32_t> indices;
+    indices.reserve(static_cast<size_t>(index_count));
+    for (uint64_t i = 0; i < index_count; i++) {
+        uint64_t idx = r.read_compact_size();
+        if (r.error()) return;
+        indices.push_back(static_cast<uint32_t>(idx));
+    }
+
+    // Find the block
+    CBlockIndex* index = chain_.block_tree().find(block_hash);
+    if (!index || index->pos.is_null()) {
+        // We don't have this block — send nothing
+        return;
+    }
+
+    CBlock block;
+    if (!chain_.block_store().read_block(index->pos, block)) {
+        return;
+    }
+
+    // Build response: blocktxn message
+    DataWriter w;
+    w.write_bytes(block_hash.data(), 32);
+    w.write_compact_size(indices.size());
+
+    for (uint32_t idx : indices) {
+        if (idx >= block.vtx.size()) {
+            peer.add_misbehavior(10);
+            return;
+        }
+        auto tx_data = block.vtx[idx].serialize();
+        w.write_bytes(tx_data.data(), tx_data.size());
+    }
+
+    send(peer, NetCmd::BLOCKTXN, w.release());
+}
+
+// ===========================================================================
+// blocktxn — fill in missing txs for compact block reconstruction
+// ===========================================================================
+
+void MessageHandler::handle_blocktxn(Peer& peer, const uint8_t* data, size_t len) {
+    DataReader r(data, len);
+
+    auto hash_bytes = r.read_bytes(32);
+    if (r.error()) { peer.add_misbehavior(10); return; }
+    uint256 block_hash;
+    std::memcpy(block_hash.data(), hash_bytes.data(), 32);
+
+    // Find our compact block state for this peer
+    auto it = compact_states_.find(peer.id());
+    if (it == compact_states_.end() || it->second.block_hash != block_hash) {
+        // We didn't request this or it's for a different block
+        return;
+    }
+
+    CompactBlockState& cbs = it->second;
+
+    // Read the transactions
+    uint64_t tx_count = r.read_compact_size();
+    if (r.error() || tx_count > 100000) {
+        peer.add_misbehavior(20);
+        compact_states_.erase(it);
+        return;
+    }
+
+    std::vector<CTransaction> txns;
+    txns.reserve(static_cast<size_t>(tx_count));
+
+    for (uint64_t i = 0; i < tx_count; i++) {
+        CTransaction tx;
+        tx.version = r.read_u32_le();
+
+        uint64_t vin_count = r.read_compact_size();
+        if (r.error() || vin_count > 10000) {
+            peer.add_misbehavior(10);
+            compact_states_.erase(it);
+            return;
+        }
+
+        tx.vin.resize(static_cast<size_t>(vin_count));
+        for (uint64_t j = 0; j < vin_count; j++) {
+            auto txid_bytes = r.read_bytes(32);
+            if (r.error()) { compact_states_.erase(it); return; }
+            std::memcpy(tx.vin[j].prevout.txid.data(), txid_bytes.data(), 32);
+            tx.vin[j].prevout.index = r.read_u32_le();
+            auto pk_bytes = r.read_bytes(32);
+            if (r.error()) { compact_states_.erase(it); return; }
+            std::memcpy(tx.vin[j].pubkey.data(), pk_bytes.data(), 32);
+            auto sig_b = r.read_bytes(64);
+            if (r.error()) { compact_states_.erase(it); return; }
+            std::memcpy(tx.vin[j].signature.data(), sig_b.data(), 64);
+        }
+
+        uint64_t vout_count = r.read_compact_size();
+        if (r.error() || vout_count > 10000) {
+            peer.add_misbehavior(10);
+            compact_states_.erase(it);
+            return;
+        }
+
+        tx.vout.resize(static_cast<size_t>(vout_count));
+        for (uint64_t j = 0; j < vout_count; j++) {
+            tx.vout[j].amount = r.read_i64_le();
+            auto pkh_bytes = r.read_bytes(32);
+            if (r.error()) { compact_states_.erase(it); return; }
+            std::memcpy(tx.vout[j].pubkey_hash.data(), pkh_bytes.data(), 32);
+        }
+
+        tx.locktime = r.read_i64_le();
+        if (r.error()) { compact_states_.erase(it); return; }
+
+        txns.push_back(std::move(tx));
+    }
+
+    // Fill in the missing positions
+    size_t tx_idx = 0;
+    for (size_t i = 0; i < cbs.reconstructed_txs.size() && tx_idx < txns.size(); i++) {
+        // Check if this position was prefilled
+        if (cbs.reconstructed_txs[i].vin.empty() && cbs.reconstructed_txs[i].vout.empty()) {
+            cbs.reconstructed_txs[i] = std::move(txns[tx_idx]);
+            tx_idx++;
+        }
+    }
+
+    // Reconstruct the full block
+    CBlock block;
+    block.prev_hash = cbs.header.prev_hash;
+    block.merkle_root = cbs.header.merkle_root;
+    block.training_hash = cbs.header.training_hash;
+    block.dataset_hash = cbs.header.dataset_hash;
+    block.height = cbs.header.height;
+    block.timestamp = cbs.header.timestamp;
+    block.nbits = cbs.header.nbits;
+    block.val_loss = cbs.header.val_loss;
+    block.prev_val_loss = cbs.header.prev_val_loss;
+    block.d_model = cbs.header.d_model;
+    block.n_layers = cbs.header.n_layers;
+    block.d_ff = cbs.header.d_ff;
+    block.n_heads = cbs.header.n_heads;
+    block.gru_dim = cbs.header.gru_dim;
+    block.n_slots = cbs.header.n_slots;
+    block.train_steps = cbs.header.train_steps;
+    block.stagnation = cbs.header.stagnation;
+    block.delta_offset = cbs.header.delta_offset;
+    block.delta_length = cbs.header.delta_length;
+    block.sparse_count = cbs.header.sparse_count;
+    block.sparse_threshold = cbs.header.sparse_threshold;
+    block.nonce = cbs.header.nonce;
+    block.version = cbs.header.version;
+    block.miner_pubkey = cbs.header.miner_pubkey;
+    block.miner_sig = cbs.header.miner_sig;
+    block.vtx = std::move(cbs.reconstructed_txs);
+
+    compact_states_.erase(it);
+
+    consensus::ValidationState vstate;
+    if (chain_.accept_block(block, vstate)) {
+        fprintf(stderr, "net: accepted reconstructed block at height %lu from peer %lu\n",
+                (unsigned long)block.height, (unsigned long)peer.id());
+        relay_block(block_hash);
+    } else {
+        fprintf(stderr, "net: rejected reconstructed block from peer %lu: %s\n",
+                (unsigned long)peer.id(), vstate.reject_reason().c_str());
+        peer.add_misbehavior(10);
+    }
+}
+
+// ===========================================================================
+// feefilter — set minimum fee rate for tx relay
+// ===========================================================================
+
+void MessageHandler::handle_feefilter(Peer& peer, const uint8_t* data, size_t len) {
+    if (len < 8) {
+        peer.add_misbehavior(5);
+        return;
+    }
+
+    DataReader r(data, len);
+    int64_t fee_rate = r.read_i64_le();
+    if (r.error()) return;
+
+    // Sanity check: fee rate should be non-negative and reasonable
+    if (fee_rate < 0) {
+        peer.add_misbehavior(10);
+        return;
+    }
+
+    // Cap at 100 BTC/kB (clearly unreasonable, likely an attack)
+    constexpr int64_t MAX_FEE_RATE = 10'000'000'000LL;
+    if (fee_rate > MAX_FEE_RATE) {
+        peer.add_misbehavior(10);
+        return;
+    }
+
+    peer.set_fee_filter(fee_rate);
+    fprintf(stderr, "net: peer %lu set fee filter to %ld sat/kB\n",
+            (unsigned long)peer.id(), (long)fee_rate);
+}
+
 } // namespace flow
+

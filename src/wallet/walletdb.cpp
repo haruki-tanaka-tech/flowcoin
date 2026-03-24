@@ -103,6 +103,12 @@ void WalletDB::init_tables() {
         "  block_height INTEGER,"
         "  label TEXT"
         ");");
+
+    exec_sql(db_,
+        "CREATE TABLE IF NOT EXISTS labels ("
+        "  address TEXT PRIMARY KEY,"
+        "  label TEXT"
+        ");");
 }
 
 // ---------------------------------------------------------------------------
@@ -426,6 +432,70 @@ std::vector<WalletDB::WalletTx> WalletDB::load_transactions(
         tx.label = label_str ? label_str : "";
 
         result.push_back(std::move(tx));
+    }
+
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Labels
+// ---------------------------------------------------------------------------
+
+bool WalletDB::store_label(const std::string& address, const std::string& label) {
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "INSERT OR REPLACE INTO labels (address, label) VALUES (?, ?);",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return false;
+
+    bind_text(stmt, 1, address);
+    bind_text(stmt, 2, label);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
+std::string WalletDB::load_label(const std::string& address) const {
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "SELECT label FROM labels WHERE address = ?;",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return "";
+
+    bind_text(stmt, 1, address);
+
+    rc = sqlite3_step(stmt);
+    std::string label;
+    if (rc == SQLITE_ROW) {
+        const char* label_str = reinterpret_cast<const char*>(
+            sqlite3_column_text(stmt, 0));
+        label = label_str ? label_str : "";
+    }
+
+    sqlite3_finalize(stmt);
+    return label;
+}
+
+std::vector<std::pair<std::string, std::string>> WalletDB::load_all_labels() const {
+    std::vector<std::pair<std::string, std::string>> result;
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "SELECT address, label FROM labels;",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return result;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* addr_str = reinterpret_cast<const char*>(
+            sqlite3_column_text(stmt, 0));
+        const char* label_str = reinterpret_cast<const char*>(
+            sqlite3_column_text(stmt, 1));
+
+        std::string addr = addr_str ? addr_str : "";
+        std::string label = label_str ? label_str : "";
+        result.emplace_back(addr, label);
     }
 
     sqlite3_finalize(stmt);

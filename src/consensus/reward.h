@@ -34,6 +34,43 @@ namespace flow::consensus {
 ///                Returns 0 when the subsidy has been fully exhausted.
 Amount compute_block_reward(uint64_t height);
 
+/// Compute the total coins minted from genesis through the given height.
+/// This is the running sum of compute_block_reward(h) for h in [0, height].
+///
+/// @param height  Block height (inclusive).
+/// @return        Total coins minted in atomic units.
+Amount compute_total_supply(uint64_t height);
+
+/// Get the halving era number for a given height.
+///
+/// @param height  Block height.
+/// @return        Era index (0 = first era, 1 = after first halving, etc.)
+uint32_t get_halving_era(uint64_t height);
+
+/// Get the height at which the next halving occurs.
+///
+/// @param height  Current block height.
+/// @return        Height of the next halving event.
+uint64_t get_next_halving_height(uint64_t height);
+
+/// Get the number of blocks remaining until the next halving.
+///
+/// @param height  Current block height.
+/// @return        Blocks until next halving.
+uint64_t blocks_until_halving(uint64_t height);
+
+/// Compute the total remaining supply to be minted after a given height.
+///
+/// @param height  Current block height.
+/// @return        Remaining unminted coins in atomic units.
+Amount compute_remaining_supply(uint64_t height);
+
+/// Check if the subsidy has been fully exhausted at a given height.
+///
+/// @param height  Block height to check.
+/// @return        true if compute_block_reward(height) returns 0.
+bool is_subsidy_exhausted(uint64_t height);
+
 } // namespace flow::consensus
 
 #endif // FLOWCOIN_CONSENSUS_REWARD_H

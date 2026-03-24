@@ -1350,4 +1350,291 @@ std::vector<uint8_t> generate_validation_data(
     return result;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// validate_architecture — verify all tensor dimensions
+// ════════════════════════════════════════════════════════════════════════════
+
+bool ConsensusModel::validate_architecture() const {
+    if (!ctx_) return false;
+
+    // Check embedding tensor
+    if (!tok_emb_) return false;
+    if (ggml_nelements(tok_emb_) !=
+        static_cast<int64_t>(dims_.vocab) * static_cast<int64_t>(dims_.d_model)) {
+        return false;
+    }
+
+    // Check final norm
+    if (!final_norm_w_) return false;
+    if (ggml_nelements(final_norm_w_) != static_cast<int64_t>(dims_.d_model)) {
+        return false;
+    }
+
+    // Check per-layer tensors
+    if (layers_.size() != dims_.n_layers) return false;
+
+    for (uint32_t l = 0; l < dims_.n_layers; l++) {
+        const auto& layer = layers_[l];
+
+        // RMSNorm weights: 4 per layer, each [d_model]
+        if (!layer.norm1_w || ggml_nelements(layer.norm1_w) != static_cast<int64_t>(dims_.d_model)) return false;
+        if (!layer.norm2_w || ggml_nelements(layer.norm2_w) != static_cast<int64_t>(dims_.d_model)) return false;
+        if (!layer.norm3_w || ggml_nelements(layer.norm3_w) != static_cast<int64_t>(dims_.d_model)) return false;
+        if (!layer.norm4_w || ggml_nelements(layer.norm4_w) != static_cast<int64_t>(dims_.d_model)) return false;
+
+        // Conv kernels
+        if (!layer.conv3_w || ggml_nelements(layer.conv3_w) != 3 * static_cast<int64_t>(dims_.d_model)) return false;
+        if (!layer.conv7_w || ggml_nelements(layer.conv7_w) != 7 * static_cast<int64_t>(dims_.d_model)) return false;
+        if (!layer.conv15_w || ggml_nelements(layer.conv15_w) != 15 * static_cast<int64_t>(dims_.d_model)) return false;
+        if (!layer.conv_mix_w || ggml_nelements(layer.conv_mix_w) !=
+            static_cast<int64_t>(dims_.d_model) * static_cast<int64_t>(dims_.d_model)) return false;
+
+        // MinGRU
+        if (!layer.gru_wz || ggml_nelements(layer.gru_wz) !=
+            static_cast<int64_t>(dims_.d_model) * static_cast<int64_t>(dims_.d_model)) return false;
+        if (!layer.gru_wh || ggml_nelements(layer.gru_wh) !=
+            static_cast<int64_t>(dims_.d_model) * static_cast<int64_t>(dims_.d_model)) return false;
+        if (!layer.gru_bz || ggml_nelements(layer.gru_bz) != static_cast<int64_t>(dims_.d_model)) return false;
+        if (!layer.gru_bh || ggml_nelements(layer.gru_bh) != static_cast<int64_t>(dims_.d_model)) return false;
+
+        // Slot memory
+        if (!layer.slot_keys || ggml_nelements(layer.slot_keys) !=
+            static_cast<int64_t>(dims_.d_model) * static_cast<int64_t>(dims_.n_slots)) return false;
+        if (!layer.slot_values || ggml_nelements(layer.slot_values) !=
+            static_cast<int64_t>(dims_.d_model) * static_cast<int64_t>(dims_.n_slots)) return false;
+        if (!layer.slot_proj_q || ggml_nelements(layer.slot_proj_q) !=
+            static_cast<int64_t>(dims_.d_model) * static_cast<int64_t>(dims_.d_model)) return false;
+        if (!layer.slot_proj_out || ggml_nelements(layer.slot_proj_out) !=
+            static_cast<int64_t>(dims_.d_model) * static_cast<int64_t>(dims_.d_model)) return false;
+
+        // SwiGLU FFN
+        if (!layer.ffn_gate_w || ggml_nelements(layer.ffn_gate_w) !=
+            static_cast<int64_t>(dims_.d_model) * static_cast<int64_t>(dims_.d_ff)) return false;
+        if (!layer.ffn_up_w || ggml_nelements(layer.ffn_up_w) !=
+            static_cast<int64_t>(dims_.d_model) * static_cast<int64_t>(dims_.d_ff)) return false;
+        if (!layer.ffn_down_w || ggml_nelements(layer.ffn_down_w) !=
+            static_cast<int64_t>(dims_.d_ff) * static_cast<int64_t>(dims_.d_model)) return false;
+    }
+
+    return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// clone — deep copy
+// ════════════════════════════════════════════════════════════════════════════
+
+ConsensusModel ConsensusModel::clone() const {
+    std::lock_guard<std::mutex> lock(weights_mutex_);
+
+    ConsensusModel copy;
+    copy.init(dims_, 0);  // Allocate with dummy seed
+
+    // Copy all weights
+    auto w = get_weights();
+    copy.set_weights(w);
+
+    return copy;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// diff — compute element-wise weight difference
+// ════════════════════════════════════════════════════════════════════════════
+
+std::vector<float> ConsensusModel::diff(const ConsensusModel& other) const {
+    auto w_this = get_weights();
+    auto w_other = other.get_weights();
+
+    if (w_this.size() != w_other.size()) {
+        return {};  // Dimension mismatch
+    }
+
+    std::vector<float> result(w_this.size());
+    for (size_t i = 0; i < w_this.size(); i++) {
+        result[i] = w_this[i] - w_other[i];
+    }
+    return result;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// get_layer_stats — per-layer weight statistics
+// ════════════════════════════════════════════════════════════════════════════
+
+std::vector<ConsensusModel::LayerStats> ConsensusModel::get_layer_stats() const {
+    std::lock_guard<std::mutex> lock(weights_mutex_);
+
+    std::vector<LayerStats> stats;
+
+    auto compute_stats = [](const float* data, size_t n, LayerStats& out) {
+        if (n == 0) return;
+
+        double sum = 0.0;
+        double sum_sq = 0.0;
+
+        for (size_t i = 0; i < n; i++) {
+            double v = static_cast<double>(std::fabs(data[i]));
+            sum += v;
+            sum_sq += static_cast<double>(data[i]) * static_cast<double>(data[i]);
+        }
+
+        out.num_params = n;
+        out.mean = sum / static_cast<double>(n);
+        out.l2_norm = std::sqrt(sum_sq);
+
+        double variance = (sum_sq / static_cast<double>(n)) - (out.mean * out.mean);
+        out.stddev = (variance > 0.0) ? std::sqrt(variance) : 0.0;
+    };
+
+    for (uint32_t l = 0; l < static_cast<uint32_t>(layers_.size()); l++) {
+        const auto& layer = layers_[l];
+        LayerStats ls{};
+        ls.layer_index = l;
+
+        // Collect all layer tensor data into one buffer for aggregate stats
+        std::vector<float> all_weights;
+
+        auto collect_tensor = [&all_weights](const ggml_tensor* t) {
+            if (!t) return;
+            int64_t n = ggml_nelements(t);
+            const float* data = static_cast<const float*>(t->data);
+            all_weights.insert(all_weights.end(), data, data + n);
+        };
+
+        collect_tensor(layer.norm1_w);
+        collect_tensor(layer.norm2_w);
+        collect_tensor(layer.norm3_w);
+        collect_tensor(layer.norm4_w);
+        collect_tensor(layer.conv3_w);
+        collect_tensor(layer.conv7_w);
+        collect_tensor(layer.conv15_w);
+        collect_tensor(layer.conv_mix_w);
+        collect_tensor(layer.gru_wz);
+        collect_tensor(layer.gru_wh);
+        collect_tensor(layer.gru_bz);
+        collect_tensor(layer.gru_bh);
+        collect_tensor(layer.slot_keys);
+        collect_tensor(layer.slot_values);
+        collect_tensor(layer.slot_proj_q);
+        collect_tensor(layer.slot_proj_out);
+        collect_tensor(layer.ffn_gate_w);
+        collect_tensor(layer.ffn_up_w);
+        collect_tensor(layer.ffn_down_w);
+
+        compute_stats(all_weights.data(), all_weights.size(), ls);
+        stats.push_back(ls);
+    }
+
+    return stats;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// memory_usage — total bytes used by the model
+// ════════════════════════════════════════════════════════════════════════════
+
+size_t ConsensusModel::memory_usage() const {
+    if (!ctx_) return 0;
+
+    size_t total = ggml_used_mem(ctx_);
+
+    // Add metadata overhead
+    total += sizeof(ConsensusModel);
+    total += layers_.capacity() * sizeof(LayerTensors);
+
+    return total;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// quantize_weights_int8 — compact representation for storage
+// ════════════════════════════════════════════════════════════════════════════
+
+std::vector<uint8_t> ConsensusModel::quantize_weights_int8() const {
+    std::lock_guard<std::mutex> lock(weights_mutex_);
+
+    std::vector<uint8_t> output;
+    auto tensors = weight_tensors();
+
+    for (const auto* tensor : tensors) {
+        if (!tensor) continue;
+
+        int64_t n = ggml_nelements(tensor);
+        const float* data = static_cast<const float*>(tensor->data);
+
+        // Find min and max for this tensor
+        float vmin = data[0];
+        float vmax = data[0];
+        for (int64_t i = 1; i < n; i++) {
+            if (data[i] < vmin) vmin = data[i];
+            if (data[i] > vmax) vmax = data[i];
+        }
+
+        // Compute scale and zero point for symmetric quantization
+        float absmax = std::max(std::fabs(vmin), std::fabs(vmax));
+        float scale = (absmax > 0.0f) ? (absmax / 127.0f) : 1.0f;
+
+        // Write scale (4 bytes, float32)
+        uint8_t scale_bytes[4];
+        std::memcpy(scale_bytes, &scale, 4);
+        output.insert(output.end(), scale_bytes, scale_bytes + 4);
+
+        // Write element count (4 bytes LE)
+        uint32_t count = static_cast<uint32_t>(n);
+        output.push_back(static_cast<uint8_t>(count));
+        output.push_back(static_cast<uint8_t>(count >> 8));
+        output.push_back(static_cast<uint8_t>(count >> 16));
+        output.push_back(static_cast<uint8_t>(count >> 24));
+
+        // Write quantized int8 values
+        for (int64_t i = 0; i < n; i++) {
+            float val = data[i] / scale;
+            int8_t q = static_cast<int8_t>(std::max(-127.0f, std::min(127.0f, std::round(val))));
+            output.push_back(static_cast<uint8_t>(q));
+        }
+    }
+
+    return output;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// load_quantized_int8 — restore from compact representation
+// ════════════════════════════════════════════════════════════════════════════
+
+bool ConsensusModel::load_quantized_int8(const std::vector<uint8_t>& quantized) {
+    std::lock_guard<std::mutex> lock(weights_mutex_);
+
+    auto tensors = weight_tensors();
+    size_t pos = 0;
+
+    for (auto* tensor : tensors) {
+        if (!tensor) continue;
+
+        int64_t n = ggml_nelements(tensor);
+        float* data = static_cast<float*>(tensor->data);
+
+        // Read scale (4 bytes)
+        if (pos + 4 > quantized.size()) return false;
+        float scale;
+        std::memcpy(&scale, &quantized[pos], 4);
+        pos += 4;
+
+        // Read element count (4 bytes LE)
+        if (pos + 4 > quantized.size()) return false;
+        uint32_t count = static_cast<uint32_t>(quantized[pos])
+                       | (static_cast<uint32_t>(quantized[pos + 1]) << 8)
+                       | (static_cast<uint32_t>(quantized[pos + 2]) << 16)
+                       | (static_cast<uint32_t>(quantized[pos + 3]) << 24);
+        pos += 4;
+
+        if (static_cast<int64_t>(count) != n) return false;
+
+        // Read and dequantize int8 values
+        if (pos + count > quantized.size()) return false;
+        for (uint32_t i = 0; i < count; i++) {
+            int8_t q = static_cast<int8_t>(quantized[pos + i]);
+            data[i] = static_cast<float>(q) * scale;
+        }
+        pos += count;
+    }
+
+    return true;
+}
+
 } // namespace flow

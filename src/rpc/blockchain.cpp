@@ -10,9 +10,12 @@
 #include "consensus/difficulty.h"
 #include "consensus/params.h"
 #include "consensus/validation.h"
+#include "hash/keccak.h"
 #include "mempool/mempool.h"
 #include "util/strencodings.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 
@@ -313,6 +316,231 @@ void register_blockchain_rpcs(RpcServer& server, ChainState& chain) {
 // ---------------------------------------------------------------------------
 // Mempool RPCs
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Extended blockchain RPCs
+// ---------------------------------------------------------------------------
+
+void register_extended_blockchain_rpcs(RpcServer& server, ChainState& chain) {
+
+    // getdifficulty: return difficulty as float
+    server.register_method("getdifficulty_ext", [&chain](const json& /*params*/) -> json {
+        CBlockIndex* tip = chain.tip();
+        if (!tip) return 1.0;
+
+        // Convert compact nBits to a difficulty ratio.
+        // difficulty = powLimit / current_target
+        arith_uint256 pow_limit;
+        consensus::derive_target(consensus::INITIAL_NBITS, pow_limit);
+
+        arith_uint256 current_target;
+        consensus::derive_target(tip->nbits, current_target);
+
+        if (current_target == arith_uint256()) return 0.0;
+
+        // Compute as a double
+        arith_uint256 quotient = pow_limit / current_target;
+        double diff = static_cast<double>(quotient.GetLow64());
+        return diff;
+    });
+
+    // getblockfilter(hash): block bloom filter stub
+    // Returns metadata about the block suitable for compact filtering.
+    server.register_method("getblockfilter", [&chain](const json& params) -> json {
+        if (params.empty() || !params[0].is_string()) {
+            throw std::runtime_error("Usage: getblockfilter <blockhash>");
+        }
+
+        std::string hash_hex = params[0].get<std::string>();
+        auto bytes = hex_decode(hash_hex);
+        if (bytes.size() != 32) {
+            throw std::runtime_error("Invalid hash length");
+        }
+        uint256 hash;
+        std::memcpy(hash.data(), bytes.data(), 32);
+
+        CBlockIndex* idx = chain.block_tree().find(hash);
+        if (!idx) {
+            throw std::runtime_error("Block not found");
+        }
+
+        CBlock block;
+        if (!chain.block_store().read_block(idx->pos, block)) {
+            throw std::runtime_error("Block data not available on disk");
+        }
+
+        // Build a basic filter: collect all output pubkey hashes
+        // and input pubkeys, hash them into a compact filter.
+        std::vector<uint8_t> filter_data;
+        for (const auto& tx : block.vtx) {
+            for (const auto& out : tx.vout) {
+                filter_data.insert(filter_data.end(),
+                    out.pubkey_hash.begin(), out.pubkey_hash.end());
+            }
+            for (const auto& in : tx.vin) {
+                if (!in.is_coinbase()) {
+                    filter_data.insert(filter_data.end(),
+                        in.pubkey.begin(), in.pubkey.end());
+                }
+            }
+        }
+
+        uint256 filter_hash = keccak256(filter_data);
+
+        json j;
+        j["blockhash"] = hash_hex;
+        j["height"] = idx->height;
+        j["filter_type"] = "basic";
+        j["filter_hash"] = hex_encode(filter_hash.data(), 32);
+        j["n_elements"] = block.vtx.size();
+        j["filter_size"] = filter_data.size();
+
+        return j;
+    });
+
+    // getblockhash_range(start, end): return hashes for a range of heights
+    server.register_method("getblockhash_range", [&chain](const json& params) -> json {
+        if (params.size() < 2) {
+            throw std::runtime_error("Usage: getblockhash_range <start_height> <end_height>");
+        }
+
+        uint64_t start = params[0].get<uint64_t>();
+        uint64_t end_h = params[1].get<uint64_t>();
+
+        if (end_h < start) {
+            throw std::runtime_error("End height must be >= start height");
+        }
+
+        if (end_h - start > 2016) {
+            throw std::runtime_error("Range too large (max 2016 blocks)");
+        }
+
+        CBlockIndex* tip = chain.tip();
+        if (!tip || end_h > tip->height) {
+            throw std::runtime_error("End height exceeds chain tip");
+        }
+
+        // Walk back from tip to collect blocks in range
+        std::vector<std::pair<uint64_t, std::string>> entries;
+        CBlockIndex* idx = tip;
+        while (idx && idx->height >= start) {
+            if (idx->height <= end_h) {
+                entries.push_back({idx->height, hex_encode(idx->hash.data(), 32)});
+            }
+            if (idx->height == 0) break;
+            idx = idx->prev;
+        }
+
+        // Reverse to ascending order
+        std::reverse(entries.begin(), entries.end());
+
+        json result = json::array();
+        for (const auto& [h, hash] : entries) {
+            json e;
+            e["height"] = h;
+            e["hash"] = hash;
+            result.push_back(e);
+        }
+        return result;
+    });
+
+    // getblockcount_by_time(timestamp): find block height closest to a timestamp
+    server.register_method("getblockcount_by_time", [&chain](const json& params) -> json {
+        if (params.empty() || !params[0].is_number()) {
+            throw std::runtime_error("Usage: getblockcount_by_time <timestamp>");
+        }
+        int64_t target_time = params[0].get<int64_t>();
+
+        CBlockIndex* idx = chain.tip();
+        if (!idx) throw std::runtime_error("Chain is empty");
+
+        // Binary-search style walk (linear for simplicity, could be optimized)
+        CBlockIndex* best = idx;
+        int64_t best_diff = std::abs(idx->timestamp - target_time);
+
+        while (idx) {
+            int64_t diff = std::abs(idx->timestamp - target_time);
+            if (diff < best_diff) {
+                best_diff = diff;
+                best = idx;
+            }
+            // If we've passed the target time going backwards, stop
+            if (idx->timestamp < target_time && idx->prev &&
+                idx->prev->timestamp < target_time) {
+                break;
+            }
+            idx = idx->prev;
+        }
+
+        json j;
+        j["height"] = best->height;
+        j["timestamp"] = best->timestamp;
+        j["hash"] = hex_encode(best->hash.data(), 32);
+        j["time_diff"] = best_diff;
+        return j;
+    });
+
+    // getchainwork: return the total chain work (number of blocks)
+    server.register_method("getchainwork", [&chain](const json& /*params*/) -> json {
+        CBlockIndex* tip = chain.tip();
+        json j;
+        j["height"] = tip ? static_cast<int64_t>(tip->height) : 0;
+        j["blocks"] = tip ? static_cast<int64_t>(tip->height + 1) : 0;
+
+        // Compute cumulative improving blocks as a proxy for chain quality
+        j["improving_blocks"] = tip ? tip->improving_blocks : 0;
+
+        // Average val_loss over last 10 blocks
+        if (tip) {
+            float total_loss = 0;
+            int count = 0;
+            CBlockIndex* idx = tip;
+            while (idx && count < 10) {
+                total_loss += idx->val_loss;
+                count++;
+                idx = idx->prev;
+            }
+            j["avg_val_loss_10"] = (count > 0) ? total_loss / count : 0.0f;
+        }
+
+        return j;
+    });
+
+    // getblockheader_range(start, count): return multiple headers at once
+    server.register_method("getblockheader_range", [&chain](const json& params) -> json {
+        if (params.size() < 2) {
+            throw std::runtime_error("Usage: getblockheader_range <start_height> <count>");
+        }
+
+        uint64_t start = params[0].get<uint64_t>();
+        int count = params[1].get<int>();
+        if (count <= 0 || count > 100) {
+            throw std::runtime_error("Count must be between 1 and 100");
+        }
+
+        CBlockIndex* tip = chain.tip();
+        if (!tip) throw std::runtime_error("Chain is empty");
+
+        // Collect headers
+        std::vector<CBlockIndex*> indices;
+        CBlockIndex* idx = tip;
+        while (idx) {
+            if (idx->height >= start && idx->height < start + static_cast<uint64_t>(count)) {
+                indices.push_back(idx);
+            }
+            if (idx->height == 0 || idx->height < start) break;
+            idx = idx->prev;
+        }
+
+        std::reverse(indices.begin(), indices.end());
+
+        json result = json::array();
+        for (CBlockIndex* bi : indices) {
+            result.push_back(block_index_to_header_json(bi));
+        }
+        return result;
+    });
+}
 
 void register_mempool_rpcs(RpcServer& server, ChainState& /*chain*/,
                             Mempool& mempool) {

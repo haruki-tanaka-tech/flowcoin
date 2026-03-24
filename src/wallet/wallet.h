@@ -8,18 +8,24 @@
 #pragma once
 
 #include "wallet/coinselect.h"
+#include "wallet/encryption.h"
 #include "wallet/hdchain.h"
+#include "wallet/keypool.h"
 #include "wallet/walletdb.h"
 
 #include "chain/utxo.h"
+#include "primitives/block.h"
 #include "primitives/transaction.h"
 #include "util/types.h"
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace flow {
@@ -88,10 +94,72 @@ public:
     std::vector<WalletDB::WalletTx> get_transactions(
         int count = 10, int skip = 0) const;
 
+    // ---- Wallet Encryption ----
+
+    /// Encrypt all wallet private keys with AES-256-CBC derived from a passphrase.
+    /// Generates a random salt, derives an AES key via Keccak-based KDF,
+    /// re-encrypts all stored private keys, and locks the wallet.
+    /// Returns false if already encrypted or on error.
+    bool encrypt_wallet(const std::string& passphrase);
+
+    /// Unlock the wallet for the given number of seconds.
+    /// Derives the AES key from the passphrase, decrypts the master seed,
+    /// and caches plaintext keys for `timeout` seconds.
+    /// Returns false if passphrase is wrong or wallet is not encrypted.
+    bool walletpassphrase(const std::string& passphrase, int timeout_seconds);
+
+    /// Lock the wallet immediately. Clears all cached plaintext keys.
+    void walletlock();
+
+    /// Returns true if the wallet is encrypted and currently locked.
+    bool is_locked() const;
+
+    /// Returns true if the wallet has been encrypted with a passphrase.
+    bool is_encrypted() const;
+
+    // ---- Rescan ----
+
+    /// Rescan the blockchain from the given height to discover wallet transactions.
+    /// For each block, checks all transaction outputs against wallet addresses.
+    /// Updates wallet balance and transaction history.
+    /// @param from_height  Starting block height for the rescan.
+    /// @param chain_tip    The current chain tip block index.
+    /// @param store        Block store for reading full blocks.
+    /// @return             Number of transactions found during rescan.
+    int rescan(uint64_t from_height, const class CBlockIndex* chain_tip,
+               class BlockStore& store);
+
+    // ---- Label Management ----
+
+    /// Set a label for an address. The label is stored in the wallet database.
+    void set_label(const std::string& address, const std::string& label);
+
+    /// Get the label for an address. Returns empty string if no label is set.
+    std::string get_label(const std::string& address) const;
+
+    /// Get all addresses that have a given label.
+    std::vector<std::string> get_addresses_by_label(const std::string& label) const;
+
+    /// Get all labels and their addresses.
+    std::map<std::string, std::vector<std::string>> get_all_labels() const;
+
+    // ---- Sign/Verify messages ----
+
+    /// Sign a message with the private key of a wallet address.
+    /// Returns the 64-byte signature concatenated with the 32-byte pubkey (96 bytes).
+    std::vector<uint8_t> sign_message(const std::string& address,
+                                       const std::string& message);
+
+    // ---- Key pool ----
+
+    /// Access the key pool.
+    KeyPool& key_pool() { return keypool_; }
+
 private:
     WalletDB db_;
     HDChain hd_;
     const UTXOSet& utxo_;
+    KeyPool keypool_;
 
     mutable std::mutex mu_;
 
@@ -100,6 +168,19 @@ private:
 
     // Map: pubkey_hash (32 bytes, keccak256(pubkey)) -> pubkey
     std::map<std::array<uint8_t, 32>, std::array<uint8_t, 32>> hash_to_pubkey_;
+
+    // Map: address -> pubkey (for address-to-key lookups)
+    std::map<std::string, std::array<uint8_t, 32>> addr_to_pubkey_;
+
+    // Map: address -> label
+    std::map<std::string, std::string> labels_;
+
+    // Encryption state
+    bool encrypted_ = false;
+    bool locked_ = true;
+    std::array<uint8_t, 16> encryption_salt_{};
+    std::array<uint8_t, 32> cached_aes_key_{};
+    std::chrono::steady_clock::time_point unlock_expiry_;
 
     /// Retrieve the private key for a given public key (decrypts from DB).
     std::array<uint8_t, 32> get_privkey(
@@ -118,6 +199,9 @@ private:
 
     /// Rebuild the in-memory pubkey caches from the database.
     void load_keys_cache();
+
+    /// Check if the unlock timer has expired and re-lock if so.
+    void check_lock_timeout();
 };
 
 } // namespace flow

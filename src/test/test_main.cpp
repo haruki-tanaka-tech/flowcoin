@@ -33,6 +33,20 @@ void test_fee_estimator();
 void test_txbuilder();
 void test_walletutil();
 void test_banman();
+void test_encryption();
+void test_keypool();
+void test_chaindb();
+void test_genesis();
+void test_rpc();
+void test_reorg();
+void test_compact_blocks();
+void test_netaddress();
+void test_wallet_full();
+void test_block_validation();
+void test_coin_selection();
+void test_strencodings();
+void test_transaction_ext();
+void test_backup();
 
 struct TestCase {
     std::string name;
@@ -65,6 +79,20 @@ int main() {
         {"txbuilder", test_txbuilder},
         {"walletutil", test_walletutil},
         {"banman", test_banman},
+        {"encryption", test_encryption},
+        {"keypool", test_keypool},
+        {"chaindb", test_chaindb},
+        {"genesis", test_genesis},
+        {"rpc", test_rpc},
+        {"reorg", test_reorg},
+        {"compact_blocks", test_compact_blocks},
+        {"netaddress", test_netaddress},
+        {"wallet_full", test_wallet_full},
+        {"block_validation", test_block_validation},
+        {"coin_selection", test_coin_selection},
+        {"strencodings", test_strencodings},
+        {"transaction_ext", test_transaction_ext},
+        {"backup", test_backup},
     };
 
     int passed = 0, failed = 0;

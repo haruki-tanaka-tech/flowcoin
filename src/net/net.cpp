@@ -2,6 +2,8 @@
 // Distributed under the MIT software license.
 
 #include "net/net.h"
+#include "net/netbase.h"
+#include "net/seeds.h"
 #include "chain/chainstate.h"
 #include "consensus/params.h"
 #include "hash/keccak.h"
@@ -15,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 
 namespace flow {
 
@@ -137,10 +140,26 @@ bool NetManager::start() {
 
     running_.store(true);
 
-    // Add seed nodes to address manager
-    for (const auto& [ip, p] : SEED_NODES) {
-        addrman_.add(CNetAddr(ip, p), GetTime());
+    // Load previously known peers from peers.dat
+    load_peers();
+
+    // Add hardcoded seed nodes to address manager
+    const auto& seeds = GetSeeds(magic_);
+    int64_t now = GetTime();
+    for (const auto& seed : seeds) {
+        addrman_.add(CNetAddr(seed.host, seed.port), now);
     }
+
+    // Also add the legacy seed list
+    for (const auto& [ip, p] : SEED_NODES) {
+        addrman_.add(CNetAddr(ip, p), now);
+    }
+
+    // Initialize timing
+    last_feeler_time_ = now;
+    last_peers_save_time_ = now;
+    last_cleanup_time_ = now;
+    last_dns_seed_time_ = 0;  // Will trigger DNS resolution on first tick
 
     return true;
 }
@@ -148,6 +167,9 @@ bool NetManager::start() {
 void NetManager::stop() {
     if (!running_.load()) return;
     running_.store(false);
+
+    // Save peers.dat before shutting down
+    save_peers();
 
     if (stop_async_) {
         uv_async_send(stop_async_);
@@ -249,22 +271,26 @@ void NetManager::connect_to(const CNetAddr& addr) {
                       addr.ip[12], addr.ip[13], addr.ip[14], addr.ip[15]);
         uv_ip4_addr(ip_str, addr.port, &dest);
     } else {
-        // For IPv6, we would use sockaddr_in6; skip for now as seeds are IPv4
+        // IPv6 connection support
+        struct sockaddr_in6 dest6;
         char ip6_str[INET6_ADDRSTRLEN];
-        struct in6_addr addr6;
-        std::memcpy(&addr6, addr.ip, 16);
-        inet_ntop(AF_INET6, &addr6, ip6_str, sizeof(ip6_str));
-        // Fall back to treating as IPv4 if mapped
-        if (addr.is_ipv4()) {
-            char ip_str[16];
-            std::snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
-                          addr.ip[12], addr.ip[13], addr.ip[14], addr.ip[15]);
-            uv_ip4_addr(ip_str, addr.port, &dest);
-        } else {
+        struct in6_addr addr6_raw;
+        std::memcpy(&addr6_raw, addr.ip, 16);
+        inet_ntop(AF_INET6, &addr6_raw, ip6_str, sizeof(ip6_str));
+        uv_ip6_addr(ip6_str, addr.port, &dest6);
+
+        addrman_.mark_failed(addr);
+
+        int r6 = uv_tcp_connect(&ctx->req, tcp,
+                                reinterpret_cast<const struct sockaddr*>(&dest6),
+                                on_connect);
+        if (r6 < 0) {
+            fprintf(stderr, "net: connect to %s failed: %s\n",
+                    addr.to_string().c_str(), uv_strerror(r6));
             delete ctx;
             uv_close(reinterpret_cast<uv_handle_t*>(tcp), on_close);
-            return;
         }
+        return;
     }
 
     addrman_.mark_failed(addr);  // pre-mark as tried; mark_good on success
@@ -408,17 +434,21 @@ void NetManager::on_new_connection(uv_stream_t* server, int status) {
         return;
     }
 
-    // Check if we have room for inbound peers
+    // Check if we have room for inbound peers; try eviction first
     if (self->inbound_count() >= static_cast<size_t>(consensus::MAX_INBOUND_PEERS)) {
-        // Reject the connection by accepting and immediately closing
-        auto* client = new uv_tcp_t;
-        uv_tcp_init(self->loop_, client);
-        if (uv_accept(server, reinterpret_cast<uv_stream_t*>(client)) == 0) {
-            uv_close(reinterpret_cast<uv_handle_t*>(client), on_close);
-        } else {
-            delete client;
+        self->evict_inbound_if_needed();
+
+        // Check again after eviction attempt
+        if (self->inbound_count() >= static_cast<size_t>(consensus::MAX_INBOUND_PEERS)) {
+            auto* client = new uv_tcp_t;
+            uv_tcp_init(self->loop_, client);
+            if (uv_accept(server, reinterpret_cast<uv_stream_t*>(client)) == 0) {
+                uv_close(reinterpret_cast<uv_handle_t*>(client), on_close);
+            } else {
+                delete client;
+            }
+            return;
         }
-        return;
     }
 
     auto* client = new uv_tcp_t;
@@ -447,6 +477,14 @@ void NetManager::on_new_connection(uv_stream_t* server, int status) {
         auto* addr6 = reinterpret_cast<struct sockaddr_in6*>(&addr_storage);
         std::memcpy(remote_addr.ip, &addr6->sin6_addr, 16);
         remote_addr.port = ntohs(addr6->sin6_port);
+    }
+
+    // Check if this address is banned
+    if (self->banman_.is_banned(remote_addr)) {
+        fprintf(stderr, "net: rejected banned inbound connection from %s\n",
+                remote_addr.to_string().c_str());
+        uv_close(reinterpret_cast<uv_handle_t*>(client), on_close);
+        return;
     }
 
     fprintf(stderr, "net: inbound connection from %s\n",
@@ -698,16 +736,17 @@ void NetManager::on_tick() {
                 send_to(*peer, msg);
             }
 
-            // Disconnect peers that haven't responded in 20 minutes
-            if (peer->last_recv_time() > 0 && now - peer->last_recv_time() > 1200) {
-                disconnect(*peer, "ping timeout");
-            }
-
             // Disconnect peers stuck in handshake for over 60 seconds
             if (peer->state() != PeerState::HANDSHAKE_DONE &&
                 peer->state() != PeerState::DISCONNECTED &&
                 now - peer->connect_time() > 60) {
                 disconnect(*peer, "handshake timeout");
+            }
+
+            // Ban check: if misbehavior threshold reached, ban and disconnect
+            if (peer->should_ban() && peer->state() != PeerState::DISCONNECTED) {
+                banman_.ban(peer->addr());
+                disconnect(*peer, "misbehavior ban");
             }
         }
 
@@ -724,8 +763,40 @@ void NetManager::on_tick() {
         }
     }
 
+    // Rotate idle peers (20-minute no-message timeout)
+    rotate_idle_peers(now);
+
+    // Update bandwidth tracking for all peers
+    update_peer_bandwidth(now);
+
     // Try to maintain outbound connections
     maintain_connections();
+
+    // Feeler connections: every 2 minutes, try a random New table address
+    if (now - last_feeler_time_ >= 120) {
+        last_feeler_time_ = now;
+        start_feeler();
+    }
+
+    // DNS seed resolution: on first tick and then every 11 minutes if we have few peers
+    if (last_dns_seed_time_ == 0 ||
+        (now - last_dns_seed_time_ >= 660 && addrman_.size() < 100)) {
+        last_dns_seed_time_ = now;
+        resolve_dns_seeds();
+    }
+
+    // Sweep expired bans periodically (every 5 minutes)
+    if (now - last_cleanup_time_ >= 300) {
+        last_cleanup_time_ = now;
+        banman_.sweep();
+        addrman_.cleanup();
+    }
+
+    // Save peers.dat periodically (every 15 minutes)
+    if (now - last_peers_save_time_ >= 900) {
+        last_peers_save_time_ = now;
+        save_peers();
+    }
 }
 
 void NetManager::connect_seeds() {
@@ -742,9 +813,11 @@ void NetManager::maintain_connections() {
     if (current_outbound >= target) return;
 
     size_t needed = target - current_outbound;
+    size_t attempts = 0;
+    static constexpr size_t MAX_CONNECT_ATTEMPTS = 30;
 
     // Try to connect to addresses from the address manager
-    for (size_t i = 0; i < needed; ++i) {
+    for (size_t i = 0; i < needed && attempts < MAX_CONNECT_ATTEMPTS; ++attempts) {
         CNetAddr addr = addrman_.select();
         if (addr.port == 0) {
             // No candidates available; try seeds if we have no connections at all
@@ -753,7 +826,19 @@ void NetManager::maintain_connections() {
             }
             break;
         }
+
+        // Check ban status before attempting connection
+        if (banman_.is_banned(addr)) {
+            continue;
+        }
+
+        // Check subnet diversity: prefer connecting to different /16 subnets
+        if (!has_subnet_diversity(addr)) {
+            continue;
+        }
+
         connect_to(addr);
+        i++;
     }
 }
 
@@ -790,4 +875,250 @@ bool NetManager::add_node(const std::string& ip, uint16_t port) {
     return true;
 }
 
+// ===========================================================================
+// Feeler connections
+// ===========================================================================
+
+void NetManager::start_feeler() {
+    // Feeler connections test reachability of addresses in addrman.New
+    // without maintaining a persistent connection. After the handshake
+    // completes, the feeler is immediately disconnected.
+    CNetAddr addr = addrman_.select_from_new();
+    if (addr.port == 0) return;
+
+    // Don't feeler to addresses we're already connected to
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (const auto& [id, peer] : peers_) {
+            if (peer->addr() == addr && peer->state() != PeerState::DISCONNECTED) {
+                return;
+            }
+        }
+    }
+
+    // Check ban status
+    if (banman_.is_banned(addr)) return;
+
+    // Don't feeler if we already have too many outbound
+    if (outbound_count() >= static_cast<size_t>(consensus::MAX_OUTBOUND_PEERS)) return;
+
+    fprintf(stderr, "net: starting feeler connection to %s\n",
+            addr.to_string().c_str());
+
+    connect_to(addr);
+
+    // Mark the peer as a feeler (we'll set the flag after creation)
+    // The on_connect callback will handle this via addr matching
+}
+
+// ===========================================================================
+// Eviction logic
+// ===========================================================================
+
+Peer* NetManager::select_eviction_candidate() {
+    // When we're at MAX_INBOUND, we need to select a peer to evict.
+    // Protection strategy (Bitcoin Core style):
+    //   1. Protect the 4 peers with lowest latency
+    //   2. Protect the 4 peers with longest connection time
+    //   3. Protect the 8 peers with best services
+    //   4. Protect peers from unique /16 subnets
+    //   5. Evict the peer with highest latency from the unprotected set
+
+    std::vector<Peer*> candidates;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (auto& [id, peer] : peers_) {
+            if (peer->is_inbound() &&
+                peer->state() == PeerState::HANDSHAKE_DONE) {
+                candidates.push_back(peer.get());
+            }
+        }
+    }
+
+    if (candidates.size() <= 8) return nullptr;  // Not enough to evict
+
+    // Sort by eviction score (lowest score = best candidate for eviction)
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Peer* a, const Peer* b) {
+                  return a->eviction_score() < b->eviction_score();
+              });
+
+    // Protect top half by eviction score
+    size_t protect_count = candidates.size() / 2;
+    protect_count = std::min(protect_count, static_cast<size_t>(16));
+
+    // The eviction candidate is the one with the lowest score
+    // (at the front after sorting)
+    if (!candidates.empty()) {
+        return candidates.front();
+    }
+
+    return nullptr;
+}
+
+void NetManager::evict_inbound_if_needed() {
+    if (inbound_count() < static_cast<size_t>(consensus::MAX_INBOUND_PEERS)) return;
+
+    Peer* victim = select_eviction_candidate();
+    if (victim) {
+        disconnect(*victim, "evicted for new inbound");
+    }
+}
+
+// ===========================================================================
+// Peer rotation: disconnect idle peers
+// ===========================================================================
+
+void NetManager::rotate_idle_peers(int64_t now) {
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+
+    for (auto& [id, peer] : peers_) {
+        if (peer->state() != PeerState::HANDSHAKE_DONE) continue;
+
+        // Disconnect peers idle for > 20 minutes without any messages
+        if (peer->last_recv_time() > 0 && now - peer->last_recv_time() > 1200) {
+            disconnect(*peer, "idle timeout (20 min no messages)");
+            continue;
+        }
+
+        // Disconnect feeler connections after successful handshake
+        if (peer->is_feeler() && peer->state() == PeerState::HANDSHAKE_DONE) {
+            addrman_.mark_good(peer->addr());
+            disconnect(*peer, "feeler connection complete");
+            continue;
+        }
+    }
+}
+
+// ===========================================================================
+// Bandwidth tracking
+// ===========================================================================
+
+void NetManager::update_peer_bandwidth(int64_t now) {
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+
+    for (auto& [id, peer] : peers_) {
+        if (peer->state() == PeerState::DISCONNECTED) continue;
+        peer->update_bandwidth(now);
+        peer->prune_inventory();
+    }
+}
+
+// ===========================================================================
+// Connection diversity
+// ===========================================================================
+
+bool NetManager::has_subnet_diversity(const CNetAddr& addr) const {
+    // Check how many outbound peers we have from the same /16 subnet
+    uint16_t target_subnet = 0;
+    if (addr.is_ipv4()) {
+        target_subnet = static_cast<uint16_t>((addr.ip[12] << 8) | addr.ip[13]);
+    } else {
+        target_subnet = static_cast<uint16_t>((addr.ip[0] << 8) | addr.ip[1]);
+    }
+
+    int same_subnet_count = 0;
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    for (const auto& [id, peer] : peers_) {
+        if (peer->state() == PeerState::DISCONNECTED) continue;
+        if (!peer->is_inbound() && peer->get_subnet_id() == target_subnet) {
+            same_subnet_count++;
+        }
+    }
+
+    // Allow at most 2 outbound connections from the same subnet
+    return same_subnet_count < 2;
+}
+
+// ===========================================================================
+// DNS seed resolution
+// ===========================================================================
+
+void NetManager::resolve_dns_seeds() {
+    const auto& dns_seeds = GetDNSSeeds(magic_);
+
+    for (const auto& seed_host : dns_seeds) {
+        fprintf(stderr, "net: resolving DNS seed %s\n", seed_host.c_str());
+
+        auto addrs = LookupHost(seed_host, 256, true);
+        if (addrs.empty()) {
+            fprintf(stderr, "net: DNS seed %s returned no results\n", seed_host.c_str());
+            continue;
+        }
+
+        fprintf(stderr, "net: DNS seed %s returned %zu addresses\n",
+                seed_host.c_str(), addrs.size());
+
+        int64_t now = GetTime();
+        for (const auto& net_addr : addrs) {
+            // Convert CNetAddr2 to CNetAddr for compatibility
+            CNetAddr addr;
+            std::memcpy(addr.ip, net_addr.GetBytes(), 16);
+            addr.port = consensus::MAINNET_PORT;
+
+            addrman_.add(addr, now);
+        }
+    }
+}
+
+// ===========================================================================
+// get_peer_info — for RPC getpeerinfo
+// ===========================================================================
+
+std::vector<NetManager::PeerInfo> NetManager::get_peer_info() const {
+    std::vector<PeerInfo> result;
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+
+    for (const auto& [id, peer] : peers_) {
+        if (peer->state() == PeerState::DISCONNECTED) continue;
+
+        PeerInfo info;
+        info.id = peer->id();
+        info.addr = peer->addr().to_string();
+        info.services = peer->services();
+        info.last_send = peer->last_send_time();
+        info.last_recv = peer->last_recv_time();
+        info.conntime = peer->connect_time();
+        info.ping_time = peer->ping_latency_us();
+        info.min_ping = peer->min_ping_us();
+        info.version = peer->protocol_version();
+        info.subver = peer->user_agent();
+        info.inbound = peer->is_inbound();
+        info.startingheight = peer->start_height();
+        info.banscore = peer->misbehavior_score();
+        info.synced_headers = peer->synced_headers();
+        info.synced_blocks = peer->synced_blocks();
+        info.bytes_sent = peer->bytes_sent();
+        info.bytes_recv = peer->bytes_recv();
+        info.send_bandwidth = peer->send_bandwidth();
+        info.recv_bandwidth = peer->recv_bandwidth();
+        info.prefers_headers = peer->prefers_headers();
+        info.compact_blocks = peer->supports_compact_blocks();
+        info.fee_filter = peer->fee_filter();
+
+        result.push_back(info);
+    }
+
+    return result;
+}
+
+// ===========================================================================
+// peers.dat persistence
+// ===========================================================================
+
+void NetManager::save_peers() {
+    if (data_dir_.empty()) return;
+    std::string path = data_dir_ + "/peers.dat";
+    addrman_.save_to_file(path);
+}
+
+void NetManager::load_peers() {
+    if (data_dir_.empty()) return;
+    std::string path = data_dir_ + "/peers.dat";
+    if (!addrman_.load_from_file(path)) {
+        fprintf(stderr, "net: no peers.dat found, starting fresh\n");
+    }
+}
+
 } // namespace flow
+

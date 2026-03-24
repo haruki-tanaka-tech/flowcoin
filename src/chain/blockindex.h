@@ -148,6 +148,60 @@ public:
     // Total number of block index entries
     size_t size() const { return index_.size(); }
 
+    // ---- Extended tree operations ------------------------------------------
+
+    /// Find the common ancestor of two block index entries.
+    /// Returns nullptr if they share no common ancestor (shouldn't happen
+    /// if both are in the same tree rooted at genesis).
+    CBlockIndex* find_fork(CBlockIndex* a, CBlockIndex* b) const;
+
+    /// Get the ancestor of a block at a specific height.
+    /// Returns nullptr if the block is below the requested height.
+    CBlockIndex* get_ancestor(CBlockIndex* block, uint64_t height) const;
+
+    /// Build the chain path from one block to another (common ancestor to target).
+    /// Returns blocks in order from oldest to newest. Empty if no path exists.
+    std::vector<CBlockIndex*> get_path(CBlockIndex* from, CBlockIndex* to) const;
+
+    /// Get all tips (leaf nodes with no children in the tree).
+    /// A tip is a block index entry that no other entry's prev pointer
+    /// points to. This includes the best tip and any competing forks.
+    std::vector<CBlockIndex*> get_all_tips() const;
+
+    /// Get all blocks at a specific height.
+    /// May return multiple blocks if there are forks at that height.
+    std::vector<CBlockIndex*> get_at_height(uint64_t height) const;
+
+    /// Check if block A is an ancestor of block B.
+    bool is_ancestor(const CBlockIndex* ancestor, const CBlockIndex* descendant) const;
+
+    /// Get the chain of block indices from genesis to the given block.
+    /// Returns indices in order from genesis (first) to the block (last).
+    std::vector<CBlockIndex*> get_chain(CBlockIndex* block) const;
+
+    /// Compute the depth of a block (distance from the best tip).
+    /// Returns 0 for the best tip itself.
+    /// Returns -1 if the block is not on the best chain.
+    int64_t get_depth(const CBlockIndex* block) const;
+
+    /// Remove all blocks that have BLOCK_FAILED status.
+    /// Returns the number of entries removed.
+    size_t prune_failed();
+
+    /// Get memory usage statistics for the tree.
+    struct TreeStats {
+        size_t total_entries;
+        size_t validated_entries;
+        size_t stored_entries;
+        size_t failed_entries;
+        size_t header_only_entries;
+        uint64_t max_height;
+        size_t fork_count;
+        size_t memory_bytes;
+    };
+
+    TreeStats get_stats() const;
+
 private:
     std::deque<std::unique_ptr<CBlockIndex>> storage_;
     std::unordered_map<uint256, CBlockIndex*, Uint256Hasher> index_;
