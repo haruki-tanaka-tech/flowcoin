@@ -125,6 +125,24 @@ private:
         size_t expected_floats);
 };
 
+// ═══ Evaluation metrics ═══
+
+/// Compute additional evaluation metrics beyond val_loss.
+/// These are not consensus-critical but useful for monitoring.
+struct EvalMetrics {
+    float val_loss;          // Cross-entropy loss (consensus-critical)
+    float perplexity;        // exp(val_loss)
+    float bits_per_byte;     // val_loss / ln(2)
+    float accuracy_top1;     // Top-1 prediction accuracy
+    float accuracy_top5;     // Top-5 prediction accuracy
+    size_t total_tokens;     // Number of tokens evaluated
+    double eval_time_ms;     // Time taken for evaluation in milliseconds
+};
+
+/// Verify that two evaluation results are bit-identical.
+/// Used for debugging determinism issues across different hardware.
+bool verify_determinism(float loss_a, float loss_b);
+
 } // namespace flow::consensus
 
 #endif // FLOWCOIN_CONSENSUS_EVAL_H

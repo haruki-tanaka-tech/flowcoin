@@ -11,8 +11,11 @@
 
 #include "net/protocol.h"
 #include "net/peer.h"
+#include "primitives/block.h"
+#include "primitives/transaction.h"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -20,7 +23,6 @@ namespace flow {
 
 class ChainState;
 class NetManager;
-struct CBlockHeader;
 struct CBlockIndex;
 
 class MessageHandler {
@@ -53,6 +55,30 @@ private:
     void handle_getblocks(Peer& peer, const uint8_t* data, size_t len);
     void handle_getheaders(Peer& peer, const uint8_t* data, size_t len);
     void handle_headers(Peer& peer, const uint8_t* data, size_t len);
+    void handle_reject(Peer& peer, const uint8_t* data, size_t len);
+    void handle_sendheaders(Peer& peer);
+    void handle_sendcmpct(Peer& peer, const uint8_t* data, size_t len);
+    void handle_cmpctblock(Peer& peer, const uint8_t* data, size_t len);
+    void handle_getblocktxn(Peer& peer, const uint8_t* data, size_t len);
+    void handle_blocktxn(Peer& peer, const uint8_t* data, size_t len);
+    void handle_feefilter(Peer& peer, const uint8_t* data, size_t len);
+
+    // Compact block reconstruction state per peer
+    struct CompactBlockState {
+        uint256 block_hash;
+        CBlockHeader header;
+        std::vector<uint64_t> short_txids;  // 6-byte short IDs
+        std::vector<CTransaction> prefilled_txs;
+        std::vector<uint32_t> prefilled_indices;
+        std::vector<CTransaction> reconstructed_txs;
+        bool waiting_for_txns = false;
+    };
+    std::map<uint64_t, CompactBlockState> compact_states_;  // peer_id -> state
+
+    // Compute short txid for compact blocks (first 6 bytes of siphash)
+    static uint64_t compute_short_txid(const uint256& txid,
+                                        uint64_t nonce,
+                                        const uint256& block_hash);
 
     // Send a message to a peer (with payload)
     void send(Peer& peer, const std::string& command,

@@ -13,6 +13,7 @@
 
 #include "chain/blockindex.h"
 #include "chain/blockstore.h"
+#include "chain/chaindb.h"
 #include "chain/modelstate.h"
 #include "chain/txindex.h"
 #include "chain/utxo.h"
@@ -61,6 +62,68 @@ public:
     /// Reverses UTXO changes and model state from the tip block.
     bool disconnect_tip();
 
+    /// Full reorganization to a new tip.
+    /// Finds fork point, disconnects blocks, connects new chain.
+    /// Returns true on success. On failure, the chain state may be
+    /// at the fork point (partial reorg).
+    bool reorganize_to(CBlockIndex* new_tip, consensus::ValidationState& state);
+
+    /// Flush UTXO changes and block index to disk.
+    /// Called periodically during IBD and before shutdown.
+    bool flush();
+
+    /// Full startup sequence:
+    ///   1. Open/create ChainDB
+    ///   2. Load all block indices from DB
+    ///   3. Reconstruct BlockTree from loaded indices
+    ///   4. Verify tip matches stored tip
+    ///   5. If mismatch: crash recovery (walk back to find valid tip)
+    ///   6. Load UTXO set
+    ///   7. Initialize ModelState
+    bool load_from_disk();
+
+    /// Save all persistent state to disk.
+    bool save_to_disk();
+
+    /// Undo data for block disconnection during reorg.
+    struct BlockUndo {
+        /// For each input spent in the block: the UTXOEntry that was consumed.
+        struct SpentOutput {
+            uint256 txid;
+            uint32_t vout;
+            UTXOEntry entry;
+        };
+        std::vector<SpentOutput> spent_outputs;
+
+        /// Serialize to bytes for storage.
+        std::vector<uint8_t> serialize() const;
+
+        /// Deserialize from bytes.
+        static bool deserialize(const uint8_t* data, size_t len, BlockUndo& out);
+    };
+
+    /// Generate undo data for a block being connected.
+    /// Must be called before connect_block modifies the UTXO set.
+    BlockUndo generate_undo(const CBlock& block) const;
+
+    /// Disconnect a block using pre-computed undo data.
+    /// Faster than disconnect_tip() which must scan the chain for source txs.
+    bool disconnect_block(const CBlock& block, const BlockUndo& undo);
+
+    /// Enable/disable pruning mode.
+    void set_pruning_enabled(bool enabled, uint64_t prune_target_height = 0);
+
+    /// Check if pruning is enabled.
+    bool is_pruning_enabled() const { return pruning_enabled_; }
+
+    /// Run pruning: delete old block/undo data below the prune height.
+    /// Keeps at least REORG_WINDOW blocks of undo data.
+    bool prune();
+
+    /// Get the ChainDB (persistent block index).
+    ChainDB* chain_db() { return chaindb_.get(); }
+    const ChainDB* chain_db() const { return chaindb_.get(); }
+
     // --- Accessors ---
 
     BlockTree&       block_tree()       { return tree_; }
@@ -90,6 +153,12 @@ public:
     /// Check if a block hash is at or below the assume-valid point
     bool is_assumed_valid(const CBlockIndex* idx) const;
 
+    /// Reorg safety window: keep at least this many blocks of undo data.
+    static constexpr uint64_t REORG_WINDOW = 100;
+
+    /// Flush interval: write UTXO and chaindb changes every N blocks.
+    static constexpr uint64_t FLUSH_INTERVAL = 500;
+
 private:
     std::string datadir_;
     BlockTree   tree_;
@@ -97,7 +166,11 @@ private:
     BlockStore  store_;
     ModelState  model_state_;
     std::unique_ptr<TxIndex> txindex_;
+    std::unique_ptr<ChainDB> chaindb_;
     bool        txindex_enabled_ = true;
+    bool        pruning_enabled_ = false;
+    uint64_t    prune_target_height_ = 0;
+    uint64_t    blocks_since_flush_ = 0;
     uint256     assume_valid_hash_;  // null = disabled
     mutable std::mutex cs_main_;  // Main lock for chain state access
 
@@ -118,6 +191,25 @@ private:
     /// Determine the EvalFunction to use for block validation.
     /// Returns nullptr if Check 15 should be skipped (IBD / assume-valid).
     consensus::EvalFunction get_eval_function(const CBlockIndex* parent) const;
+
+    /// Persist a block index entry to ChainDB.
+    void persist_block_index(const CBlockIndex* idx);
+
+    /// Persist the chain tip to ChainDB.
+    void persist_tip();
+
+    /// Find the fork point (common ancestor) between two chain tips.
+    CBlockIndex* find_fork_point(CBlockIndex* tip_a, CBlockIndex* tip_b) const;
+
+    /// Crash recovery: walk back from the stored tip to find the highest
+    /// block that is both in the block tree and fully validated.
+    CBlockIndex* recover_tip();
+
+    /// Reconstruct the in-memory BlockTree from ChainDB entries.
+    bool rebuild_tree_from_db();
+
+    /// Auto-flush if enough blocks have been connected since last flush.
+    void maybe_flush();
 };
 
 } // namespace flow

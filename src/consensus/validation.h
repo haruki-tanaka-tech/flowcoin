@@ -200,6 +200,134 @@ bool check_header(const CBlockHeader& header, const BlockContext& ctx,
 bool check_block(const CBlock& block, const BlockContext& ctx,
                  ValidationState& state, EvalFunction eval_fn = nullptr);
 
+// ---------------------------------------------------------------------------
+// check_block_transactions — detailed per-transaction validation
+// ---------------------------------------------------------------------------
+
+/** Validate all transactions in a block with detailed checks.
+ *
+ *  Called during ConnectBlock when UTXO access is available.
+ *  Performs:
+ *  - Block size estimate check (MAX_BLOCK_SIZE)
+ *  - Total sigops count (MAX_BLOCK_SIGOPS)
+ *  - Duplicate txid detection within the block
+ *  - Per-transaction structure validation:
+ *    - No null prevouts in non-coinbase transactions
+ *    - Transaction size limits (MAX_TX_SIZE)
+ *    - Output value sanity (non-negative, no overflow)
+ *
+ *  @param block  The full block.
+ *  @param ctx    Parent context.
+ *  @param state  [out] Validation state with reject reason on failure.
+ *  @return       true if all transaction-level checks pass.
+ */
+bool check_block_transactions(const CBlock& block, const BlockContext& ctx,
+                               ValidationState& state);
+
+// ---------------------------------------------------------------------------
+// check_coinbase — detailed coinbase validation
+// ---------------------------------------------------------------------------
+
+/** Validate the coinbase transaction against consensus rules.
+ *
+ *  Checks:
+ *  - Is a valid coinbase (single null input)
+ *  - Has at least one output
+ *  - Total output value <= max_allowed (subsidy + fees)
+ *  - All outputs have non-negative values
+ *
+ *  @param coinbase     The coinbase transaction.
+ *  @param height       Block height (for BIP34 check).
+ *  @param max_allowed  Maximum allowed coinbase value (subsidy + fees).
+ *  @param state        [out] Validation state.
+ *  @return             true if the coinbase passes all checks.
+ */
+bool check_coinbase(const CTransaction& coinbase, uint64_t height,
+                     Amount max_allowed, ValidationState& state);
+
+// ---------------------------------------------------------------------------
+// compute_block_fees — total fees for non-coinbase transactions
+// ---------------------------------------------------------------------------
+
+/** Compute total fees for all non-coinbase transactions in a block.
+ *
+ *  @param block           The full block.
+ *  @param tx_input_sums   Pre-computed input value sums for each transaction.
+ *                          tx_input_sums[0] corresponds to the coinbase (0).
+ *  @return                Total fees in atomic units.
+ */
+Amount compute_block_fees(const CBlock& block,
+                           const std::vector<Amount>& tx_input_sums);
+
+// ---------------------------------------------------------------------------
+// check_transaction — standalone transaction validation
+// ---------------------------------------------------------------------------
+
+/** Validate a single transaction in isolation (no UTXO context).
+ *
+ *  Checks:
+ *  - Has at least one input and one output
+ *  - All output values non-negative and don't exceed MAX_SUPPLY
+ *  - Total output value doesn't overflow
+ *  - No duplicate inputs within the transaction
+ *  - Transaction is not coinbase (use check_coinbase for that)
+ *  - Signature verification on all inputs
+ *
+ *  @param tx     The transaction to validate.
+ *  @param state  [out] Validation state.
+ *  @return       true if the transaction passes all checks.
+ */
+bool check_transaction(const CTransaction& tx, ValidationState& state);
+
+// ---------------------------------------------------------------------------
+// check_block_weight — validate block weight/size limits
+// ---------------------------------------------------------------------------
+
+/** Validate block weight against consensus limits.
+ *
+ *  Computes the effective block weight as:
+ *    weight = header_size + sum(tx_sizes) + delta_payload_size
+ *
+ *  @param block  The full block.
+ *  @param state  [out] Validation state.
+ *  @return       true if block weight is within limits.
+ */
+bool check_block_weight(const CBlock& block, ValidationState& state);
+
+// ---------------------------------------------------------------------------
+// ValidationFlags — fine-grained control over which checks to run
+// ---------------------------------------------------------------------------
+
+struct ValidationFlags {
+    bool check_header = true;
+    bool check_transactions = true;
+    bool check_merkle = true;
+    bool check_signatures = true;
+    bool check_eval = true;
+    bool check_difficulty = true;
+    bool check_timestamp = true;
+
+    /// Default: all checks enabled
+    static ValidationFlags all() { return ValidationFlags{}; }
+
+    /// Minimal checks (for IBD headers-first)
+    static ValidationFlags header_only() {
+        ValidationFlags f{};
+        f.check_transactions = false;
+        f.check_merkle = false;
+        f.check_eval = false;
+        return f;
+    }
+
+    /// Skip expensive checks (for assume-valid)
+    static ValidationFlags assume_valid() {
+        ValidationFlags f{};
+        f.check_eval = false;
+        f.check_signatures = false;
+        return f;
+    }
+};
+
 } // namespace flow::consensus
 
 #endif // FLOWCOIN_CONSENSUS_VALIDATION_H

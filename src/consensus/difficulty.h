@@ -65,6 +65,35 @@ bool check_proof_of_training(const uint256& training_hash, uint32_t nbits);
 uint32_t get_next_work_required(uint64_t height, uint32_t parent_nbits,
                                 int64_t first_block_time, int64_t last_block_time);
 
+/// Validate that an nbits value is well-formed and within consensus limits.
+///
+/// Checks:
+///   - Decodes without error (no negative, no overflow)
+///   - Target is non-zero
+///   - Target does not exceed powLimit
+///
+/// @param nbits  The compact target to validate.
+/// @return       true if the nbits value is valid.
+bool validate_nbits(uint32_t nbits);
+
+/// Compare two nbits values to determine which represents higher difficulty.
+///
+/// @param nbits_a  First compact target.
+/// @param nbits_b  Second compact target.
+/// @return         -1 if a is harder (smaller target),
+///                  0 if equal,
+///                 +1 if b is harder (smaller target).
+int compare_difficulty(uint32_t nbits_a, uint32_t nbits_b);
+
+/// Compute the ratio of actual timespan to target timespan for a retarget period.
+/// Values < 1.0 mean blocks came faster than expected (difficulty should increase).
+/// Values > 1.0 mean blocks came slower (difficulty should decrease).
+///
+/// @param first_time  Timestamp of first block in retarget period.
+/// @param last_time   Timestamp of last block in retarget period.
+/// @return            Timespan ratio (clamped to valid range).
+double compute_timespan_ratio(int64_t first_time, int64_t last_time);
+
 } // namespace flow::consensus
 
 #endif // FLOWCOIN_CONSENSUS_DIFFICULTY_H

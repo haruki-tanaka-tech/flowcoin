@@ -124,4 +124,168 @@ uint32_t compute_min_steps(uint64_t height) {
     return static_cast<uint32_t>(result);
 }
 
+// ---------------------------------------------------------------------------
+// is_plateau_transition
+// ---------------------------------------------------------------------------
+
+bool is_plateau_transition(uint64_t height) {
+    if (height == 0) return false;
+    if (height >= DIM_GROWTH_END) return false;
+    return (height % GROWTH_PLATEAU_LEN) == 0;
+}
+
+// ---------------------------------------------------------------------------
+// get_plateau
+// ---------------------------------------------------------------------------
+
+uint32_t get_plateau(uint64_t height) {
+    if (height >= DIM_GROWTH_END) {
+        return NUM_GROWTH_PLATEAUS - 1;
+    }
+    uint32_t plateau = static_cast<uint32_t>(height / GROWTH_PLATEAU_LEN);
+    if (plateau >= NUM_GROWTH_PLATEAUS) {
+        plateau = NUM_GROWTH_PLATEAUS - 1;
+    }
+    return plateau;
+}
+
+// ---------------------------------------------------------------------------
+// dimensions_change_at
+// ---------------------------------------------------------------------------
+
+bool dimensions_change_at(uint64_t height) {
+    if (height == 0) return false;
+    if (height >= DIM_GROWTH_END) return false;
+
+    // Dimensions change when the plateau index changes
+    uint32_t prev_plateau = get_plateau(height - 1);
+    uint32_t curr_plateau = get_plateau(height);
+    return prev_plateau != curr_plateau;
+}
+
+// ---------------------------------------------------------------------------
+// compute_param_count
+// ---------------------------------------------------------------------------
+
+size_t compute_param_count(const ModelDimensions& dims) {
+    size_t d = dims.d_model;
+    size_t L = dims.n_layers;
+    size_t dff = dims.d_ff;
+    size_t nslots = dims.n_slots;
+    size_t V = dims.vocab;
+
+    // Embedding: [V, d]
+    size_t total = V * d;
+
+    // Per layer:
+    size_t per_layer = 0;
+
+    // 4 RMSNorm weights: each [d]
+    per_layer += 4 * d;
+
+    // Multi-scale conv: [3,d] + [7,d] + [15,d] + [d,d]
+    per_layer += 3 * d + 7 * d + 15 * d + d * d;
+
+    // MinGRU: [d,d] gate + [d,d] candidate + [d] bias_z + [d] bias_h
+    per_layer += d * d + d * d + d + d;
+
+    // Slot memory: [d, nslots] keys + [d, nslots] values + [d,d] proj_q + [d,d] proj_out
+    per_layer += d * nslots + d * nslots + d * d + d * d;
+
+    // SwiGLU FFN: [d, dff] gate + [d, dff] up + [dff, d] down
+    per_layer += d * dff + d * dff + dff * d;
+
+    total += L * per_layer;
+
+    // Final norm: [d]
+    total += d;
+
+    return total;
+}
+
+// ---------------------------------------------------------------------------
+// compute_model_size_bytes
+// ---------------------------------------------------------------------------
+
+size_t compute_model_size_bytes(const ModelDimensions& dims) {
+    return compute_param_count(dims) * sizeof(float);
+}
+
+// ---------------------------------------------------------------------------
+// is_valid_architecture
+// ---------------------------------------------------------------------------
+
+bool is_valid_architecture(const ModelDimensions& dims) {
+    // Check against each plateau's dimensions
+    for (uint32_t p = 0; p < NUM_GROWTH_PLATEAUS; p++) {
+        ModelDimensions expected = compute_growth(
+            static_cast<uint64_t>(p) * GROWTH_PLATEAU_LEN, 0);
+
+        if (dims.d_model  == expected.d_model  &&
+            dims.n_layers == expected.n_layers &&
+            dims.d_ff     == expected.d_ff     &&
+            dims.n_heads  == expected.n_heads  &&
+            dims.gru_dim  == expected.gru_dim) {
+            return true;
+        }
+    }
+
+    // Also check Phase 2 dimensions
+    ModelDimensions phase2 = compute_growth(DIM_GROWTH_END, 0);
+    if (dims.d_model  == phase2.d_model  &&
+        dims.n_layers == phase2.n_layers &&
+        dims.d_ff     == phase2.d_ff     &&
+        dims.n_heads  == phase2.n_heads  &&
+        dims.gru_dim  == phase2.gru_dim) {
+        return true;
+    }
+
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// get_growth_phase_name
+// ---------------------------------------------------------------------------
+
+const char* get_growth_phase_name(uint64_t height) {
+    if (height < DIM_GROWTH_END) {
+        uint32_t plateau = get_plateau(height);
+        // Static strings for each plateau
+        static const char* names[] = {
+            "Phase 1, Plateau 0 (d=512, L=8)",
+            "Phase 1, Plateau 1 (d=640, L=12)",
+            "Phase 1, Plateau 2 (d=768, L=16)",
+            "Phase 1, Plateau 3 (d=896, L=20)",
+            "Phase 1, Plateau 4 (d=1024, L=24)"
+        };
+        if (plateau < 5) return names[plateau];
+        return "Phase 1, Unknown Plateau";
+    }
+    return "Phase 2 (frozen architecture, slot growth)";
+}
+
+// ---------------------------------------------------------------------------
+// compute_growth_delta
+// ---------------------------------------------------------------------------
+
+ModelDimensions compute_growth_delta(uint64_t from_height, uint64_t to_height) {
+    ModelDimensions from_dims = compute_growth(from_height, 0);
+    ModelDimensions to_dims = compute_growth(to_height, 0);
+
+    ModelDimensions delta{};
+    delta.d_model  = to_dims.d_model  - from_dims.d_model;
+    delta.n_layers = to_dims.n_layers - from_dims.n_layers;
+    delta.n_heads  = to_dims.n_heads  - from_dims.n_heads;
+    delta.d_head   = to_dims.d_head   - from_dims.d_head;
+    delta.d_ff     = to_dims.d_ff     - from_dims.d_ff;
+    delta.n_slots  = to_dims.n_slots  - from_dims.n_slots;
+    delta.top_k    = to_dims.top_k    - from_dims.top_k;
+    delta.gru_dim  = to_dims.gru_dim  - from_dims.gru_dim;
+    delta.conv_kernel = to_dims.conv_kernel - from_dims.conv_kernel;
+    delta.vocab    = to_dims.vocab    - from_dims.vocab;
+    delta.seq_len  = to_dims.seq_len  - from_dims.seq_len;
+
+    return delta;
+}
+
 } // namespace flow::consensus

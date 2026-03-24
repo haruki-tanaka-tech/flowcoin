@@ -10,6 +10,7 @@
 #define FLOWCOIN_NET_NET_H
 
 #include "net/addrman.h"
+#include "net/banman.h"
 #include "net/messages.h"
 #include "net/peer.h"
 #include "net/protocol.h"
@@ -109,6 +110,51 @@ public:
     // Access chain state
     ChainState& chain() { return chain_; }
 
+    // Ban manager
+    BanMan& banman() { return banman_; }
+    const BanMan& banman() const { return banman_; }
+
+    // Get per-peer info for RPC getpeerinfo
+    struct PeerInfo {
+        uint64_t id;
+        std::string addr;
+        uint64_t services;
+        int64_t last_send;
+        int64_t last_recv;
+        int64_t conntime;
+        int64_t ping_time;      // microseconds
+        int64_t min_ping;       // microseconds
+        uint32_t version;
+        std::string subver;
+        bool inbound;
+        uint64_t startingheight;
+        int banscore;
+        uint64_t synced_headers;
+        uint64_t synced_blocks;
+        uint64_t bytes_sent;
+        uint64_t bytes_recv;
+        double send_bandwidth;  // bytes/sec
+        double recv_bandwidth;  // bytes/sec
+        bool prefers_headers;
+        bool compact_blocks;
+        int64_t fee_filter;
+    };
+    std::vector<PeerInfo> get_peer_info() const;
+
+    // Total bandwidth stats
+    uint64_t total_bytes_sent() const { return total_bytes_sent_.load(); }
+    uint64_t total_bytes_recv() const { return total_bytes_recv_.load(); }
+
+    // Start a feeler connection (test reachability of a New table address)
+    void start_feeler();
+
+    // Set the data directory for peers.dat
+    void set_data_dir(const std::string& dir) { data_dir_ = dir; }
+
+    // Save/load peers.dat
+    void save_peers();
+    void load_peers();
+
 private:
     ChainState& chain_;
     uint16_t port_;
@@ -126,8 +172,17 @@ private:
 
     MessageHandler handler_;
     AddrMan addrman_;
+    BanMan banman_;
 
     std::atomic<bool> running_{false};
+    std::atomic<uint64_t> total_bytes_sent_{0};
+    std::atomic<uint64_t> total_bytes_recv_{0};
+
+    std::string data_dir_;
+    int64_t last_feeler_time_ = 0;
+    int64_t last_peers_save_time_ = 0;
+    int64_t last_cleanup_time_ = 0;
+    int64_t last_dns_seed_time_ = 0;
 
     // Seed nodes (ip, port)
     static const std::vector<std::pair<std::string, uint16_t>> SEED_NODES;
@@ -159,6 +214,24 @@ private:
 
     // Try to maintain target number of outbound connections
     void maintain_connections();
+
+    // Eviction logic: select an inbound peer to evict when at capacity
+    Peer* select_eviction_candidate();
+
+    // Evict a peer to make room for a new inbound connection
+    void evict_inbound_if_needed();
+
+    // Peer rotation: disconnect idle peers
+    void rotate_idle_peers(int64_t now);
+
+    // Update bandwidth tracking for all peers
+    void update_peer_bandwidth(int64_t now);
+
+    // Connection diversity: check if we have too many peers from same subnet
+    bool has_subnet_diversity(const CNetAddr& addr) const;
+
+    // DNS seed resolution on startup
+    void resolve_dns_seeds();
 };
 
 } // namespace flow

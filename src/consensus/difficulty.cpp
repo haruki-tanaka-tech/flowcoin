@@ -139,4 +139,46 @@ uint32_t get_next_work_required(uint64_t height, uint32_t parent_nbits,
     return new_target.GetCompact();
 }
 
+// ---------------------------------------------------------------------------
+// validate_nbits
+// ---------------------------------------------------------------------------
+
+bool validate_nbits(uint32_t nbits) {
+    arith_uint256 target;
+    return derive_target(nbits, target);
+}
+
+// ---------------------------------------------------------------------------
+// compare_difficulty
+// ---------------------------------------------------------------------------
+
+int compare_difficulty(uint32_t nbits_a, uint32_t nbits_b) {
+    arith_uint256 target_a, target_b;
+
+    if (!derive_target(nbits_a, target_a)) return 0;
+    if (!derive_target(nbits_b, target_b)) return 0;
+
+    // Smaller target = higher difficulty
+    if (target_a < target_b) return -1;  // a is harder
+    if (target_a > target_b) return 1;   // b is harder
+    return 0;  // equal
+}
+
+// ---------------------------------------------------------------------------
+// compute_timespan_ratio
+// ---------------------------------------------------------------------------
+
+double compute_timespan_ratio(int64_t first_time, int64_t last_time) {
+    int64_t actual = last_time - first_time;
+
+    // Clamp to the same bounds as get_next_work_required
+    int64_t min_timespan = RETARGET_TIMESPAN / MAX_RETARGET_FACTOR;
+    int64_t max_timespan = RETARGET_TIMESPAN * MAX_RETARGET_FACTOR;
+
+    if (actual < min_timespan) actual = min_timespan;
+    if (actual > max_timespan) actual = max_timespan;
+
+    return static_cast<double>(actual) / static_cast<double>(RETARGET_TIMESPAN);
+}
+
 } // namespace flow::consensus

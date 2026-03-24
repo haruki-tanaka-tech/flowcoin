@@ -36,4 +36,81 @@ Amount compute_block_reward(uint64_t height) {
     return subsidy;
 }
 
+// ---------------------------------------------------------------------------
+// get_halving_era
+// ---------------------------------------------------------------------------
+
+uint32_t get_halving_era(uint64_t height) {
+    return static_cast<uint32_t>(height / static_cast<uint64_t>(HALVING_INTERVAL));
+}
+
+// ---------------------------------------------------------------------------
+// get_next_halving_height
+// ---------------------------------------------------------------------------
+
+uint64_t get_next_halving_height(uint64_t height) {
+    uint64_t era = height / static_cast<uint64_t>(HALVING_INTERVAL);
+    return (era + 1) * static_cast<uint64_t>(HALVING_INTERVAL);
+}
+
+// ---------------------------------------------------------------------------
+// blocks_until_halving
+// ---------------------------------------------------------------------------
+
+uint64_t blocks_until_halving(uint64_t height) {
+    return get_next_halving_height(height) - height;
+}
+
+// ---------------------------------------------------------------------------
+// compute_total_supply
+// ---------------------------------------------------------------------------
+
+Amount compute_total_supply(uint64_t height) {
+    // Instead of iterating every block, compute analytically per era.
+    // Each era contributes: blocks_in_era * reward_per_block
+    //
+    // For complete eras: HALVING_INTERVAL * (INITIAL_REWARD >> era)
+    // For the partial current era: (height - era_start) * reward
+
+    Amount total = 0;
+    uint64_t remaining_height = height + 1;  // +1 because height is inclusive
+
+    for (uint64_t era = 0; remaining_height > 0; era++) {
+        if (era >= 64) break;
+
+        Amount era_reward = INITIAL_REWARD >> era;
+        if (era_reward < MIN_REWARD) break;
+
+        uint64_t blocks_in_era;
+        if (remaining_height >= static_cast<uint64_t>(HALVING_INTERVAL)) {
+            blocks_in_era = static_cast<uint64_t>(HALVING_INTERVAL);
+        } else {
+            blocks_in_era = remaining_height;
+        }
+
+        total += static_cast<Amount>(blocks_in_era) * era_reward;
+        remaining_height -= blocks_in_era;
+    }
+
+    return total;
+}
+
+// ---------------------------------------------------------------------------
+// compute_remaining_supply
+// ---------------------------------------------------------------------------
+
+Amount compute_remaining_supply(uint64_t height) {
+    Amount minted = compute_total_supply(height);
+    if (minted >= MAX_SUPPLY) return 0;
+    return MAX_SUPPLY - minted;
+}
+
+// ---------------------------------------------------------------------------
+// is_subsidy_exhausted
+// ---------------------------------------------------------------------------
+
+bool is_subsidy_exhausted(uint64_t height) {
+    return compute_block_reward(height) == 0;
+}
+
 } // namespace flow::consensus

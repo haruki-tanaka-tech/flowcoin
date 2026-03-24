@@ -8,7 +8,11 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace flow {
 
@@ -157,9 +161,11 @@ static bool deserialize_tx(DataReader& r, CTransaction& tx) {
 BlockStore::BlockStore(const std::string& datadir)
     : datadir_(datadir)
 {
-    // Ensure the blocks/ subdirectory exists
+    // Ensure the blocks/ and blocks/undo/ subdirectories exist
     std::string blocks_dir = datadir_ + "/blocks";
     ::mkdir(blocks_dir.c_str(), 0755);
+    std::string undo_dir = blocks_dir + "/undo";
+    ::mkdir(undo_dir.c_str(), 0755);
 
     // Scan existing blk files to determine current file and offset.
     // Start from file 0 and find the last one that exists.
@@ -436,4 +442,250 @@ void BlockStore::flush() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// get_undo_path
+// ---------------------------------------------------------------------------
+
+std::string BlockStore::get_undo_path(int file_num) const {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "rev%05d.dat", file_num);
+    return datadir_ + "/blocks/" + buf;
+}
+
+// ---------------------------------------------------------------------------
+// get_undo_path_for_height
+// ---------------------------------------------------------------------------
+
+std::string BlockStore::get_undo_path_for_height(uint64_t height) const {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%lu.dat",
+                  static_cast<unsigned long>(height));
+    return datadir_ + "/blocks/undo/" + buf;
+}
+
+// ---------------------------------------------------------------------------
+// get_lock_path
+// ---------------------------------------------------------------------------
+
+std::string BlockStore::get_lock_path() const {
+    return datadir_ + "/blocks/.lock";
+}
+
+// ---------------------------------------------------------------------------
+// get_file_size
+// ---------------------------------------------------------------------------
+
+size_t BlockStore::get_file_size(const std::string& path) {
+    struct stat st;
+    if (::stat(path.c_str(), &st) == 0) {
+        return static_cast<size_t>(st.st_size);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// write_undo — store undo data for a block height
+// ---------------------------------------------------------------------------
+
+bool BlockStore::write_undo(uint64_t height, const std::vector<uint8_t>& undo_data) {
+    if (undo_data.empty()) return true;
+
+    std::string path = get_undo_path_for_height(height);
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) {
+        fprintf(stderr, "BlockStore: failed to open %s for writing: %s\n",
+                path.c_str(), std::strerror(errno));
+        return false;
+    }
+
+    // Write length prefix (4 bytes LE) then data
+    uint32_t len = static_cast<uint32_t>(undo_data.size());
+    uint8_t len_bytes[4] = {
+        static_cast<uint8_t>(len),
+        static_cast<uint8_t>(len >> 8),
+        static_cast<uint8_t>(len >> 16),
+        static_cast<uint8_t>(len >> 24)
+    };
+
+    if (std::fwrite(len_bytes, 1, 4, f) != 4) {
+        std::fclose(f);
+        return false;
+    }
+
+    if (std::fwrite(undo_data.data(), 1, undo_data.size(), f) != undo_data.size()) {
+        std::fclose(f);
+        return false;
+    }
+
+    std::fclose(f);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// read_undo — retrieve undo data for a block height
+// ---------------------------------------------------------------------------
+
+bool BlockStore::read_undo(uint64_t height, std::vector<uint8_t>& undo_data) const {
+    std::string path = get_undo_path_for_height(height);
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+
+    // Read length prefix
+    uint8_t len_bytes[4];
+    if (std::fread(len_bytes, 1, 4, f) != 4) {
+        std::fclose(f);
+        return false;
+    }
+
+    uint32_t len = static_cast<uint32_t>(len_bytes[0])
+                 | (static_cast<uint32_t>(len_bytes[1]) << 8)
+                 | (static_cast<uint32_t>(len_bytes[2]) << 16)
+                 | (static_cast<uint32_t>(len_bytes[3]) << 24);
+
+    // Sanity check
+    if (len > 100'000'000) {
+        std::fclose(f);
+        return false;
+    }
+
+    undo_data.resize(len);
+    if (std::fread(undo_data.data(), 1, len, f) != len) {
+        std::fclose(f);
+        undo_data.clear();
+        return false;
+    }
+
+    std::fclose(f);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// has_undo
+// ---------------------------------------------------------------------------
+
+bool BlockStore::has_undo(uint64_t height) const {
+    std::string path = get_undo_path_for_height(height);
+    struct stat st;
+    return ::stat(path.c_str(), &st) == 0 && st.st_size > 0;
+}
+
+// ---------------------------------------------------------------------------
+// prune_files — delete old blk/rev/undo files
+// ---------------------------------------------------------------------------
+
+int BlockStore::prune_files(uint64_t below_height) {
+    int files_deleted = 0;
+
+    // Delete per-height undo files
+    std::string undo_dir = datadir_ + "/blocks/undo";
+    DIR* dir = ::opendir(undo_dir.c_str());
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = ::readdir(dir)) != nullptr) {
+            // Parse height from filename like "123.dat"
+            char* endp = nullptr;
+            unsigned long file_height = std::strtoul(entry->d_name, &endp, 10);
+            if (endp && std::strcmp(endp, ".dat") == 0) {
+                if (file_height < below_height) {
+                    std::string full_path = undo_dir + "/" + entry->d_name;
+                    if (::unlink(full_path.c_str()) == 0) {
+                        files_deleted++;
+                    }
+                }
+            }
+        }
+        ::closedir(dir);
+    }
+
+    return files_deleted;
+}
+
+// ---------------------------------------------------------------------------
+// get_disk_usage — total bytes of all blk*.dat and rev*.dat files
+// ---------------------------------------------------------------------------
+
+size_t BlockStore::get_disk_usage() const {
+    size_t total = 0;
+
+    // Sum blk*.dat files
+    for (int i = 0; i <= current_file_ + 1; ++i) {
+        std::string path = get_block_path(i);
+        total += get_file_size(path);
+    }
+
+    // Sum rev*.dat files
+    for (int i = 0; i <= current_file_ + 1; ++i) {
+        std::string path = get_undo_path(i);
+        total += get_file_size(path);
+    }
+
+    // Sum undo/<height>.dat files
+    std::string undo_dir = datadir_ + "/blocks/undo";
+    DIR* dir = ::opendir(undo_dir.c_str());
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = ::readdir(dir)) != nullptr) {
+            if (entry->d_name[0] == '.') continue;
+            std::string full_path = undo_dir + "/" + entry->d_name;
+            total += get_file_size(full_path);
+        }
+        ::closedir(dir);
+    }
+
+    return total;
+}
+
+// ---------------------------------------------------------------------------
+// scan_block_files — enumerate existing blk*.dat files
+// ---------------------------------------------------------------------------
+
+int BlockStore::scan_block_files() {
+    int count = 0;
+    while (true) {
+        std::string path = get_block_path(count);
+        struct stat st;
+        if (::stat(path.c_str(), &st) != 0) break;
+        count++;
+    }
+    return count;
+}
+
+// ---------------------------------------------------------------------------
+// acquire_lock — advisory file lock
+// ---------------------------------------------------------------------------
+
+bool BlockStore::acquire_lock() {
+    std::string lock_path = get_lock_path();
+    lock_fd_ = ::open(lock_path.c_str(), O_CREAT | O_RDWR, 0644);
+    if (lock_fd_ < 0) {
+        fprintf(stderr, "BlockStore: failed to open lock file %s: %s\n",
+                lock_path.c_str(), std::strerror(errno));
+        return false;
+    }
+
+    if (::flock(lock_fd_, LOCK_EX | LOCK_NB) != 0) {
+        fprintf(stderr, "BlockStore: failed to acquire lock on %s: %s\n"
+                "Another FlowCoin instance may be using this data directory.\n",
+                lock_path.c_str(), std::strerror(errno));
+        ::close(lock_fd_);
+        lock_fd_ = -1;
+        return false;
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// release_lock
+// ---------------------------------------------------------------------------
+
+void BlockStore::release_lock() {
+    if (lock_fd_ >= 0) {
+        ::flock(lock_fd_, LOCK_UN);
+        ::close(lock_fd_);
+        lock_fd_ = -1;
+    }
+}
+
 } // namespace flow
+

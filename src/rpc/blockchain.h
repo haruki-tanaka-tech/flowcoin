@@ -17,6 +17,9 @@ class Mempool;
 /// Register all blockchain-related RPC methods with the server.
 void register_blockchain_rpcs(RpcServer& server, ChainState& chain);
 
+/// Register extended blockchain RPCs (getdifficulty, getblockfilter, etc).
+void register_extended_blockchain_rpcs(RpcServer& server, ChainState& chain);
+
 /// Register mempool-related RPCs (requires both chain and mempool).
 void register_mempool_rpcs(RpcServer& server, ChainState& chain, Mempool& mempool);
 

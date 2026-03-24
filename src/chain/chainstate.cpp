@@ -8,7 +8,9 @@
 // - Proper reorganization with model state rollback
 
 #include "chain/chainstate.h"
+#include "chain/chaindb.h"
 #include "consensus/eval.h"
+#include "consensus/genesis.h"
 #include "consensus/growth.h"
 #include "consensus/params.h"
 #include "consensus/reward.h"
@@ -20,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <sys/stat.h>
 
 namespace flow {
 
@@ -492,6 +495,62 @@ bool ChainState::accept_block(const CBlock& block,
 // ---------------------------------------------------------------------------
 
 bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
+    // === Generate undo data BEFORE modifying UTXO set ===
+    // Capture the state of all UTXOs that will be spent by this block.
+    // This undo data enables efficient disconnection during reorgs.
+    BlockUndo undo = generate_undo(block);
+
+    // === Compute input sums for fee validation ===
+    std::vector<Amount> tx_input_sums;
+    tx_input_sums.reserve(block.vtx.size());
+
+    for (size_t tx_i = 0; tx_i < block.vtx.size(); ++tx_i) {
+        const CTransaction& tx = block.vtx[tx_i];
+
+        if (tx.is_coinbase()) {
+            tx_input_sums.push_back(0);
+            continue;
+        }
+
+        Amount input_sum = 0;
+        for (const CTxIn& in : tx.vin) {
+            UTXOEntry spent_entry;
+            if (!utxo_.get(in.prevout.txid, in.prevout.index, spent_entry)) {
+                fprintf(stderr, "connect_block: UTXO not found for input "
+                        "at height %lu, tx %zu\n",
+                        static_cast<unsigned long>(index->height), tx_i);
+                return false;
+            }
+            input_sum += spent_entry.value;
+        }
+        tx_input_sums.push_back(input_sum);
+    }
+
+    // === Validate coinbase against subsidy + fees ===
+    Amount fees = consensus::compute_block_fees(block, tx_input_sums);
+    Amount subsidy = consensus::compute_block_reward(index->height);
+    Amount max_coinbase = subsidy + fees;
+
+    if (block.vtx[0].get_value_out() > max_coinbase) {
+        fprintf(stderr, "connect_block: coinbase exceeds subsidy + fees "
+                "at height %lu (coinbase=%ld, max=%ld)\n",
+                static_cast<unsigned long>(index->height),
+                static_cast<long>(block.vtx[0].get_value_out()),
+                static_cast<long>(max_coinbase));
+        return false;
+    }
+
+    // === Verify inputs > outputs for each non-coinbase tx (no negative fees) ===
+    for (size_t tx_i = 1; tx_i < block.vtx.size(); ++tx_i) {
+        Amount out_sum = block.vtx[tx_i].get_value_out();
+        if (tx_input_sums[tx_i] < out_sum) {
+            fprintf(stderr, "connect_block: tx %zu has input_sum < output_sum "
+                    "at height %lu\n", tx_i,
+                    static_cast<unsigned long>(index->height));
+            return false;
+        }
+    }
+
     // === UTXO updates ===
     utxo_.begin_transaction();
 
@@ -544,6 +603,19 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
 
     utxo_.commit_transaction();
 
+    // === Save undo data to disk for reorg support ===
+    {
+        std::vector<uint8_t> undo_bytes = undo.serialize();
+        if (!undo_bytes.empty()) {
+            if (!store_.write_undo(index->height, undo_bytes)) {
+                fprintf(stderr, "connect_block: failed to write undo data "
+                        "at height %lu\n",
+                        static_cast<unsigned long>(index->height));
+                // Non-fatal: reorgs past this point will use the slow path
+            }
+        }
+    }
+
     // === Model state: apply training delta ===
     if (!model_state_.process_block(block, index->height)) {
         fprintf(stderr, "connect_block: model state update failed at height %lu\n",
@@ -567,6 +639,13 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
     index->status |= BLOCK_FULLY_VALIDATED;
     update_tip(index);
 
+    // === Persist block index entry and tip to ChainDB ===
+    persist_block_index(index);
+    persist_tip();
+
+    // === Auto-flush periodically ===
+    maybe_flush();
+
     return true;
 }
 
@@ -589,7 +668,23 @@ bool ChainState::disconnect_tip() {
         return false;
     }
 
-    // === UTXO undo ===
+    // === Try the fast path: use pre-computed undo data ===
+    std::vector<uint8_t> undo_bytes;
+    if (store_.read_undo(tip_idx->height, undo_bytes)) {
+        BlockUndo undo;
+        if (BlockUndo::deserialize(undo_bytes.data(), undo_bytes.size(), undo)) {
+            // Fast disconnect using undo data
+            if (disconnect_block(tip_block, undo)) {
+                persist_tip();
+                return true;
+            }
+            fprintf(stderr, "disconnect_tip: fast disconnect failed, "
+                    "falling back to slow path at height %lu\n",
+                    static_cast<unsigned long>(tip_idx->height));
+        }
+    }
+
+    // === Slow path: scan the chain for source transactions ===
     utxo_.begin_transaction();
 
     // Process transactions in reverse order
@@ -669,6 +764,7 @@ bool ChainState::disconnect_tip() {
 
     // Move the tip back to the parent
     update_tip(tip_idx->prev);
+    persist_tip();
 
     return true;
 }
@@ -708,4 +804,573 @@ std::vector<CBlockIndex*> ChainState::get_chain_to(CBlockIndex* tip_idx) const {
     return chain;
 }
 
+// ---------------------------------------------------------------------------
+// load_from_disk — full startup sequence
+// ---------------------------------------------------------------------------
+
+bool ChainState::load_from_disk() {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    // Step 1: Open/create ChainDB
+    std::string chaindb_path = datadir_ + "/chaindb.db";
+    try {
+        chaindb_ = std::make_unique<ChainDB>(chaindb_path);
+    } catch (const std::exception& e) {
+        fprintf(stderr, "ChainState: failed to open ChainDB: %s\n", e.what());
+        return false;
+    }
+
+    if (!chaindb_->is_open()) {
+        fprintf(stderr, "ChainState: ChainDB not open after construction\n");
+        return false;
+    }
+
+    // Step 2: Load all block indices from DB
+    size_t db_count = chaindb_->count();
+    if (db_count == 0) {
+        fprintf(stderr, "ChainState: empty ChainDB, starting fresh\n");
+        return true;  // Will create genesis in init()
+    }
+
+    fprintf(stderr, "ChainState: loading %zu block indices from disk\n", db_count);
+
+    // Step 3: Reconstruct BlockTree from loaded indices
+    if (!rebuild_tree_from_db()) {
+        fprintf(stderr, "ChainState: failed to rebuild block tree from DB\n");
+        return false;
+    }
+
+    // Step 4: Verify tip matches stored tip
+    uint256 stored_tip_hash = chaindb_->load_tip();
+    uint64_t stored_height = chaindb_->load_height();
+
+    CBlockIndex* stored_tip = tree_.find(stored_tip_hash);
+    if (!stored_tip) {
+        fprintf(stderr, "ChainState: stored tip not found in tree, "
+                "attempting crash recovery\n");
+
+        // Step 5: Crash recovery
+        CBlockIndex* recovered = recover_tip();
+        if (!recovered) {
+            fprintf(stderr, "ChainState: crash recovery failed, "
+                    "no valid tip found\n");
+            return false;
+        }
+
+        update_tip(recovered);
+        persist_tip();
+
+        fprintf(stderr, "ChainState: recovered tip at height %lu\n",
+                static_cast<unsigned long>(recovered->height));
+    } else {
+        // Verify the stored tip is fully validated
+        if (!(stored_tip->status & BLOCK_FULLY_VALIDATED)) {
+            fprintf(stderr, "ChainState: stored tip at height %lu not fully "
+                    "validated, walking back\n",
+                    static_cast<unsigned long>(stored_tip->height));
+
+            CBlockIndex* walk = stored_tip;
+            while (walk && !(walk->status & BLOCK_FULLY_VALIDATED)) {
+                walk = walk->prev;
+            }
+
+            if (!walk) {
+                fprintf(stderr, "ChainState: no fully validated block found\n");
+                return false;
+            }
+
+            update_tip(walk);
+            persist_tip();
+        } else {
+            update_tip(stored_tip);
+        }
+
+        fprintf(stderr, "ChainState: loaded tip at height %lu "
+                "(stored height was %lu)\n",
+                static_cast<unsigned long>(tip() ? tip()->height : 0),
+                static_cast<unsigned long>(stored_height));
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// rebuild_tree_from_db
+// ---------------------------------------------------------------------------
+
+bool ChainState::rebuild_tree_from_db() {
+    auto indices = chaindb_->load_all_indices();
+    if (indices.empty()) return false;
+
+    // Insert all into tree, linking parents
+    chaindb_->begin_batch();
+
+    for (auto& loaded_idx : indices) {
+        // Check if this block is already in the tree
+        CBlockIndex* existing = tree_.find(loaded_idx.hash);
+        if (existing) continue;
+
+        // Create a block header from the loaded index to insert into the tree
+        CBlockHeader hdr;
+        hdr.prev_hash       = loaded_idx.prev_hash;
+        hdr.height          = loaded_idx.height;
+        hdr.timestamp       = loaded_idx.timestamp;
+        hdr.nbits           = loaded_idx.nbits;
+        hdr.val_loss        = loaded_idx.val_loss;
+        hdr.prev_val_loss   = loaded_idx.prev_val_loss;
+        hdr.train_steps     = loaded_idx.train_steps;
+        hdr.d_model         = loaded_idx.d_model;
+        hdr.n_layers        = loaded_idx.n_layers;
+        hdr.d_ff            = loaded_idx.d_ff;
+        hdr.n_heads         = loaded_idx.n_heads;
+        hdr.gru_dim         = loaded_idx.gru_dim;
+        hdr.n_slots         = loaded_idx.n_slots;
+        hdr.stagnation      = loaded_idx.stagnation_count;
+        hdr.merkle_root     = loaded_idx.merkle_root;
+        std::memcpy(hdr.miner_pubkey.data(), loaded_idx.miner_pubkey.data(), 32);
+
+        // Insert into tree (handles parent linking)
+        CBlockIndex* idx = nullptr;
+        if (loaded_idx.height == 0) {
+            auto genesis_idx = std::make_unique<CBlockIndex>();
+            *genesis_idx = loaded_idx;
+            genesis_idx->prev = nullptr;
+            idx = tree_.insert_genesis(std::move(genesis_idx));
+        } else {
+            idx = tree_.insert(hdr);
+        }
+
+        if (idx) {
+            // Copy over non-header fields
+            idx->status = loaded_idx.status;
+            idx->pos = loaded_idx.pos;
+            idx->n_tx = loaded_idx.n_tx;
+            idx->improving_blocks = loaded_idx.improving_blocks;
+        }
+    }
+
+    chaindb_->commit_batch();
+
+    fprintf(stderr, "ChainState: rebuilt tree with %zu entries\n", tree_.size());
+    return tree_.size() > 0;
+}
+
+// ---------------------------------------------------------------------------
+// save_to_disk
+// ---------------------------------------------------------------------------
+
+bool ChainState::save_to_disk() {
+    if (!chaindb_) return false;
+
+    persist_tip();
+    store_.flush();
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// flush
+// ---------------------------------------------------------------------------
+
+bool ChainState::flush() {
+    if (!chaindb_) return true;
+
+    store_.flush();
+    persist_tip();
+    blocks_since_flush_ = 0;
+
+    fprintf(stderr, "ChainState: flushed to disk at height %lu\n",
+            static_cast<unsigned long>(height()));
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// maybe_flush
+// ---------------------------------------------------------------------------
+
+void ChainState::maybe_flush() {
+    blocks_since_flush_++;
+    if (blocks_since_flush_ >= FLUSH_INTERVAL) {
+        flush();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// persist_block_index
+// ---------------------------------------------------------------------------
+
+void ChainState::persist_block_index(const CBlockIndex* idx) {
+    if (!chaindb_ || !idx) return;
+    chaindb_->save_block_index(*idx);
+}
+
+// ---------------------------------------------------------------------------
+// persist_tip
+// ---------------------------------------------------------------------------
+
+void ChainState::persist_tip() {
+    if (!chaindb_) return;
+
+    CBlockIndex* t = tip();
+    if (t) {
+        chaindb_->save_tip(t->hash);
+        chaindb_->save_height(t->height);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// find_fork_point
+// ---------------------------------------------------------------------------
+
+CBlockIndex* ChainState::find_fork_point(CBlockIndex* tip_a,
+                                           CBlockIndex* tip_b) const {
+    if (!tip_a || !tip_b) return nullptr;
+
+    CBlockIndex* a = tip_a;
+    CBlockIndex* b = tip_b;
+
+    while (a && b && a != b) {
+        if (a->height > b->height) {
+            a = a->prev;
+        } else if (b->height > a->height) {
+            b = b->prev;
+        } else {
+            a = a->prev;
+            b = b->prev;
+        }
+    }
+
+    return (a == b) ? a : nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// recover_tip — crash recovery
+// ---------------------------------------------------------------------------
+
+CBlockIndex* ChainState::recover_tip() {
+    // Find the highest fully-validated block in the tree.
+    // Walk from all leaf nodes backward to find the best tip.
+    CBlockIndex* best = nullptr;
+
+    // Simple approach: iterate all indices and find the highest validated one.
+    // This is O(n) but only runs during crash recovery.
+    auto loaded = chaindb_->load_all_indices();
+    for (const auto& idx : loaded) {
+        if (idx.status & BLOCK_FULLY_VALIDATED) {
+            CBlockIndex* tree_idx = tree_.find(idx.hash);
+            if (tree_idx) {
+                if (!best || tree_idx->height > best->height) {
+                    best = tree_idx;
+                }
+            }
+        }
+    }
+
+    return best;
+}
+
+// ---------------------------------------------------------------------------
+// reorganize_to — full reorg to a new tip
+// ---------------------------------------------------------------------------
+
+bool ChainState::reorganize_to(CBlockIndex* new_tip,
+                                 consensus::ValidationState& state) {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    CBlockIndex* current = tip();
+    if (!current || !new_tip) {
+        state.error("reorg-null-tip");
+        return false;
+    }
+
+    if (new_tip == current) {
+        return true;  // Already at this tip
+    }
+
+    // Find fork point
+    CBlockIndex* fork_point = find_fork_point(current, new_tip);
+    if (!fork_point) {
+        state.error("reorg-no-fork-point");
+        return false;
+    }
+
+    uint64_t disconnect_count = current->height - fork_point->height;
+    uint64_t connect_count = new_tip->height - fork_point->height;
+
+    fprintf(stderr, "ChainState: reorganizing: disconnect %lu, connect %lu "
+            "(fork at height %lu)\n",
+            static_cast<unsigned long>(disconnect_count),
+            static_cast<unsigned long>(connect_count),
+            static_cast<unsigned long>(fork_point->height));
+
+    // Disconnect from current tip back to fork point
+    while (tree_.best_tip() != fork_point) {
+        if (!disconnect_tip()) {
+            state.error("reorg-disconnect-failed");
+            return false;
+        }
+    }
+
+    // Build the connect path from fork_point to new_tip
+    std::vector<CBlockIndex*> connect_path;
+    CBlockIndex* walk = new_tip;
+    while (walk && walk != fork_point) {
+        connect_path.push_back(walk);
+        walk = walk->prev;
+    }
+    std::reverse(connect_path.begin(), connect_path.end());
+
+    // Connect each block in order
+    for (CBlockIndex* connect_idx : connect_path) {
+        // Read block from disk
+        CBlock connect_block_data;
+        if (!store_.read_block(connect_idx->pos, connect_block_data)) {
+            state.error("reorg-read-failed");
+            return false;
+        }
+
+        if (!connect_block(connect_block_data, connect_idx)) {
+            state.error("reorg-connect-failed");
+            connect_idx->status |= BLOCK_FAILED;
+            return false;
+        }
+    }
+
+    persist_tip();
+
+    fprintf(stderr, "ChainState: reorganization complete, "
+            "new tip at height %lu\n",
+            static_cast<unsigned long>(tree_.best_tip()->height));
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// BlockUndo serialization
+// ---------------------------------------------------------------------------
+
+std::vector<uint8_t> ChainState::BlockUndo::serialize() const {
+    std::vector<uint8_t> out;
+
+    // Number of spent outputs (4 bytes LE)
+    uint32_t count = static_cast<uint32_t>(spent_outputs.size());
+    out.push_back(static_cast<uint8_t>(count));
+    out.push_back(static_cast<uint8_t>(count >> 8));
+    out.push_back(static_cast<uint8_t>(count >> 16));
+    out.push_back(static_cast<uint8_t>(count >> 24));
+
+    for (const auto& so : spent_outputs) {
+        // txid (32 bytes)
+        out.insert(out.end(), so.txid.begin(), so.txid.end());
+
+        // vout (4 bytes LE)
+        out.push_back(static_cast<uint8_t>(so.vout));
+        out.push_back(static_cast<uint8_t>(so.vout >> 8));
+        out.push_back(static_cast<uint8_t>(so.vout >> 16));
+        out.push_back(static_cast<uint8_t>(so.vout >> 24));
+
+        // value (8 bytes LE)
+        int64_t val = so.entry.value;
+        for (int i = 0; i < 8; ++i) {
+            out.push_back(static_cast<uint8_t>(val >> (i * 8)));
+        }
+
+        // pubkey_hash (32 bytes)
+        out.insert(out.end(), so.entry.pubkey_hash.begin(),
+                   so.entry.pubkey_hash.end());
+
+        // height (8 bytes LE)
+        uint64_t h = so.entry.height;
+        for (int i = 0; i < 8; ++i) {
+            out.push_back(static_cast<uint8_t>(h >> (i * 8)));
+        }
+
+        // is_coinbase (1 byte)
+        out.push_back(so.entry.is_coinbase ? 1 : 0);
+    }
+
+    return out;
+}
+
+bool ChainState::BlockUndo::deserialize(const uint8_t* data, size_t len,
+                                          BlockUndo& out) {
+    if (len < 4) return false;
+    size_t pos = 0;
+
+    // Count
+    uint32_t count = static_cast<uint32_t>(data[pos])
+                   | (static_cast<uint32_t>(data[pos + 1]) << 8)
+                   | (static_cast<uint32_t>(data[pos + 2]) << 16)
+                   | (static_cast<uint32_t>(data[pos + 3]) << 24);
+    pos += 4;
+
+    // Each entry: 32 (txid) + 4 (vout) + 8 (value) + 32 (pkh) + 8 (height) + 1 (cb) = 85 bytes
+    static constexpr size_t ENTRY_SIZE = 32 + 4 + 8 + 32 + 8 + 1;
+    if (len < 4 + static_cast<size_t>(count) * ENTRY_SIZE) return false;
+
+    out.spent_outputs.resize(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        auto& so = out.spent_outputs[i];
+
+        // txid
+        std::memcpy(so.txid.data(), data + pos, 32);
+        pos += 32;
+
+        // vout
+        so.vout = static_cast<uint32_t>(data[pos])
+                | (static_cast<uint32_t>(data[pos + 1]) << 8)
+                | (static_cast<uint32_t>(data[pos + 2]) << 16)
+                | (static_cast<uint32_t>(data[pos + 3]) << 24);
+        pos += 4;
+
+        // value
+        int64_t val = 0;
+        for (int j = 0; j < 8; ++j) {
+            val |= static_cast<int64_t>(data[pos + j]) << (j * 8);
+        }
+        so.entry.value = val;
+        pos += 8;
+
+        // pubkey_hash
+        std::memcpy(so.entry.pubkey_hash.data(), data + pos, 32);
+        pos += 32;
+
+        // height
+        uint64_t h = 0;
+        for (int j = 0; j < 8; ++j) {
+            h |= static_cast<uint64_t>(data[pos + j]) << (j * 8);
+        }
+        so.entry.height = h;
+        pos += 8;
+
+        // is_coinbase
+        so.entry.is_coinbase = (data[pos] != 0);
+        pos += 1;
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// generate_undo — capture UTXO state before connecting a block
+// ---------------------------------------------------------------------------
+
+ChainState::BlockUndo ChainState::generate_undo(const CBlock& block) const {
+    BlockUndo undo;
+
+    for (size_t tx_i = 0; tx_i < block.vtx.size(); ++tx_i) {
+        const CTransaction& tx = block.vtx[tx_i];
+
+        // Skip coinbase (no inputs to spend)
+        if (tx.is_coinbase()) continue;
+
+        for (const CTxIn& in : tx.vin) {
+            UTXOEntry entry;
+            if (utxo_.get(in.prevout.txid, in.prevout.index, entry)) {
+                BlockUndo::SpentOutput so;
+                so.txid = in.prevout.txid;
+                so.vout = in.prevout.index;
+                so.entry = entry;
+                undo.spent_outputs.push_back(std::move(so));
+            }
+        }
+    }
+
+    return undo;
+}
+
+// ---------------------------------------------------------------------------
+// disconnect_block — disconnect using pre-computed undo data
+// ---------------------------------------------------------------------------
+
+bool ChainState::disconnect_block(const CBlock& block, const BlockUndo& undo) {
+    CBlockIndex* tip_idx = tree_.best_tip();
+    if (!tip_idx) return false;
+
+    // UTXO undo: remove outputs, restore inputs
+    utxo_.begin_transaction();
+
+    // Process transactions in reverse order
+    for (int tx_i = static_cast<int>(block.vtx.size()) - 1; tx_i >= 0; --tx_i) {
+        const CTransaction& tx = block.vtx[static_cast<size_t>(tx_i)];
+        uint256 txid = tx.get_txid();
+
+        // Remove outputs created by this tx
+        for (uint32_t vout = 0; vout < tx.vout.size(); ++vout) {
+            utxo_.remove(txid, vout);
+        }
+    }
+
+    // Restore all spent outputs from undo data
+    for (const auto& so : undo.spent_outputs) {
+        utxo_.add(so.txid, so.vout, so.entry);
+    }
+
+    utxo_.commit_transaction();
+
+    // Model state: undo last delta
+    if (!model_state_.undo_block()) {
+        fprintf(stderr, "disconnect_block: model state undo failed at height %lu\n",
+                static_cast<unsigned long>(tip_idx->height));
+    }
+
+    // Transaction index: remove entries
+    if (txindex_) {
+        txindex_->deindex_block(tip_idx->height);
+    }
+
+    // Move tip back
+    update_tip(tip_idx->prev);
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// set_pruning_enabled
+// ---------------------------------------------------------------------------
+
+void ChainState::set_pruning_enabled(bool enabled, uint64_t prune_target_height) {
+    pruning_enabled_ = enabled;
+    prune_target_height_ = prune_target_height;
+}
+
+// ---------------------------------------------------------------------------
+// prune — delete old block/undo data
+// ---------------------------------------------------------------------------
+
+bool ChainState::prune() {
+    if (!pruning_enabled_) return true;
+
+    CBlockIndex* t = tip();
+    if (!t) return true;
+
+    // Keep at least REORG_WINDOW blocks
+    uint64_t current_height = t->height;
+    if (current_height <= REORG_WINDOW) return true;
+
+    uint64_t prune_below = current_height - REORG_WINDOW;
+
+    // If a target height is configured, use the lower of the two
+    if (prune_target_height_ > 0 && prune_target_height_ < prune_below) {
+        prune_below = prune_target_height_;
+    }
+
+    // Prune block files
+    store_.prune_files(prune_below);
+
+    // Prune block index entries from ChainDB
+    if (chaindb_) {
+        size_t pruned = chaindb_->prune_below(prune_below);
+        if (pruned > 0) {
+            fprintf(stderr, "ChainState: pruned %zu block index entries below "
+                    "height %lu\n", pruned,
+                    static_cast<unsigned long>(prune_below));
+        }
+    }
+
+    return true;
+}
+
 } // namespace flow
+

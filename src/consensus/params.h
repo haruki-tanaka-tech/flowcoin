@@ -255,6 +255,87 @@ struct ModelDimensions {
     uint32_t seq_len;      // Sequence length (always 256)
 };
 
+// ---- Pruning Configuration --------------------------------------------------
+// Minimum number of blocks to keep for reorg safety.
+constexpr uint64_t MIN_BLOCKS_TO_KEEP     = 288;   // ~2 days at 10 min/block
+
+// Default prune target in MB. Nodes in pruning mode will try to keep
+// total block data below this threshold while maintaining MIN_BLOCKS_TO_KEEP.
+constexpr uint64_t DEFAULT_PRUNE_TARGET_MB = 550;   // ~550 MB
+
+// ---- Initial Block Download (IBD) ------------------------------------------
+// Number of blocks behind the tip before a node considers itself in IBD mode.
+// During IBD, signature verification may be skipped for assume-valid blocks
+// and transaction relay is paused.
+constexpr uint64_t IBD_MIN_BLOCKS_BEHIND  = 144;    // ~1 day of blocks
+
+// Maximum number of headers to request in a single getheaders message.
+constexpr int      MAX_HEADERS_RESULTS    = 2000;
+
+// Maximum number of blocks to download in parallel during IBD.
+constexpr int      MAX_BLOCKS_IN_TRANSIT  = 16;
+
+// Timeout for a single block download request (seconds).
+constexpr int      BLOCK_DOWNLOAD_TIMEOUT = 60;
+
+// ---- Mempool Limits ---------------------------------------------------------
+// Maximum number of transactions in the memory pool.
+constexpr size_t   MAX_MEMPOOL_SIZE       = 300'000'000;  // 300 MB
+
+// Minimum fee rate for mempool acceptance (atomic units per byte).
+// Transactions below this rate are rejected by default.
+constexpr int64_t  MIN_RELAY_FEE          = 1000;   // 0.00001 FLOW/KB
+
+// Maximum age of a mempool transaction before it's evicted (seconds).
+// 14 days = 1,209,600 seconds.
+constexpr int64_t  MEMPOOL_EXPIRY         = 1'209'600;
+
+// ---- Training Configuration ------------------------------------------------
+// Maximum number of training epochs allowed per block submission.
+// Prevents miners from claiming unreasonable amounts of training.
+constexpr uint32_t MAX_TRAIN_EPOCHS       = 100;
+
+// Maximum learning rate (as fixed-point: 1000 = 0.001).
+// Prevents destructive weight updates.
+constexpr uint32_t MAX_LEARNING_RATE_FP   = 100;    // 0.0001
+
+// Minimum batch size for training (in tokens).
+constexpr uint32_t MIN_BATCH_SIZE         = 32;
+
+// Maximum batch size for training.
+constexpr uint32_t MAX_BATCH_SIZE         = 512;
+
+// ---- Model Dimensions: computed helpers -------------------------------------
+
+/// Compute the d_head value (always d_model / n_heads).
+inline constexpr uint32_t compute_d_head(uint32_t d_model, uint32_t n_heads) {
+    return (n_heads > 0) ? (d_model / n_heads) : 0;
+}
+
+/// Check if a d_model value is valid (must be a multiple of 64 for d_head alignment).
+inline constexpr bool is_valid_d_model(uint32_t d) {
+    return d >= GENESIS_D_MODEL && d <= MAX_D_MODEL && (d % 64) == 0;
+}
+
+/// Check if an n_layers value is valid.
+inline constexpr bool is_valid_n_layers(uint32_t n) {
+    return n >= GENESIS_N_LAYERS && n <= MAX_N_LAYERS && (n % 4) == 0;
+}
+
+/// Compute the expected parameter count for given dimensions (rough estimate).
+/// Full count is in growth.h's compute_param_count().
+inline constexpr size_t estimate_param_count(uint32_t d_model, uint32_t n_layers,
+                                              uint32_t d_ff, uint32_t n_slots) {
+    // Per layer: ~4*d^2 + 2*d*n_slots + 3*d*d_ff + 25*d + 4*d
+    size_t per_layer = 4 * static_cast<size_t>(d_model) * d_model
+                     + 2 * static_cast<size_t>(d_model) * n_slots
+                     + 3 * static_cast<size_t>(d_model) * d_ff
+                     + 29 * static_cast<size_t>(d_model);
+    return static_cast<size_t>(GENESIS_VOCAB) * d_model  // embedding
+         + n_layers * per_layer                           // layers
+         + d_model;                                       // final norm
+}
+
 } // namespace flow::consensus
 
 #endif // FLOWCOIN_CONSENSUS_PARAMS_H

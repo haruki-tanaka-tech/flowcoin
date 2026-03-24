@@ -39,6 +39,12 @@ namespace NetCmd {
     constexpr const char* HEADERS    = "headers";
     constexpr const char* NOTFOUND   = "notfound";
     constexpr const char* REJECT     = "reject";
+    constexpr const char* SENDHEADERS = "sendheaders";
+    constexpr const char* SENDCMPCT  = "sendcmpct";
+    constexpr const char* CMPCTBLOCK = "cmpctblock";
+    constexpr const char* GETBLOCKTXN = "getblocktxn";
+    constexpr const char* BLOCKTXN   = "blocktxn";
+    constexpr const char* FEEFILTER  = "feefilter";
 } // namespace NetCmd
 
 // ---------------------------------------------------------------------------
