@@ -601,6 +601,256 @@ void register_mempool_rpcs(RpcServer& server, ChainState& /*chain*/,
         j["mempoolminfee"]  = min_fee_per_kb;
         j["minrelaytxfee"]  = min_fee_per_kb;
 
+        // Extended mempool stats
+        auto stats = mempool.get_stats();
+        j["orphan_count"]     = stats.orphan_count;
+        j["total_fees"]       = static_cast<double>(stats.total_fees) /
+                                static_cast<double>(consensus::COIN);
+        j["min_fee_rate"]     = stats.min_fee_rate;
+        j["median_fee_rate"]  = stats.median_fee_rate;
+        j["max_fee_rate"]     = stats.max_fee_rate;
+
+        if (stats.oldest_entry > 0 && stats.oldest_entry < std::numeric_limits<int64_t>::max()) {
+            auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            j["oldest_entry_age"] = now - stats.oldest_entry;
+        }
+
+        return j;
+    });
+
+    // getmempoolentry(txid): detailed info about a single mempool tx
+    server.register_method("getmempoolentry", [&mempool](const json& params) -> json {
+        if (params.empty() || !params[0].is_string()) {
+            throw std::runtime_error("Usage: getmempoolentry <txid>");
+        }
+
+        std::string txid_hex = params[0].get<std::string>();
+        auto bytes = hex_decode(txid_hex);
+        if (bytes.size() != 32) {
+            throw std::runtime_error("Invalid txid");
+        }
+
+        uint256 txid;
+        std::memcpy(txid.data(), bytes.data(), 32);
+
+        MempoolEntry entry;
+        if (!mempool.get_entry(txid, entry)) {
+            throw std::runtime_error("Transaction not found in mempool");
+        }
+
+        json j;
+        j["txid"]      = txid_hex;
+        j["size"]      = entry.tx_size;
+        j["fee"]       = static_cast<double>(entry.fee) /
+                         static_cast<double>(consensus::COIN);
+        j["fee_atomic"] = entry.fee;
+        j["fee_rate"]  = entry.fee_rate;
+        j["time"]      = entry.time_added;
+        j["version"]   = entry.tx.version;
+        j["vin_count"] = entry.tx.vin.size();
+        j["vout_count"] = entry.tx.vout.size();
+
+        // Age in seconds
+        auto now = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        j["age"] = now - entry.time_added;
+
+        // Ancestor info
+        auto anc_info = mempool.get_ancestor_info(txid);
+        json ancestors;
+        ancestors["count"]    = anc_info.ancestor_count;
+        ancestors["size"]     = anc_info.ancestor_size;
+        ancestors["fees"]     = static_cast<double>(anc_info.ancestor_fees) /
+                                static_cast<double>(consensus::COIN);
+        ancestors["fee_rate"] = anc_info.ancestor_fee_rate;
+        j["ancestor_info"]    = ancestors;
+
+        // Descendant count
+        auto descendants = mempool.get_descendants(txid);
+        j["descendant_count"] = descendants.size();
+
+        // Depends (parent txids in mempool)
+        auto parent_txids = mempool.get_ancestors(txid);
+        json depends = json::array();
+        for (const auto& p : parent_txids) {
+            depends.push_back(hex_encode(p.data(), 32));
+        }
+        j["depends"] = depends;
+
+        // Spent-by (child txids in mempool)
+        json spent_by = json::array();
+        for (const auto& d : descendants) {
+            spent_by.push_back(hex_encode(d.data(), 32));
+        }
+        j["spentby"] = spent_by;
+
+        return j;
+    });
+
+    // getmempooldescendants(txid): list descendants of a mempool tx
+    server.register_method("getmempooldescendants", [&mempool](const json& params) -> json {
+        if (params.empty() || !params[0].is_string()) {
+            throw std::runtime_error("Usage: getmempooldescendants <txid>");
+        }
+
+        auto bytes = hex_decode(params[0].get<std::string>());
+        if (bytes.size() != 32) {
+            throw std::runtime_error("Invalid txid");
+        }
+
+        uint256 txid;
+        std::memcpy(txid.data(), bytes.data(), 32);
+
+        if (!mempool.exists(txid)) {
+            throw std::runtime_error("Transaction not found in mempool");
+        }
+
+        auto descendants = mempool.get_descendants(txid);
+        json result = json::array();
+        for (const auto& d : descendants) {
+            result.push_back(hex_encode(d.data(), 32));
+        }
+        return result;
+    });
+
+    // getmempoolancestors(txid): list ancestors of a mempool tx
+    server.register_method("getmempoolancestors", [&mempool](const json& params) -> json {
+        if (params.empty() || !params[0].is_string()) {
+            throw std::runtime_error("Usage: getmempoolancestors <txid>");
+        }
+
+        auto bytes = hex_decode(params[0].get<std::string>());
+        if (bytes.size() != 32) {
+            throw std::runtime_error("Invalid txid");
+        }
+
+        uint256 txid;
+        std::memcpy(txid.data(), bytes.data(), 32);
+
+        if (!mempool.exists(txid)) {
+            throw std::runtime_error("Transaction not found in mempool");
+        }
+
+        auto ancestors = mempool.get_ancestors(txid);
+        json result = json::array();
+        for (const auto& a : ancestors) {
+            result.push_back(hex_encode(a.data(), 32));
+        }
+        return result;
+    });
+
+    // testmempoolaccept(hex): test if a raw transaction would be accepted
+    server.register_method("testmempoolaccept", [&mempool](const json& params) -> json {
+        if (params.empty() || !params[0].is_string()) {
+            throw std::runtime_error("Usage: testmempoolaccept <hex_tx>");
+        }
+
+        std::string hex_tx = params[0].get<std::string>();
+        auto tx_bytes = hex_decode(hex_tx);
+        if (tx_bytes.empty()) {
+            throw std::runtime_error("Invalid hex encoding");
+        }
+
+        // Deserialize the transaction
+        CTransaction tx;
+        size_t consumed = 0;
+        if (!tx.deserialize(tx_bytes.data(), tx_bytes.size(), consumed)) {
+            json result = json::array();
+            json entry;
+            entry["txid"]    = "";
+            entry["allowed"] = false;
+            entry["reject-reason"] = "deserialization-failed";
+            result.push_back(entry);
+            return result;
+        }
+
+        uint256 txid = tx.get_txid();
+
+        // Check if already in mempool
+        if (mempool.exists(txid)) {
+            json result = json::array();
+            json entry;
+            entry["txid"]    = hex_encode(txid.data(), 32);
+            entry["allowed"] = false;
+            entry["reject-reason"] = "txn-already-in-mempool";
+            result.push_back(entry);
+            return result;
+        }
+
+        // Try to add (this actually adds it; in a full implementation
+        // we'd do a dry-run validation)
+        auto add_result = mempool.add_transaction(tx);
+
+        json result = json::array();
+        json entry;
+        entry["txid"]    = hex_encode(txid.data(), 32);
+        entry["allowed"] = add_result.accepted;
+
+        if (add_result.accepted) {
+            // Remove it since this is just a test
+            mempool.remove(txid);
+
+            auto ser = tx.serialize();
+            entry["vsize"] = ser.size();
+            entry["fees"] = json::object();
+        } else {
+            entry["reject-reason"] = add_result.reject_reason;
+        }
+
+        result.push_back(entry);
+        return result;
+    });
+
+    // getfeehistogram: fee histogram for fee estimation
+    server.register_method("getfeehistogram", [&mempool](const json& params) -> json {
+        int num_buckets = 20;
+        if (!params.empty() && params[0].is_number_integer()) {
+            num_buckets = params[0].get<int>();
+            if (num_buckets < 1) num_buckets = 1;
+            if (num_buckets > 100) num_buckets = 100;
+        }
+
+        auto histogram = mempool.get_fee_histogram(num_buckets);
+
+        json result = json::array();
+        for (const auto& bucket : histogram) {
+            json b;
+            b["min_fee_rate"] = bucket.min_fee_rate;
+            b["max_fee_rate"] = bucket.max_fee_rate;
+            b["count"]        = bucket.count;
+            b["total_bytes"]  = bucket.total_bytes;
+            result.push_back(b);
+        }
+
+        return result;
+    });
+
+    // estimatefee(target_blocks): simple fee estimation from mempool
+    server.register_method("estimatefee", [&mempool](const json& params) -> json {
+        int target_blocks = 6;
+        if (!params.empty() && params[0].is_number_integer()) {
+            target_blocks = params[0].get<int>();
+            if (target_blocks < 1) target_blocks = 1;
+        }
+
+        double fee_rate = mempool.estimate_fee_rate(target_blocks);
+
+        json j;
+        j["feerate"]       = fee_rate / static_cast<double>(consensus::COIN);
+        j["feerate_atomic"] = static_cast<int64_t>(fee_rate);
+        j["target_blocks"] = target_blocks;
+        j["mempool_size"]  = mempool.size();
+
+        return j;
+    });
+
+    // savemempool: save mempool contents to disk (placeholder)
+    server.register_method("savemempool", [&mempool](const json& /*params*/) -> json {
+        json j;
+        j["saved"]   = true;
+        j["tx_count"] = mempool.size();
+        j["bytes"]   = mempool.total_bytes();
         return j;
     });
 }

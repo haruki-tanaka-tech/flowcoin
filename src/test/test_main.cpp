@@ -60,6 +60,16 @@ void test_compact_size();
 void test_delta_full();
 void test_pow();
 void test_integration();
+void test_aes256();
+void test_bloom();
+void test_script_interpreter();
+void test_mempool_advanced();
+void test_coinselect_algorithms();
+void test_hdchain();
+void test_walletdb_full();
+void test_rpc_handlers();
+void test_policy();
+void test_network_full();
 
 struct TestCase {
     std::string name;
@@ -119,6 +129,16 @@ int main() {
         {"delta_full", test_delta_full},
         {"pow", test_pow},
         {"integration", test_integration},
+        {"aes256", test_aes256},
+        {"bloom", test_bloom},
+        {"script_interpreter", test_script_interpreter},
+        {"mempool_advanced", test_mempool_advanced},
+        {"coinselect_algorithms", test_coinselect_algorithms},
+        {"hdchain", test_hdchain},
+        {"walletdb_full", test_walletdb_full},
+        {"rpc_handlers", test_rpc_handlers},
+        {"policy", test_policy},
+        {"network_full", test_network_full},
     };
 
     int passed = 0, failed = 0;

@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
 
 namespace flow {
@@ -71,14 +73,54 @@ std::string RpcServer::get_body(const std::string& request) {
     return request.substr(sep + 4);
 }
 
-std::string RpcServer::http_response(int code, const std::string& body) {
+std::string RpcServer::get_http_method(const std::string& request) {
+    auto space = request.find(' ');
+    if (space == std::string::npos) return "";
+    return request.substr(0, space);
+}
+
+std::string RpcServer::get_request_path(const std::string& request) {
+    auto first_space = request.find(' ');
+    if (first_space == std::string::npos) return "/";
+    auto second_space = request.find(' ', first_space + 1);
+    if (second_space == std::string::npos) return "/";
+    return request.substr(first_space + 1, second_space - first_space - 1);
+}
+
+std::string RpcServer::get_client_ip(uv_stream_t* client) {
+    struct sockaddr_storage addr;
+    int addr_len = sizeof(addr);
+    if (uv_tcp_getpeername(reinterpret_cast<uv_tcp_t*>(client),
+                            reinterpret_cast<struct sockaddr*>(&addr),
+                            &addr_len) != 0) {
+        return "unknown";
+    }
+
+    char ip[INET6_ADDRSTRLEN] = {0};
+    if (addr.ss_family == AF_INET) {
+        auto* s = reinterpret_cast<struct sockaddr_in*>(&addr);
+        uv_ip4_name(s, ip, sizeof(ip));
+    } else if (addr.ss_family == AF_INET6) {
+        auto* s = reinterpret_cast<struct sockaddr_in6*>(&addr);
+        uv_ip6_name(s, ip, sizeof(ip));
+    }
+
+    return std::string(ip);
+}
+
+std::string RpcServer::http_response(int code, const std::string& body) const {
     std::string status_text;
     switch (code) {
         case 200: status_text = "OK"; break;
+        case 400: status_text = "Bad Request"; break;
         case 401: status_text = "Unauthorized"; break;
         case 403: status_text = "Forbidden"; break;
         case 404: status_text = "Not Found"; break;
+        case 405: status_text = "Method Not Allowed"; break;
+        case 413: status_text = "Payload Too Large"; break;
+        case 429: status_text = "Too Many Requests"; break;
         case 500: status_text = "Internal Server Error"; break;
+        case 503: status_text = "Service Unavailable"; break;
         default:  status_text = "Error"; break;
     }
 
@@ -87,6 +129,16 @@ std::string RpcServer::http_response(int code, const std::string& body) {
     resp += "Content-Type: application/json\r\n";
     resp += "Content-Length: " + std::to_string(body.size()) + "\r\n";
     resp += "Connection: close\r\n";
+    resp += "Server: FlowCoin-RPC/1.0\r\n";
+
+    // CORS headers
+    if (cors_enabled_) {
+        resp += "Access-Control-Allow-Origin: " + cors_origin_ + "\r\n";
+        resp += "Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n";
+        resp += "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
+        resp += "Access-Control-Max-Age: 86400\r\n";
+    }
+
     resp += "\r\n";
     resp += body;
     return resp;
@@ -100,6 +152,7 @@ RpcServer::RpcServer(uint16_t port, const std::string& user, const std::string& 
     : port_(port), user_(user), password_(password) {
     std::memset(&server_, 0, sizeof(server_));
     auth_header_ = "Basic " + base64_encode(user + ":" + password);
+    start_time_ = std::chrono::steady_clock::now();
 }
 
 RpcServer::~RpcServer() {
@@ -113,6 +166,101 @@ RpcServer::~RpcServer() {
 void RpcServer::register_method(const std::string& name, RpcMethod method) {
     std::lock_guard<std::mutex> lock(methods_mutex_);
     methods_[name] = std::move(method);
+}
+
+bool RpcServer::has_method(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(methods_mutex_);
+    return methods_.count(name) > 0;
+}
+
+std::vector<std::string> RpcServer::get_method_names() const {
+    std::lock_guard<std::mutex> lock(methods_mutex_);
+    std::vector<std::string> names;
+    names.reserve(methods_.size());
+    for (const auto& [name, method] : methods_) {
+        names.push_back(name);
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+size_t RpcServer::method_count() const {
+    std::lock_guard<std::mutex> lock(methods_mutex_);
+    return methods_.size();
+}
+
+// ---------------------------------------------------------------------------
+// Cookie auth
+// ---------------------------------------------------------------------------
+
+void RpcServer::set_cookie_auth(const std::string& cookie_path) {
+    std::ifstream file(cookie_path);
+    if (!file.is_open()) {
+        LogWarn("rpc", "Failed to open cookie file: %s", cookie_path.c_str());
+        return;
+    }
+
+    std::string cookie_content;
+    std::getline(file, cookie_content);
+
+    if (!cookie_content.empty()) {
+        cookie_auth_ = "Basic " + base64_encode(cookie_content);
+        LogInfo("rpc", "Loaded cookie authentication from %s", cookie_path.c_str());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Statistics
+// ---------------------------------------------------------------------------
+
+RpcServer::ServerStats RpcServer::get_stats() const {
+    ServerStats stats;
+    stats.total_requests = total_requests_.load();
+    stats.successful_requests = successful_requests_.load();
+    stats.failed_requests = failed_requests_.load();
+    stats.auth_failures = auth_failures_.load();
+    stats.rate_limited = rate_limited_.load();
+
+    auto now = std::chrono::steady_clock::now();
+    stats.uptime_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+        now - start_time_).count();
+
+    return stats;
+}
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+bool RpcServer::check_rate_limit(const std::string& client_ip) {
+    if (rate_limit_ <= 0) return true;
+
+    std::lock_guard<std::mutex> lock(rate_mutex_);
+
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+
+    auto it = rate_state_.find(client_ip);
+    if (it == rate_state_.end()) {
+        rate_state_[client_ip] = {now, 1};
+        return true;
+    }
+
+    // Check if we're in a new window
+    if (now - it->second.window_start >= 1) {
+        it->second.window_start = now;
+        it->second.count = 1;
+        return true;
+    }
+
+    // Same second window
+    it->second.count++;
+    if (it->second.count > rate_limit_) {
+        rate_limited_++;
+        return false;
+    }
+
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +293,7 @@ bool RpcServer::start(uv_loop_t* loop) {
     }
 
     running_ = true;
+    start_time_ = std::chrono::steady_clock::now();
     LogInfo("rpc", "JSON-RPC server listening on 127.0.0.1:%d", port_);
     return true;
 }
@@ -175,10 +324,12 @@ void RpcServer::on_connection(uv_stream_t* server, int status) {
     auto* client = new uv_tcp_t;
     uv_tcp_init(server->loop, client);
 
-    auto* ctx = new ClientContext{self, ""};
+    auto* ctx = new ClientContext{self, "", "", std::chrono::steady_clock::now()};
     client->data = ctx;
 
     if (uv_accept(server, reinterpret_cast<uv_stream_t*>(client)) == 0) {
+        // Extract client IP for logging and rate limiting
+        ctx->client_ip = get_client_ip(reinterpret_cast<uv_stream_t*>(client));
         uv_read_start(reinterpret_cast<uv_stream_t*>(client), on_alloc, on_read);
     } else {
         delete ctx;
@@ -213,6 +364,39 @@ void RpcServer::on_read(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf)
         }
     }
 
+    // Check request size limit
+    if (ctx->buffer.size() > ctx->server->max_body_size_ + 4096) {
+        // Headers + body exceeds limit
+        uv_read_stop(client);
+        json err_resp = {
+            {"jsonrpc", "2.0"},
+            {"error", {{"code", -32600}, {"message", "Request too large"}}},
+            {"id", nullptr}
+        };
+        std::string response = ctx->server->http_response(413, err_resp.dump());
+        send_response(client, response);
+        delete ctx;
+        client->data = nullptr;
+        return;
+    }
+
+    // Check for timeout
+    auto elapsed = std::chrono::steady_clock::now() - ctx->connect_time;
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+    if (seconds > ctx->server->timeout_seconds_) {
+        uv_read_stop(client);
+        json err_resp = {
+            {"jsonrpc", "2.0"},
+            {"error", {{"code", -32600}, {"message", "Request timeout"}}},
+            {"id", nullptr}
+        };
+        std::string response = ctx->server->http_response(408, err_resp.dump());
+        send_response(client, response);
+        delete ctx;
+        client->data = nullptr;
+        return;
+    }
+
     // Check if we have a complete HTTP request (headers + body)
     auto header_end = ctx->buffer.find("\r\n\r\n");
     if (header_end == std::string::npos) {
@@ -243,7 +427,31 @@ void RpcServer::on_read(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf)
     // We have a complete request -- process it
     uv_read_stop(client);
 
-    std::string response = ctx->server->process_request(ctx->buffer);
+    // Handle CORS preflight
+    std::string method = get_http_method(ctx->buffer);
+    if (method == "OPTIONS" && ctx->server->cors_enabled_) {
+        std::string response = ctx->server->http_response(200, "");
+        send_response(client, response);
+        delete ctx;
+        client->data = nullptr;
+        return;
+    }
+
+    // Only accept POST requests for JSON-RPC
+    if (method != "POST") {
+        json err_resp = {
+            {"jsonrpc", "2.0"},
+            {"error", {{"code", -32600}, {"message", "Only POST method is supported"}}},
+            {"id", nullptr}
+        };
+        std::string response = ctx->server->http_response(405, err_resp.dump());
+        send_response(client, response);
+        delete ctx;
+        client->data = nullptr;
+        return;
+    }
+
+    std::string response = ctx->server->process_request(ctx->buffer, ctx->client_ip);
     send_response(client, response);
 
     delete ctx;
@@ -288,12 +496,37 @@ void RpcServer::on_close(uv_handle_t* handle) {
 
 bool RpcServer::check_auth(const std::string& request) const {
     std::string auth = get_header(request, "Authorization");
-    return auth == auth_header_;
+
+    // Check against username:password auth
+    if (auth == auth_header_) return true;
+
+    // Check against cookie auth
+    if (!cookie_auth_.empty() && auth == cookie_auth_) return true;
+
+    // Allow empty auth if no credentials were configured
+    if (user_.empty() && password_.empty()) return true;
+
+    return false;
 }
 
-std::string RpcServer::process_request(const std::string& request) {
+std::string RpcServer::process_request(const std::string& request,
+                                        const std::string& client_ip) {
+    total_requests_++;
+
+    // Check rate limit
+    if (!check_rate_limit(client_ip)) {
+        json err_resp = {
+            {"jsonrpc", "2.0"},
+            {"error", {{"code", -32600}, {"message", "Rate limit exceeded"}}},
+            {"id", nullptr}
+        };
+        failed_requests_++;
+        return http_response(429, err_resp.dump());
+    }
+
     // Check authentication
     if (!check_auth(request)) {
+        auth_failures_++;
         json err_resp = {
             {"jsonrpc", "2.0"},
             {"error", {{"code", -32600}, {"message", "Unauthorized"}}},
@@ -305,6 +538,7 @@ std::string RpcServer::process_request(const std::string& request) {
     // Extract body
     std::string body = get_body(request);
     if (body.empty()) {
+        failed_requests_++;
         json err_resp = {
             {"jsonrpc", "2.0"},
             {"error", {{"code", -32700}, {"message", "Parse error: empty body"}}},
@@ -313,11 +547,23 @@ std::string RpcServer::process_request(const std::string& request) {
         return http_response(400, err_resp.dump());
     }
 
+    // Check body size
+    if (body.size() > max_body_size_) {
+        failed_requests_++;
+        json err_resp = {
+            {"jsonrpc", "2.0"},
+            {"error", {{"code", -32600}, {"message", "Request body too large"}}},
+            {"id", nullptr}
+        };
+        return http_response(413, err_resp.dump());
+    }
+
     // Parse JSON
     json req_json;
     try {
         req_json = json::parse(body);
     } catch (const json::parse_error& e) {
+        failed_requests_++;
         json err_resp = {
             {"jsonrpc", "2.0"},
             {"error", {{"code", -32700}, {"message", std::string("Parse error: ") + e.what()}}},
@@ -328,15 +574,45 @@ std::string RpcServer::process_request(const std::string& request) {
 
     // Handle batch requests (JSON array)
     if (req_json.is_array()) {
+        if (req_json.empty()) {
+            failed_requests_++;
+            json err_resp = {
+                {"jsonrpc", "2.0"},
+                {"error", {{"code", -32600}, {"message", "Empty batch request"}}},
+                {"id", nullptr}
+            };
+            return http_response(200, err_resp.dump());
+        }
+
         json batch_response = json::array();
         for (const auto& single : req_json) {
-            batch_response.push_back(dispatch(single));
+            json result = dispatch(single);
+            // Only include non-notification responses (those with an "id")
+            if (!result.is_null()) {
+                batch_response.push_back(result);
+            }
         }
+
+        if (batch_response.empty()) {
+            // All requests were notifications
+            successful_requests_++;
+            return http_response(200, "");
+        }
+
+        successful_requests_++;
         return http_response(200, batch_response.dump());
     }
 
     // Single request
     json result = dispatch(req_json);
+
+    // Check if it was an error
+    if (result.contains("error") && !result["error"].is_null()) {
+        failed_requests_++;
+    } else {
+        successful_requests_++;
+    }
+
     return http_response(200, result.dump());
 }
 
