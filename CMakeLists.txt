@@ -154,6 +154,7 @@ target_link_libraries(flowcoin_util PUBLIC xkcp pthread)
 add_library(flowcoin_hash STATIC
     src/hash/keccak.cpp
     src/hash/merkle.cpp
+    src/hash/bloom.cpp
 )
 target_include_directories(flowcoin_hash PUBLIC src)
 target_link_libraries(flowcoin_hash PUBLIC xkcp)
@@ -165,6 +166,7 @@ add_library(flowcoin_crypto STATIC
     src/crypto/bech32.cpp
     src/crypto/slip0010.cpp
     src/crypto/hmac_sha512.cpp
+    src/crypto/aes256.cpp
 )
 target_include_directories(flowcoin_crypto PUBLIC src)
 target_link_libraries(flowcoin_crypto PUBLIC ed25519 flowcoin_hash)
@@ -249,6 +251,7 @@ add_library(flowcoin_rpc STATIC
     src/rpc/training.cpp
     src/rpc/util.cpp
     src/rpc/debug.cpp
+    src/rpc/register.cpp
 )
 target_include_directories(flowcoin_rpc PUBLIC src)
 target_link_libraries(flowcoin_rpc PUBLIC
@@ -269,6 +272,7 @@ target_link_libraries(flowcoin_mining PUBLIC flowcoin_consensus flowcoin_chain f
 # --- flowcoin_script ---
 add_library(flowcoin_script STATIC
     src/script/script.cpp
+    src/script/standard.cpp
 )
 target_include_directories(flowcoin_script PUBLIC src)
 target_link_libraries(flowcoin_script PUBLIC flowcoin_hash flowcoin_crypto)
@@ -276,6 +280,7 @@ target_link_libraries(flowcoin_script PUBLIC flowcoin_hash flowcoin_crypto)
 # --- flowcoin_mempool ---
 add_library(flowcoin_mempool STATIC
     src/mempool/mempool.cpp
+    src/mempool/policy.cpp
 )
 target_include_directories(flowcoin_mempool PUBLIC src)
 target_link_libraries(flowcoin_mempool PUBLIC flowcoin_chain flowcoin_crypto flowcoin_hash)
@@ -431,6 +436,16 @@ if(BUILD_TESTS)
         src/test/test_delta_full.cpp
         src/test/test_pow.cpp
         src/test/test_integration.cpp
+        src/test/test_aes256.cpp
+        src/test/test_bloom.cpp
+        src/test/test_script_interpreter.cpp
+        src/test/test_mempool_advanced.cpp
+        src/test/test_coinselect_algorithms.cpp
+        src/test/test_hdchain.cpp
+        src/test/test_walletdb_full.cpp
+        src/test/test_rpc_handlers.cpp
+        src/test/test_policy.cpp
+        src/test/test_network_full.cpp
     )
     target_include_directories(flowcoin_tests PRIVATE src)
     target_link_libraries(flowcoin_tests PRIVATE
