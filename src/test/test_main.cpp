@@ -47,6 +47,19 @@ void test_coin_selection();
 void test_strencodings();
 void test_transaction_ext();
 void test_backup();
+void test_threadpool();
+void test_fs();
+void test_logging();
+void test_random();
+void test_system();
+void test_config();
+void test_init();
+void test_blocktemplate();
+void test_submitblock();
+void test_compact_size();
+void test_delta_full();
+void test_pow();
+void test_integration();
 
 struct TestCase {
     std::string name;
@@ -93,6 +106,19 @@ int main() {
         {"strencodings", test_strencodings},
         {"transaction_ext", test_transaction_ext},
         {"backup", test_backup},
+        {"threadpool", test_threadpool},
+        {"fs", test_fs},
+        {"logging_ext", test_logging},
+        {"random", test_random},
+        {"system", test_system},
+        {"config", test_config},
+        {"init", test_init},
+        {"blocktemplate", test_blocktemplate},
+        {"submitblock", test_submitblock},
+        {"compact_size", test_compact_size},
+        {"delta_full", test_delta_full},
+        {"pow", test_pow},
+        {"integration", test_integration},
     };
 
     int passed = 0, failed = 0;
