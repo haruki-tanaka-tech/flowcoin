@@ -446,6 +446,16 @@ if(BUILD_TESTS)
         src/test/test_rpc_handlers.cpp
         src/test/test_policy.cpp
         src/test/test_network_full.cpp
+        src/test/test_block_connection.cpp
+        src/test/test_reorg_full.cpp
+        src/test/test_block_template_full.cpp
+        src/test/test_inventory_relay.cpp
+        src/test/test_bandwidth.cpp
+        src/test/test_model_evaluation.cpp
+        src/test/test_full_chain.cpp
+        src/test/test_wallet_transactions.cpp
+        src/test/test_mining_session.cpp
+        src/test/test_protocol_spec.cpp
     )
     target_include_directories(flowcoin_tests PRIVATE src)
     target_link_libraries(flowcoin_tests PRIVATE

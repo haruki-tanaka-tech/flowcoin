@@ -328,6 +328,91 @@ struct ValidationFlags {
     }
 };
 
+// ---------------------------------------------------------------------------
+// BIP34 height encoding in coinbase
+// ---------------------------------------------------------------------------
+
+/** Encode block height into a coinbase script_sig (BIP34 equivalent).
+ *  Writes a minimal push of the height as a little-endian integer. */
+bool encode_height_in_coinbase(std::vector<uint8_t>& script_sig, uint64_t height);
+
+/** Decode block height from a coinbase script_sig. */
+bool decode_height_from_coinbase(const std::vector<uint8_t>& script_sig, uint64_t& height);
+
+// ---------------------------------------------------------------------------
+// ConnectResult — result of connecting block transactions to UTXO set
+// ---------------------------------------------------------------------------
+
+struct ConnectResult {
+    bool success;
+    std::string error;
+    Amount total_fees;
+    std::vector<std::pair<uint256, uint32_t>> spent_utxos;
+    std::vector<std::pair<uint256, uint32_t>> created_utxos;
+    int total_sigops;
+    size_t total_block_weight;
+};
+
+/** Full block connection: validate all txs and compute UTXO changes. */
+ConnectResult connect_block_transactions(const CBlock& block, uint64_t height);
+
+// ---------------------------------------------------------------------------
+// Additional validation helpers
+// ---------------------------------------------------------------------------
+
+/** Count total signature operations in a block. */
+int count_block_sigops(const CBlock& block);
+
+/** Compute the hash that is signed by each transaction input. */
+uint256 compute_signature_hash(const CTransaction& tx);
+
+/** Verify a single input's Ed25519 signature. */
+bool verify_input_signature(const CTransaction& tx, size_t input_index);
+
+/** Batch verify all input signatures in a transaction. */
+bool verify_all_input_signatures(const CTransaction& tx, ValidationState& state);
+
+/** Check coinbase maturity for a spent input. */
+bool check_input_coinbase_maturity(bool is_coinbase_output,
+                                     uint64_t output_height,
+                                     uint64_t spending_height,
+                                     ValidationState& state);
+
+/** Check that input's pubkey matches the UTXO's pubkey_hash. */
+bool check_input_pubkey_hash(const CTxIn& input,
+                               const std::array<uint8_t, 32>& expected_pubkey_hash,
+                               ValidationState& state);
+
+/** Compute fee for a single transaction. Returns -1 if invalid. */
+Amount compute_tx_fee(Amount input_sum, Amount output_sum);
+
+/** Validate coinbase script_sig size (2..100 bytes). */
+bool validate_coinbase_script_sig_size(const CTransaction& coinbase,
+                                         ValidationState& state);
+
+/** Check for duplicate txids within a block. */
+bool check_duplicate_txids(const CBlock& block, ValidationState& state);
+
+/** Estimate serialized block size. */
+size_t estimate_block_size(const CBlock& block);
+
+/** Validate transaction locktimes against block height/timestamp. */
+bool check_block_locktime(const CBlock& block, ValidationState& state);
+
+/** Sum all output values across all transactions. */
+Amount compute_total_output_value(const CBlock& block);
+
+/** Sum all input values from pre-computed sums. */
+Amount compute_total_input_value(const std::vector<Amount>& tx_input_sums);
+
+/** Verify coinbase doesn't create money from thin air. */
+bool check_monetary_supply(const CBlock& block, Amount subsidy, Amount fees,
+                            ValidationState& state);
+
+/** Comprehensive block validation for ConnectBlock (UTXO-dependent). */
+bool validate_block_full(const CBlock& block, const BlockContext& ctx,
+                          ValidationState& state);
+
 } // namespace flow::consensus
 
 #endif // FLOWCOIN_CONSENSUS_VALIDATION_H

@@ -9,6 +9,7 @@
 
 #include "chain/chainstate.h"
 #include "chain/chaindb.h"
+#include "consensus/difficulty.h"
 #include "consensus/eval.h"
 #include "consensus/genesis.h"
 #include "consensus/growth.h"
@@ -16,9 +17,11 @@
 #include "consensus/reward.h"
 #include "hash/keccak.h"
 #include "hash/merkle.h"
+#include "util/arith_uint256.h"
 #include "util/time.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -1370,6 +1373,757 @@ bool ChainState::prune() {
     }
 
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// accept_headers — batch header acceptance for IBD
+// ---------------------------------------------------------------------------
+
+int ChainState::accept_headers_batch(const std::vector<CBlockHeader>& headers,
+                                       consensus::ValidationState& state) {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    int accepted = 0;
+
+    for (const auto& header : headers) {
+        uint256 block_hash = header.get_hash();
+
+        // Skip if already in tree
+        CBlockIndex* existing = tree_.find(block_hash);
+        if (existing) {
+            accepted++;
+            continue;
+        }
+
+        // Genesis cannot be accepted via batch
+        if (header.height == 0) {
+            continue;
+        }
+
+        // Look up parent
+        CBlockIndex* parent = tree_.find(header.prev_hash);
+        if (!parent) {
+            // Parent not yet available; stop processing this batch.
+            // The caller will request the missing headers.
+            break;
+        }
+
+        if (parent->status & BLOCK_FAILED) {
+            state.invalid(consensus::ValidationResult::HEADER_INVALID,
+                          "bad-prevblk", "parent marked failed in batch");
+            break;
+        }
+
+        // Build validation context
+        int64_t adjusted_time = get_adjusted_time();
+        consensus::BlockContext ctx = parent->make_child_context(adjusted_time);
+
+        // Validate header
+        consensus::ValidationState per_header_state;
+        if (!consensus::check_header(header, ctx, per_header_state)) {
+            // Mark the header as failed and continue to the next.
+            // Don't abort the entire batch for one bad header.
+            fprintf(stderr, "ChainState: batch header rejected at height %lu: %s\n",
+                    static_cast<unsigned long>(header.height),
+                    per_header_state.to_string().c_str());
+            continue;
+        }
+
+        // Insert into block tree
+        CBlockIndex* idx = tree_.insert(header);
+        idx->status |= BLOCK_HEADER_VALID;
+        accepted++;
+
+        // Persist periodically during large batches
+        if (accepted % 500 == 0) {
+            persist_block_index(idx);
+        }
+    }
+
+    // Persist the last accepted header
+    if (accepted > 0) {
+        CBlockIndex* last = tree_.best_tip();
+        if (last) {
+            persist_block_index(last);
+        }
+    }
+
+    return accepted;
+}
+
+// ---------------------------------------------------------------------------
+// accept_block_full — full pipeline: header + tx validation + connection
+// ---------------------------------------------------------------------------
+
+bool ChainState::accept_block_full(const CBlock& block,
+                                     consensus::ValidationState& state) {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    uint256 block_hash = block.get_hash();
+
+    // Check if already fully validated
+    CBlockIndex* existing = tree_.find(block_hash);
+    if (existing && (existing->status & BLOCK_FULLY_VALIDATED)) {
+        return true;
+    }
+
+    // Step 1: Accept header (if not already)
+    CBlockIndex* idx = existing;
+    if (!idx) {
+        // Unlock temporarily for header acceptance (it takes its own lock
+        // in the non-batch path). Since we already hold cs_main_, we do
+        // the header validation inline.
+        if (block.height == 0) {
+            state.invalid(consensus::ValidationResult::BLOCK_INVALID,
+                          "bad-genesis", "cannot accept genesis via accept_block_full");
+            return false;
+        }
+
+        CBlockIndex* parent = tree_.find(block.prev_hash);
+        if (!parent) {
+            state.invalid(consensus::ValidationResult::BLOCK_INVALID,
+                          "bad-prevblk", "parent not found");
+            return false;
+        }
+
+        if (parent->status & BLOCK_FAILED) {
+            state.invalid(consensus::ValidationResult::BLOCK_INVALID,
+                          "bad-prevblk", "parent is invalid");
+            return false;
+        }
+
+        int64_t adjusted_time = get_adjusted_time();
+        consensus::BlockContext ctx = parent->make_child_context(adjusted_time);
+
+        if (!consensus::check_header(block, ctx, state)) {
+            return false;
+        }
+
+        idx = tree_.insert(block);
+        idx->status |= BLOCK_HEADER_VALID;
+    }
+
+    // Step 2: Store block data to disk
+    if (!(idx->status & BLOCK_DATA_STORED)) {
+        BlockPos pos = store_.write_block(block);
+        if (pos.is_null()) {
+            state.error("disk-write-failed");
+            return false;
+        }
+        idx->pos = pos;
+        idx->status |= BLOCK_DATA_STORED;
+    }
+
+    idx->n_tx = static_cast<int>(block.vtx.size());
+
+    // Step 3: Determine if this block is on the best chain
+    CBlockIndex* current_tip = tree_.best_tip();
+
+    bool on_best_chain = false;
+    if (!current_tip) {
+        on_best_chain = true;
+    } else if (idx->height > current_tip->height) {
+        on_best_chain = true;
+    }
+
+    if (!on_best_chain) {
+        // This block is on a fork — store it but don't connect.
+        // It might become the best chain later if more blocks build on it.
+        persist_block_index(idx);
+        return true;
+    }
+
+    // Step 4: Connect to the active chain
+    CBlockIndex* parent = idx->prev;
+    if (parent == current_tip) {
+        // Simple case: extends current tip
+        if (!connect_block(block, idx)) {
+            state.error("connect-block-failed");
+            idx->status |= BLOCK_FAILED;
+            return false;
+        }
+    } else {
+        // Reorg case: find fork point and reorganize
+        CBlockIndex* fork_point = find_fork_point(current_tip, idx);
+        if (!fork_point) {
+            state.error("no-fork-point");
+            return false;
+        }
+
+        uint64_t disconnect_count = current_tip->height - fork_point->height;
+        uint64_t connect_count = idx->height - fork_point->height;
+
+        fprintf(stderr, "ChainState: accept_block_full triggering reorg: "
+                "disconnect %lu, connect %lu (fork at height %lu)\n",
+                static_cast<unsigned long>(disconnect_count),
+                static_cast<unsigned long>(connect_count),
+                static_cast<unsigned long>(fork_point->height));
+
+        // Disconnect back to fork point
+        while (tree_.best_tip() != fork_point) {
+            if (!disconnect_tip()) {
+                state.error("reorg-disconnect-failed");
+                return false;
+            }
+        }
+
+        // Build connect path
+        std::vector<CBlockIndex*> connect_path;
+        CBlockIndex* walk = idx;
+        while (walk && walk != fork_point) {
+            connect_path.push_back(walk);
+            walk = walk->prev;
+        }
+        std::reverse(connect_path.begin(), connect_path.end());
+
+        // Connect each block
+        for (CBlockIndex* connect_idx : connect_path) {
+            CBlock connect_block_data;
+            if (!store_.read_block(connect_idx->pos, connect_block_data)) {
+                state.error("reorg-read-failed");
+                return false;
+            }
+            if (!connect_block(connect_block_data, connect_idx)) {
+                state.error("reorg-connect-failed");
+                connect_idx->status |= BLOCK_FAILED;
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// reorganize — full reorganization with statistics
+// ---------------------------------------------------------------------------
+
+struct ReorgStats {
+    int blocks_disconnected;
+    int blocks_connected;
+    int64_t reorg_time_ms;
+    uint64_t fork_height;
+    uint256 old_tip;
+    uint256 new_tip;
+};
+
+ReorgStats ChainState::reorganize(const CBlockIndex* new_tip_const) {
+    auto t0 = std::chrono::steady_clock::now();
+
+    ReorgStats stats;
+    stats.blocks_disconnected = 0;
+    stats.blocks_connected = 0;
+    stats.reorg_time_ms = 0;
+    stats.fork_height = 0;
+    stats.old_tip.set_null();
+    stats.new_tip.set_null();
+
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    CBlockIndex* current = tip();
+    // Cast away const for internal tree operations
+    CBlockIndex* new_tip_idx = tree_.find(new_tip_const->hash);
+
+    if (!current || !new_tip_idx) {
+        return stats;
+    }
+
+    stats.old_tip = current->hash;
+    stats.new_tip = new_tip_idx->hash;
+
+    // Find fork point
+    CBlockIndex* fork = find_fork_point(current, new_tip_idx);
+    if (!fork) {
+        fprintf(stderr, "ChainState: reorganize: no fork point found\n");
+        return stats;
+    }
+
+    stats.fork_height = fork->height;
+
+    // Compute chain work for both tips
+    // Chain work = sum of difficulty at each block on the chain.
+    // We use height as a proxy here; in a full implementation,
+    // chain work is computed from nbits at each block.
+    uint64_t current_work = current->height;
+    uint64_t new_work = new_tip_idx->height;
+
+    // Only reorganize if the new chain has strictly more work
+    if (new_work <= current_work) {
+        fprintf(stderr, "ChainState: reorganize: new chain does not have more work "
+                "(%lu <= %lu)\n",
+                static_cast<unsigned long>(new_work),
+                static_cast<unsigned long>(current_work));
+        return stats;
+    }
+
+    fprintf(stderr, "ChainState: reorganizing chain\n"
+            "  Old tip: height=%lu\n"
+            "  New tip: height=%lu\n"
+            "  Fork:    height=%lu\n"
+            "  Blocks to disconnect: %lu\n"
+            "  Blocks to connect:    %lu\n",
+            static_cast<unsigned long>(current->height),
+            static_cast<unsigned long>(new_tip_idx->height),
+            static_cast<unsigned long>(fork->height),
+            static_cast<unsigned long>(current->height - fork->height),
+            static_cast<unsigned long>(new_tip_idx->height - fork->height));
+
+    // Step 1: Disconnect from current tip to fork point
+    while (tree_.best_tip() != fork) {
+        if (!disconnect_tip()) {
+            fprintf(stderr, "ChainState: reorganize: disconnect failed at height %lu\n",
+                    static_cast<unsigned long>(tree_.best_tip()->height));
+            break;
+        }
+        stats.blocks_disconnected++;
+    }
+
+    // Step 2: Build connect path from fork to new tip
+    std::vector<CBlockIndex*> connect_path;
+    CBlockIndex* walk = new_tip_idx;
+    while (walk && walk != fork) {
+        connect_path.push_back(walk);
+        walk = walk->prev;
+    }
+    std::reverse(connect_path.begin(), connect_path.end());
+
+    // Step 3: Connect each block
+    for (CBlockIndex* connect_idx : connect_path) {
+        CBlock block_data;
+        if (!store_.read_block(connect_idx->pos, block_data)) {
+            fprintf(stderr, "ChainState: reorganize: failed to read block at height %lu\n",
+                    static_cast<unsigned long>(connect_idx->height));
+            break;
+        }
+
+        if (!connect_block(block_data, connect_idx)) {
+            fprintf(stderr, "ChainState: reorganize: connect failed at height %lu\n",
+                    static_cast<unsigned long>(connect_idx->height));
+            connect_idx->status |= BLOCK_FAILED;
+            break;
+        }
+
+        stats.blocks_connected++;
+    }
+
+    // Step 4: Persist and flush
+    persist_tip();
+    flush();
+
+    auto t1 = std::chrono::steady_clock::now();
+    stats.reorg_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        t1 - t0).count();
+
+    fprintf(stderr, "ChainState: reorganization complete in %ld ms\n"
+            "  Disconnected: %d blocks\n"
+            "  Connected:    %d blocks\n"
+            "  New tip:      height=%lu\n",
+            static_cast<long>(stats.reorg_time_ms),
+            stats.blocks_disconnected,
+            stats.blocks_connected,
+            static_cast<unsigned long>(tree_.best_tip() ? tree_.best_tip()->height : 0));
+
+    return stats;
+}
+
+// ---------------------------------------------------------------------------
+// compute_chain_work — total work from genesis to tip
+// ---------------------------------------------------------------------------
+
+arith_uint256 ChainState::compute_chain_work(const CBlockIndex* chain_tip) const {
+    arith_uint256 total_work;
+    total_work.SetCompact(0);
+
+    const CBlockIndex* walk = chain_tip;
+    while (walk) {
+        // Work for each block is approximately 2^256 / (target + 1).
+        // We compute target from nbits.
+        arith_uint256 target;
+        if (consensus::derive_target(walk->nbits, target)) {
+            // work = 2^256 / (target + 1)
+            // To avoid overflow, we compute:
+            //   work = (~target / (target + 1)) + 1
+            arith_uint256 one;
+            one.SetCompact(0);
+            // Simple approximation: use 1 << (256 - log2(target))
+            // For now, use the inverse of the target as a work approximation.
+            arith_uint256 work = ~target;
+            work = work / (target + one);
+            work = work + one;
+            total_work = total_work + work;
+        } else {
+            // If target derivation fails, add minimal work (1)
+            arith_uint256 one;
+            one.SetCompact(0x01000000);
+            total_work = total_work + one;
+        }
+
+        walk = walk->prev;
+    }
+
+    return total_work;
+}
+
+// ---------------------------------------------------------------------------
+// find_fork — find fork point between two tips (public interface)
+// ---------------------------------------------------------------------------
+
+const CBlockIndex* ChainState::find_fork(const CBlockIndex* tip_a,
+                                            const CBlockIndex* tip_b) const {
+    if (!tip_a || !tip_b) return nullptr;
+
+    const CBlockIndex* a = tip_a;
+    const CBlockIndex* b = tip_b;
+
+    // Walk both chains backward until they meet
+    while (a && b && a != b) {
+        if (a->height > b->height) {
+            a = a->prev;
+        } else if (b->height > a->height) {
+            b = b->prev;
+        } else {
+            a = a->prev;
+            b = b->prev;
+        }
+    }
+
+    return (a == b) ? a : nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// periodic_flush — flush UTXO cache to disk
+// ---------------------------------------------------------------------------
+
+void ChainState::periodic_flush() {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    // Flush UTXO set
+    utxo_.flush();
+
+    // Flush block store
+    store_.flush();
+
+    // Persist current tip
+    persist_tip();
+
+    fprintf(stderr, "ChainState: periodic flush at height %lu\n",
+            static_cast<unsigned long>(height()));
+}
+
+// ---------------------------------------------------------------------------
+// periodic_compact — compact databases
+// ---------------------------------------------------------------------------
+
+void ChainState::periodic_compact() {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    // Compact the UTXO database (SQLite VACUUM or incremental_vacuum)
+    utxo_.compact();
+
+    // Compact the ChainDB
+    if (chaindb_) {
+        chaindb_->compact();
+    }
+
+    // Compact the transaction index
+    if (txindex_) {
+        txindex_->compact();
+    }
+
+    fprintf(stderr, "ChainState: databases compacted at height %lu\n",
+            static_cast<unsigned long>(height()));
+}
+
+// ---------------------------------------------------------------------------
+// check_consistency — verify chain state consistency
+// ---------------------------------------------------------------------------
+
+bool ChainState::check_consistency() const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    CBlockIndex* t = tip();
+    if (!t) {
+        fprintf(stderr, "ChainState: consistency check: no tip\n");
+        return false;
+    }
+
+    // Verify the chain is continuous from tip back to genesis
+    CBlockIndex* walk = t;
+    uint64_t expected_height = t->height;
+    int blocks_checked = 0;
+
+    while (walk) {
+        // Height must match
+        if (walk->height != expected_height) {
+            fprintf(stderr, "ChainState: consistency check: height gap at block %lu "
+                    "(expected %lu)\n",
+                    static_cast<unsigned long>(walk->height),
+                    static_cast<unsigned long>(expected_height));
+            return false;
+        }
+
+        // Block must be fully validated
+        if (!(walk->status & BLOCK_FULLY_VALIDATED)) {
+            fprintf(stderr, "ChainState: consistency check: block at height %lu "
+                    "not fully validated (status=0x%x)\n",
+                    static_cast<unsigned long>(walk->height), walk->status);
+            return false;
+        }
+
+        // Block must have data stored
+        if (!(walk->status & BLOCK_DATA_STORED)) {
+            fprintf(stderr, "ChainState: consistency check: block at height %lu "
+                    "has no stored data\n",
+                    static_cast<unsigned long>(walk->height));
+            return false;
+        }
+
+        // Parent pointer must be consistent
+        if (walk->prev) {
+            if (walk->prev->height + 1 != walk->height) {
+                fprintf(stderr, "ChainState: consistency check: parent height mismatch "
+                        "at block %lu\n",
+                        static_cast<unsigned long>(walk->height));
+                return false;
+            }
+        }
+
+        if (expected_height == 0) break;
+        expected_height--;
+        walk = walk->prev;
+        blocks_checked++;
+
+        // Limit deep checks to avoid scanning the entire chain
+        if (blocks_checked >= 10000) {
+            break;
+        }
+    }
+
+    // Verify the UTXO count is reasonable
+    size_t utxo_count = utxo_.size();
+    if (utxo_count == 0 && t->height > 0) {
+        fprintf(stderr, "ChainState: consistency check: UTXO set is empty "
+                "but chain height is %lu\n",
+                static_cast<unsigned long>(t->height));
+        return false;
+    }
+
+    // Verify stored tip matches tree tip
+    if (chaindb_) {
+        uint256 stored_hash = chaindb_->load_tip();
+        if (!stored_hash.is_null() && stored_hash != t->hash) {
+            fprintf(stderr, "ChainState: consistency check: stored tip hash "
+                    "does not match tree tip\n");
+            return false;
+        }
+    }
+
+    fprintf(stderr, "ChainState: consistency check passed (%d blocks verified, "
+            "%zu UTXOs, height %lu)\n",
+            blocks_checked,
+            utxo_count,
+            static_cast<unsigned long>(t->height));
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// get_block_at_height — retrieve block at a specific height
+// ---------------------------------------------------------------------------
+
+bool ChainState::get_block_at_height(uint64_t target_height, CBlock& block) const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    CBlockIndex* t = tip();
+    if (!t || target_height > t->height) {
+        return false;
+    }
+
+    // Walk back from tip to find the block at the target height
+    CBlockIndex* walk = t;
+    while (walk && walk->height > target_height) {
+        walk = walk->prev;
+    }
+
+    if (!walk || walk->height != target_height) {
+        return false;
+    }
+
+    if (walk->pos.is_null()) {
+        return false;
+    }
+
+    return store_.read_block(walk->pos, block);
+}
+
+// ---------------------------------------------------------------------------
+// get_block_index_at_height — retrieve block index at a specific height
+// ---------------------------------------------------------------------------
+
+CBlockIndex* ChainState::get_block_index_at_height(uint64_t target_height) const {
+    CBlockIndex* t = tip();
+    if (!t || target_height > t->height) {
+        return nullptr;
+    }
+
+    CBlockIndex* walk = t;
+    while (walk && walk->height > target_height) {
+        walk = walk->prev;
+    }
+
+    if (!walk || walk->height != target_height) {
+        return nullptr;
+    }
+
+    return walk;
+}
+
+// ---------------------------------------------------------------------------
+// get_headers_from — get up to max_count headers starting from start_hash
+// ---------------------------------------------------------------------------
+
+std::vector<CBlockHeader> ChainState::get_headers_from(
+        const uint256& start_hash, int max_count) const {
+
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    std::vector<CBlockHeader> headers;
+    if (max_count <= 0) return headers;
+
+    CBlockIndex* start = tree_.find(start_hash);
+    if (!start) return headers;
+
+    // Walk forward by finding children. Since we only have prev pointers,
+    // we need to walk from the tip backward to build a forward path.
+    CBlockIndex* t = tip();
+    if (!t) return headers;
+
+    // Check if start is an ancestor of tip
+    CBlockIndex* walk = t;
+    std::vector<CBlockIndex*> forward_chain;
+    while (walk && walk != start) {
+        forward_chain.push_back(walk);
+        walk = walk->prev;
+    }
+
+    if (walk != start) {
+        // start_hash is not on the main chain
+        return headers;
+    }
+
+    std::reverse(forward_chain.begin(), forward_chain.end());
+
+    // Return up to max_count headers
+    int count = 0;
+    for (CBlockIndex* idx : forward_chain) {
+        if (count >= max_count) break;
+
+        CBlock block;
+        if (store_.read_block(idx->pos, block)) {
+            headers.push_back(static_cast<CBlockHeader>(block));
+        }
+        count++;
+    }
+
+    return headers;
+}
+
+// ---------------------------------------------------------------------------
+// get_locator — build a block locator (exponentially-spaced block hashes)
+// ---------------------------------------------------------------------------
+
+std::vector<uint256> ChainState::get_locator() const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    std::vector<uint256> locator;
+    CBlockIndex* walk = tip();
+
+    if (!walk) return locator;
+
+    int step = 1;
+    int count = 0;
+
+    while (walk) {
+        locator.push_back(walk->hash);
+        count++;
+
+        // After the first 10 entries, double the step size each time.
+        // This gives O(log(height)) entries that cover the whole chain.
+        if (count >= 10) {
+            step *= 2;
+        }
+
+        for (int i = 0; i < step && walk; ++i) {
+            walk = walk->prev;
+        }
+    }
+
+    return locator;
+}
+
+// ---------------------------------------------------------------------------
+// find_locator_fork — find the highest block in the locator that we have
+// ---------------------------------------------------------------------------
+
+CBlockIndex* ChainState::find_locator_fork(const std::vector<uint256>& locator) const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    for (const auto& hash : locator) {
+        CBlockIndex* idx = tree_.find(hash);
+        if (idx && (idx->status & BLOCK_FULLY_VALIDATED)) {
+            return idx;
+        }
+    }
+
+    return nullptr;  // No common block found
+}
+
+// ---------------------------------------------------------------------------
+// utxo_stats — compute UTXO set statistics
+// ---------------------------------------------------------------------------
+
+struct UTXOStats {
+    size_t count;
+    Amount total_value;
+    size_t coinbase_count;
+    Amount coinbase_value;
+    uint64_t min_height;
+    uint64_t max_height;
+};
+
+ChainState::UTXOStatistics ChainState::get_utxo_stats() const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    UTXOStatistics stats;
+    stats.count = utxo_.size();
+    stats.total_value = 0;
+    stats.coinbase_count = 0;
+    stats.coinbase_value = 0;
+    stats.min_height = UINT64_MAX;
+    stats.max_height = 0;
+
+    // Iterate the UTXO set to compute aggregate statistics
+    utxo_.for_each([&](const uint256& txid, uint32_t vout, const UTXOEntry& entry) {
+        stats.total_value += entry.value;
+
+        if (entry.is_coinbase) {
+            stats.coinbase_count++;
+            stats.coinbase_value += entry.value;
+        }
+
+        if (entry.height < stats.min_height) {
+            stats.min_height = entry.height;
+        }
+        if (entry.height > stats.max_height) {
+            stats.max_height = entry.height;
+        }
+    });
+
+    if (stats.count == 0) {
+        stats.min_height = 0;
+    }
+
+    return stats;
 }
 
 } // namespace flow

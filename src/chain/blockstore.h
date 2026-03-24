@@ -113,6 +113,59 @@ private:
 
     /// Get the file size of a given path (0 if not found).
     static size_t get_file_size(const std::string& path);
+
+public:
+    // ═══ Extended block file operations ═══
+
+    /// Block file metadata.
+    struct FileInfo {
+        int file_num;
+        size_t size;
+        size_t max_size;
+        uint64_t height_lo;
+        uint64_t height_hi;
+        int block_count;
+    };
+
+    /// Get metadata for all block files.
+    std::vector<FileInfo> get_file_info() const;
+
+    /// Read a block at a known position (convenience alias for read_block).
+    bool read_block_at(const BlockPos& pos, CBlock& block) const;
+
+    /// Structured undo data with model hash tracking.
+    struct UndoData {
+        uint64_t height;
+        std::vector<uint8_t> spent_outputs_raw;
+        uint256 model_hash_before;
+    };
+
+    /// Write structured undo data for a block.
+    bool write_undo_structured(uint64_t height, const UndoData& undo);
+
+    /// Read structured undo data for a block.
+    bool read_undo_structured(uint64_t height, UndoData& undo) const;
+
+    /// Read raw undo data for a block height (convenience).
+    bool read_undo_for_height(uint64_t height, std::vector<uint8_t>& undo_data) const;
+
+    /// Prune blk/rev/undo files below min_height. Returns bytes freed.
+    size_t prune_files_below(uint64_t min_height);
+
+    /// Check if a specific file can be safely pruned.
+    bool can_prune(int file_num, uint64_t min_height) const;
+
+    /// Verify integrity of a block file by scanning all entries.
+    bool verify_block_file(int file_num) const;
+
+    /// Count total blocks across all files.
+    int count_blocks() const;
+
+    /// Defragment a block file (rewrite without gaps).
+    bool compact(int file_num);
+
+    /// Read just the header from a block position (faster than full read).
+    bool read_block_header(const BlockPos& pos, CBlockHeader& header) const;
 };
 
 } // namespace flow

@@ -19,6 +19,7 @@
 #include "util/types.h"
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -175,6 +176,79 @@ private:
 
     /// Generate a unique template ID.
     static uint64_t generate_template_id();
+
+    // --- Full block assembly pipeline ---
+
+    /// Assemble a fully signed block ready for submission.
+    CBlock assemble_full_block(
+        const BlockTemplate& tmpl,
+        const std::array<uint8_t, 32>& miner_privkey,
+        const std::array<uint8_t, 32>& miner_pubkey,
+        const std::vector<uint8_t>& compressed_delta,
+        float val_loss,
+        uint32_t train_steps);
+
+    // --- Package-aware transaction selection (CPFP) ---
+
+    /// Build transaction packages from mempool.
+    std::vector<struct TxPackage> build_packages();
+
+    /// Select transactions by package fee rate.
+    std::vector<CTransaction> select_by_package_fee_rate(
+        size_t max_block_size,
+        int max_sigops);
+
+    // --- Template validation ---
+
+    /// Validate a template is internally consistent.
+    bool validate_template(const BlockTemplate& tmpl) const;
+
+    /// Serialize a template for Stratum protocol delivery.
+    std::vector<uint8_t> serialize_template_for_stratum(
+        const BlockTemplate& tmpl) const;
+
+    /// Compute the merkle branch for a given transaction index (for Stratum).
+    std::vector<uint256> compute_merkle_branch(
+        const BlockTemplate& tmpl, size_t tx_index) const;
+
+    /// Check if two templates are compatible (same tip, same difficulty).
+    bool templates_compatible(const BlockTemplate& a,
+                               const BlockTemplate& b) const;
+
+    /// Estimate total fees from mempool that would fit in a block.
+    Amount estimate_total_fees(const Mempool* mempool,
+                                size_t max_block_size) const;
+
+    /// Estimate the fee rate at a given percentile of the mempool.
+    double estimate_fee_rate_percentile(const Mempool* mempool,
+                                         double percentile) const;
+};
+
+// ---------------------------------------------------------------------------
+// TemplateCache -- caches block templates, rebuilds when stale
+// ---------------------------------------------------------------------------
+
+class TemplateCache {
+public:
+    TemplateCache(const ChainState& chain, const Mempool& mempool);
+
+    /// Get current template (cached or fresh).
+    const BlockTemplate& get_template(const std::array<uint8_t, 32>& coinbase_pubkey);
+
+    /// Invalidate cache (called when tip changes or mempool changes significantly).
+    void invalidate();
+
+    /// Check if cache is stale.
+    bool is_stale() const;
+
+private:
+    const ChainState& chain_;
+    const Mempool& mempool_;
+    std::unique_ptr<BlockTemplate> cached_;
+    uint256 cached_tip_hash_;
+    size_t cached_mempool_count_ = 0;
+    int64_t cached_time_ = 0;
+    static constexpr int64_t MAX_CACHE_AGE = 30;
 };
 
 // ---------------------------------------------------------------------------

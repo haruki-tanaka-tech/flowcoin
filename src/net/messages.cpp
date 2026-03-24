@@ -1495,5 +1495,898 @@ void MessageHandler::handle_feefilter(Peer& peer, const uint8_t* data, size_t le
             (unsigned long)peer.id(), (long)fee_rate);
 }
 
+// ===========================================================================
+// Full transaction relay with mempool integration
+// ===========================================================================
+
+void MessageHandler::handle_tx_full(Peer& peer, const uint8_t* data, size_t len) {
+    // Step 1: Deserialize the transaction from wire format
+    DataReader r(data, len);
+    CTransaction tx;
+
+    tx.version = r.read_u32_le();
+    if (r.error()) {
+        fprintf(stderr, "net: malformed tx from peer %lu: cannot read version\n",
+                (unsigned long)peer.id());
+        peer.add_misbehavior(10);
+        return;
+    }
+
+    // Read inputs
+    uint64_t vin_count = r.read_compact_size();
+    if (r.error() || vin_count > 10000) {
+        fprintf(stderr, "net: malformed tx from peer %lu: bad vin count %lu\n",
+                (unsigned long)peer.id(), (unsigned long)vin_count);
+        peer.add_misbehavior(10);
+        return;
+    }
+
+    tx.vin.resize(static_cast<size_t>(vin_count));
+    for (uint64_t j = 0; j < vin_count; ++j) {
+        auto txid_bytes = r.read_bytes(32);
+        if (r.error()) { peer.add_misbehavior(10); return; }
+        std::memcpy(tx.vin[j].prevout.txid.data(), txid_bytes.data(), 32);
+        tx.vin[j].prevout.index = r.read_u32_le();
+        auto pk_bytes = r.read_bytes(32);
+        if (r.error()) { peer.add_misbehavior(10); return; }
+        std::memcpy(tx.vin[j].pubkey.data(), pk_bytes.data(), 32);
+        auto sig_bytes = r.read_bytes(64);
+        if (r.error()) { peer.add_misbehavior(10); return; }
+        std::memcpy(tx.vin[j].signature.data(), sig_bytes.data(), 64);
+    }
+
+    // Read outputs
+    uint64_t vout_count = r.read_compact_size();
+    if (r.error() || vout_count > 10000) {
+        fprintf(stderr, "net: malformed tx from peer %lu: bad vout count %lu\n",
+                (unsigned long)peer.id(), (unsigned long)vout_count);
+        peer.add_misbehavior(10);
+        return;
+    }
+
+    tx.vout.resize(static_cast<size_t>(vout_count));
+    for (uint64_t j = 0; j < vout_count; ++j) {
+        tx.vout[j].amount = r.read_i64_le();
+        auto pkh_bytes = r.read_bytes(32);
+        if (r.error()) { peer.add_misbehavior(10); return; }
+        std::memcpy(tx.vout[j].pubkey_hash.data(), pkh_bytes.data(), 32);
+    }
+
+    tx.locktime = r.read_i64_le();
+    if (r.error()) {
+        fprintf(stderr, "net: malformed tx from peer %lu: truncated at locktime\n",
+                (unsigned long)peer.id());
+        peer.add_misbehavior(10);
+        return;
+    }
+
+    uint256 txid = tx.get_txid();
+
+    // Step 2: Check not already in blockchain
+    if (chain_.has_utxo_for_tx(txid)) {
+        // Transaction already confirmed -- silently ignore
+        return;
+    }
+
+    // Step 3: Check not already in mempool
+    Mempool* mempool = chain_.mempool();
+    if (!mempool) {
+        // No mempool available -- cannot accept transactions
+        return;
+    }
+
+    CTransaction existing;
+    if (mempool->get(txid, existing)) {
+        // Already in mempool -- silently ignore
+        return;
+    }
+
+    // Step 4: Check orphan pool
+    if (orphan_pool_.count(txid)) {
+        return;  // Already an orphan, don't re-add
+    }
+
+    // Step 5: Validate and add to mempool
+    std::string reject_reason;
+    bool accepted = mempool->add_transaction(tx, reject_reason);
+
+    if (accepted) {
+        fprintf(stderr, "net: accepted tx %s from peer %lu (%zu in, %zu out)\n",
+                hex_encode(txid.data(), 8).c_str(),
+                (unsigned long)peer.id(),
+                tx.vin.size(), tx.vout.size());
+
+        // Step 6: Relay to all peers except sender
+        relay_tx_to_peers(txid, peer.id());
+
+        // Step 7: Process any orphans that depended on this transaction
+        process_orphan_dependents(txid);
+    } else {
+        // Check if this is an orphan (missing inputs)
+        if (reject_reason == "missing-inputs") {
+            // Add to orphan pool and request parent transactions
+            add_orphan_tx(tx, peer.id());
+
+            // Request parent transactions we don't have
+            for (const auto& vin : tx.vin) {
+                CTransaction parent_tx;
+                if (!mempool->get(vin.prevout.txid, parent_tx) &&
+                    !chain_.has_utxo_for_tx(vin.prevout.txid)) {
+                    // Request this parent transaction
+                    DataWriter getdata_w;
+                    getdata_w.write_compact_size(1);
+                    InvItem item;
+                    item.type = INV_TX;
+                    item.hash = vin.prevout.txid;
+                    write_inv_item(getdata_w, item);
+                    send(peer, NetCmd::GETDATA, getdata_w.release());
+                }
+            }
+        } else {
+            fprintf(stderr, "net: rejected tx %s from peer %lu: %s\n",
+                    hex_encode(txid.data(), 8).c_str(),
+                    (unsigned long)peer.id(),
+                    reject_reason.c_str());
+
+            // Update misbehavior based on rejection reason
+            if (reject_reason == "bad-txns-inputs-spent" ||
+                reject_reason == "mandatory-script-verify-flag-failed") {
+                peer.add_misbehavior(10);
+            } else if (reject_reason == "non-final" ||
+                       reject_reason == "dust" ||
+                       reject_reason == "insufficient-fee") {
+                // Minor protocol violation, small penalty
+                peer.add_misbehavior(1);
+            }
+
+            // Send reject message back
+            send_reject(peer, NetCmd::TX, 0x10, reject_reason, txid);
+        }
+    }
+}
+
+// ===========================================================================
+// Orphan transaction pool management
+// ===========================================================================
+
+void MessageHandler::add_orphan_tx(const CTransaction& tx, uint64_t from_peer) {
+    uint256 txid = tx.get_txid();
+
+    // Limit orphan pool size to prevent memory exhaustion
+    constexpr size_t MAX_ORPHAN_TRANSACTIONS = 100;
+    constexpr size_t MAX_ORPHAN_TX_SIZE = 100000;
+
+    // Don't accept oversized orphans
+    if (tx.get_serialize_size() > MAX_ORPHAN_TX_SIZE) {
+        fprintf(stderr, "net: orphan tx %s too large (%zu bytes), ignoring\n",
+                hex_encode(txid.data(), 8).c_str(), tx.get_serialize_size());
+        return;
+    }
+
+    // If pool is full, evict a random orphan
+    while (orphan_pool_.size() >= MAX_ORPHAN_TRANSACTIONS) {
+        evict_random_orphan();
+    }
+
+    OrphanEntry entry;
+    entry.tx = tx;
+    entry.from_peer = from_peer;
+    entry.time_added = GetTime();
+    orphan_pool_[txid] = std::move(entry);
+
+    // Index by parent txid for fast lookup when parent arrives
+    for (const auto& vin : tx.vin) {
+        orphan_by_parent_[vin.prevout.txid].insert(txid);
+    }
+
+    fprintf(stderr, "net: added orphan tx %s from peer %lu (pool size: %zu)\n",
+            hex_encode(txid.data(), 8).c_str(),
+            (unsigned long)from_peer,
+            orphan_pool_.size());
+}
+
+void MessageHandler::evict_random_orphan() {
+    if (orphan_pool_.empty()) return;
+
+    // Pick a random orphan to evict
+    uint64_t rand_offset = GetRandUint64() % orphan_pool_.size();
+    auto it = orphan_pool_.begin();
+    std::advance(it, static_cast<ptrdiff_t>(rand_offset));
+
+    uint256 evict_txid = it->first;
+
+    // Remove from parent index
+    for (const auto& vin : it->second.tx.vin) {
+        auto parent_it = orphan_by_parent_.find(vin.prevout.txid);
+        if (parent_it != orphan_by_parent_.end()) {
+            parent_it->second.erase(evict_txid);
+            if (parent_it->second.empty()) {
+                orphan_by_parent_.erase(parent_it);
+            }
+        }
+    }
+
+    orphan_pool_.erase(it);
+}
+
+void MessageHandler::process_orphan_dependents(const uint256& parent_txid) {
+    auto it = orphan_by_parent_.find(parent_txid);
+    if (it == orphan_by_parent_.end()) return;
+
+    // Collect dependent orphan txids (copy because we'll modify the map)
+    std::vector<uint256> dependents(it->second.begin(), it->second.end());
+    orphan_by_parent_.erase(it);
+
+    Mempool* mempool = chain_.mempool();
+    if (!mempool) return;
+
+    for (const auto& orphan_txid : dependents) {
+        auto orphan_it = orphan_pool_.find(orphan_txid);
+        if (orphan_it == orphan_pool_.end()) continue;
+
+        CTransaction orphan_tx = orphan_it->second.tx;
+
+        // Remove from orphan pool before attempting to add to mempool
+        // (to avoid re-adding if validation triggers another orphan check)
+        orphan_pool_.erase(orphan_it);
+
+        // Clean up remaining parent index entries for this orphan
+        for (const auto& vin : orphan_tx.vin) {
+            auto p_it = orphan_by_parent_.find(vin.prevout.txid);
+            if (p_it != orphan_by_parent_.end()) {
+                p_it->second.erase(orphan_txid);
+                if (p_it->second.empty()) {
+                    orphan_by_parent_.erase(p_it);
+                }
+            }
+        }
+
+        // Try to accept the orphan now that its parent is available
+        std::string reject_reason;
+        if (mempool->add_transaction(orphan_tx, reject_reason)) {
+            fprintf(stderr, "net: accepted former orphan tx %s\n",
+                    hex_encode(orphan_txid.data(), 8).c_str());
+            relay_tx_to_peers(orphan_txid, 0);
+            // Recursively process any orphans depending on this tx
+            process_orphan_dependents(orphan_txid);
+        } else if (reject_reason == "missing-inputs") {
+            // Still orphaned, re-add
+            OrphanEntry re_entry;
+            re_entry.tx = orphan_tx;
+            re_entry.from_peer = 0;
+            re_entry.time_added = GetTime();
+            orphan_pool_[orphan_txid] = std::move(re_entry);
+            for (const auto& vin : orphan_tx.vin) {
+                orphan_by_parent_[vin.prevout.txid].insert(orphan_txid);
+            }
+        }
+    }
+}
+
+void MessageHandler::expire_orphans() {
+    int64_t now = GetTime();
+    constexpr int64_t ORPHAN_EXPIRY = 1200;  // 20 minutes
+
+    std::vector<uint256> expired;
+    for (const auto& [txid, entry] : orphan_pool_) {
+        if (now - entry.time_added > ORPHAN_EXPIRY) {
+            expired.push_back(txid);
+        }
+    }
+
+    for (const auto& txid : expired) {
+        auto it = orphan_pool_.find(txid);
+        if (it == orphan_pool_.end()) continue;
+
+        for (const auto& vin : it->second.tx.vin) {
+            auto p_it = orphan_by_parent_.find(vin.prevout.txid);
+            if (p_it != orphan_by_parent_.end()) {
+                p_it->second.erase(txid);
+                if (p_it->second.empty()) {
+                    orphan_by_parent_.erase(p_it);
+                }
+            }
+        }
+        orphan_pool_.erase(it);
+    }
+
+    if (!expired.empty()) {
+        fprintf(stderr, "net: expired %zu orphan transactions\n", expired.size());
+    }
+}
+
+// ===========================================================================
+// Transaction relay to peers
+// ===========================================================================
+
+void MessageHandler::relay_tx_to_peers(const uint256& txid, uint64_t except_peer) {
+    auto peers = netman_.get_peers();
+    for (Peer* peer : peers) {
+        if (peer->state() != PeerState::HANDSHAKE_DONE) continue;
+        if (peer->id() == except_peer) continue;
+
+        // Check fee filter: don't announce transactions below the peer's
+        // minimum fee rate threshold
+        if (peer->fee_filter() > 0) {
+            Mempool* mempool = chain_.mempool();
+            if (mempool) {
+                CTransaction relay_tx;
+                if (mempool->get(txid, relay_tx)) {
+                    Amount fee = mempool->get_fee(txid);
+                    size_t size = relay_tx.get_serialize_size();
+                    if (size > 0) {
+                        int64_t fee_rate = (fee * 1000) / static_cast<int64_t>(size);
+                        if (fee_rate < peer->fee_filter()) {
+                            continue;  // Below peer's fee filter
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check if we already announced this tx to this peer
+        if (peer->has_announced_tx(txid)) continue;
+
+        // Add to the trickle queue instead of sending immediately
+        peer->add_to_trickle_queue(txid);
+    }
+}
+
+// ===========================================================================
+// Inventory trickle: batch-send pending INV announcements
+// ===========================================================================
+
+void MessageHandler::send_inv_trickle() {
+    auto peers = netman_.get_peers();
+    int64_t now = GetTime();
+
+    for (Peer* peer : peers) {
+        if (peer->state() != PeerState::HANDSHAKE_DONE) continue;
+
+        // Only trickle every ~5 seconds per peer
+        if (now - peer->last_trickle_time() < 5) continue;
+
+        auto trickle_items = peer->drain_trickle_queue();
+        if (trickle_items.empty()) continue;
+
+        peer->set_last_trickle_time(now);
+
+        // Batch INV items (up to 35 per message to avoid oversized messages)
+        constexpr size_t MAX_INV_PER_MSG = 35;
+
+        for (size_t offset = 0; offset < trickle_items.size(); offset += MAX_INV_PER_MSG) {
+            size_t batch_end = std::min(offset + MAX_INV_PER_MSG, trickle_items.size());
+            size_t batch_size = batch_end - offset;
+
+            DataWriter w;
+            w.write_compact_size(batch_size);
+
+            for (size_t i = offset; i < batch_end; ++i) {
+                InvItem item;
+                item.type = INV_TX;
+                item.hash = trickle_items[i];
+                write_inv_item(w, item);
+                peer->mark_announced_tx(trickle_items[i]);
+            }
+
+            send(*peer, NetCmd::INV, w.release());
+        }
+    }
+}
+
+// ===========================================================================
+// Full inventory handling with mempool awareness
+// ===========================================================================
+
+void MessageHandler::handle_inv_full(Peer& peer, const uint8_t* data, size_t len) {
+    auto items = read_inv_items(data, len);
+    if (items.empty()) return;
+
+    // Validate count
+    if (items.size() > static_cast<size_t>(consensus::MAX_INV_SIZE)) {
+        peer.add_misbehavior(20);
+        return;
+    }
+
+    // Collect items we need to request
+    std::vector<InvItem> needed_blocks;
+    std::vector<InvItem> needed_txs;
+
+    for (const auto& item : items) {
+        if (item.type == INV_BLOCK) {
+            // Check if we already have this block header or full block
+            if (!chain_.block_tree().find(item.hash)) {
+                needed_blocks.push_back(item);
+            }
+        } else if (item.type == INV_TX) {
+            // Check mempool, orphan pool, and confirmed txs
+            Mempool* mempool = chain_.mempool();
+            bool have_it = false;
+
+            if (mempool) {
+                CTransaction check_tx;
+                have_it = mempool->get(item.hash, check_tx);
+            }
+
+            if (!have_it) {
+                have_it = orphan_pool_.count(item.hash) > 0;
+            }
+
+            if (!have_it) {
+                have_it = chain_.has_utxo_for_tx(item.hash);
+            }
+
+            if (!have_it) {
+                // Check per-peer already-requested set to avoid duplicate requests
+                if (!peer.has_requested_tx(item.hash)) {
+                    needed_txs.push_back(item);
+                    peer.mark_requested_tx(item.hash);
+                }
+            }
+        }
+    }
+
+    // Batch all needed items into a single getdata request
+    size_t total_needed = needed_blocks.size() + needed_txs.size();
+    if (total_needed == 0) return;
+
+    DataWriter w;
+    w.write_compact_size(total_needed);
+
+    // Request blocks first (higher priority)
+    for (const auto& item : needed_blocks) {
+        write_inv_item(w, item);
+    }
+    for (const auto& item : needed_txs) {
+        write_inv_item(w, item);
+    }
+
+    send(peer, NetCmd::GETDATA, w.release());
+
+    if (!needed_blocks.empty()) {
+        fprintf(stderr, "net: requesting %zu blocks and %zu txs from peer %lu\n",
+                needed_blocks.size(), needed_txs.size(),
+                (unsigned long)peer.id());
+    }
+}
+
+// ===========================================================================
+// Full getdata handler with mempool-backed tx serving
+// ===========================================================================
+
+void MessageHandler::handle_getdata_full(Peer& peer, const uint8_t* data, size_t len) {
+    auto items = read_inv_items(data, len);
+    if (items.empty()) return;
+
+    // Track how many items we couldn't find
+    std::vector<InvItem> notfound_items;
+
+    for (const auto& item : items) {
+        if (item.type == INV_BLOCK) {
+            CBlockIndex* index = chain_.block_tree().find(item.hash);
+            if (!index || index->pos.is_null()) {
+                notfound_items.push_back(item);
+                continue;
+            }
+
+            CBlock block;
+            if (chain_.block_store().read_block(index->pos, block)) {
+                auto block_data = serialize_block_for_wire(block);
+                send(peer, NetCmd::BLOCK, block_data);
+            } else {
+                notfound_items.push_back(item);
+            }
+        } else if (item.type == INV_TX) {
+            // Try mempool first
+            Mempool* mempool = chain_.mempool();
+            bool sent = false;
+
+            if (mempool) {
+                CTransaction tx;
+                if (mempool->get(item.hash, tx)) {
+                    auto tx_data = tx.serialize();
+                    send(peer, NetCmd::TX, tx_data);
+                    sent = true;
+                }
+            }
+
+            // Try orphan pool
+            if (!sent) {
+                auto orphan_it = orphan_pool_.find(item.hash);
+                if (orphan_it != orphan_pool_.end()) {
+                    auto tx_data = orphan_it->second.tx.serialize();
+                    send(peer, NetCmd::TX, tx_data);
+                    sent = true;
+                }
+            }
+
+            if (!sent) {
+                notfound_items.push_back(item);
+            }
+        }
+    }
+
+    // Send notfound for items we couldn't serve
+    if (!notfound_items.empty()) {
+        DataWriter w;
+        w.write_compact_size(notfound_items.size());
+        for (const auto& item : notfound_items) {
+            write_inv_item(w, item);
+        }
+        send(peer, NetCmd::NOTFOUND, w.release());
+    }
+}
+
+// ===========================================================================
+// Notfound handler
+// ===========================================================================
+
+void MessageHandler::handle_notfound_full(Peer& peer, const uint8_t* data, size_t len) {
+    auto items = read_inv_items(data, len);
+
+    for (const auto& item : items) {
+        if (item.type == INV_TX) {
+            // Clear the request tracking so we can request from another peer
+            peer.clear_requested_tx(item.hash);
+
+            fprintf(stderr, "net: peer %lu does not have tx %s\n",
+                    (unsigned long)peer.id(),
+                    hex_encode(item.hash.data(), 8).c_str());
+        } else if (item.type == INV_BLOCK) {
+            fprintf(stderr, "net: peer %lu does not have block %s\n",
+                    (unsigned long)peer.id(),
+                    hex_encode(item.hash.data(), 8).c_str());
+        }
+    }
+}
+
+// ===========================================================================
+// Block relay with announcement mode selection
+// ===========================================================================
+
+void MessageHandler::relay_block_full(const CBlock& block) {
+    uint256 block_hash = block.get_hash();
+    auto peers = netman_.get_peers();
+
+    for (Peer* peer : peers) {
+        if (peer->state() != PeerState::HANDSHAKE_DONE) continue;
+
+        // Skip if we already announced this block to this peer
+        if (peer->has_announced_block(block_hash)) continue;
+        peer->mark_announced_block(block_hash);
+
+        if (peer->prefers_headers()) {
+            // Send as a headers message (single header)
+            DataWriter w;
+            w.write_compact_size(1);
+            write_block_header(w, block);
+            send(*peer, NetCmd::HEADERS, w.release());
+        } else if (peer->supports_compact_blocks() &&
+                   peer->wants_cmpct_high_bandwidth()) {
+            // Send as a compact block (high-bandwidth mode)
+            send_compact_block(*peer, block);
+        } else {
+            // Send as a standard INV announcement
+            DataWriter w;
+            w.write_compact_size(1);
+            InvItem item;
+            item.type = INV_BLOCK;
+            item.hash = block_hash;
+            write_inv_item(w, item);
+            send(*peer, NetCmd::INV, w.release());
+        }
+    }
+}
+
+void MessageHandler::send_compact_block(Peer& peer, const CBlock& block) {
+    DataWriter w(4096);
+
+    // Write full header (308 bytes)
+    auto unsigned_data = block.get_unsigned_data();
+    w.write_bytes(unsigned_data.data(), unsigned_data.size());
+    w.write_bytes(block.miner_sig.data(), 64);
+
+    // Generate a random nonce for short ID computation
+    uint64_t cmpct_nonce = GetRandUint64();
+    w.write_u64_le(cmpct_nonce);
+
+    uint256 block_hash = block.get_hash();
+
+    // Prefill the coinbase (always at index 0)
+    size_t num_short_ids = (block.vtx.size() > 1) ? block.vtx.size() - 1 : 0;
+
+    // Write short transaction IDs (skip coinbase)
+    w.write_compact_size(num_short_ids);
+    for (size_t i = 1; i < block.vtx.size(); ++i) {
+        uint256 txid = block.vtx[i].get_txid();
+        uint64_t short_id = compute_short_txid(txid, cmpct_nonce, block_hash);
+        // Write 6 bytes
+        w.write_bytes(reinterpret_cast<const uint8_t*>(&short_id), 6);
+    }
+
+    // Write prefilled transactions (just the coinbase at index 0)
+    w.write_compact_size(1);
+    w.write_compact_size(0);  // diff_index = 0 (absolute index of coinbase)
+    auto coinbase_data = block.vtx[0].serialize();
+    w.write_bytes(coinbase_data.data(), coinbase_data.size());
+
+    send(peer, NetCmd::CMPCTBLOCK, w.release());
+}
+
+// ===========================================================================
+// Transaction relay announcement
+// ===========================================================================
+
+void MessageHandler::relay_transaction_full(const CTransaction& tx) {
+    uint256 txid = tx.get_txid();
+    relay_tx_to_peers(txid, 0);  // Relay to all peers (no exception)
+}
+
+// ===========================================================================
+// Address relay with probability-based forwarding
+// ===========================================================================
+
+void MessageHandler::handle_addr_full(Peer& peer, const uint8_t* data, size_t len) {
+    DataReader r(data, len);
+    uint64_t count = r.read_compact_size();
+    if (r.error()) return;
+
+    if (count > static_cast<uint64_t>(consensus::ADDR_RELAY_MAX)) {
+        peer.add_misbehavior(20);
+        return;
+    }
+
+    int64_t now = GetTime();
+    std::vector<CNetAddr> new_addrs;
+    new_addrs.reserve(static_cast<size_t>(count));
+
+    for (uint64_t i = 0; i < count; ++i) {
+        uint32_t ts = r.read_u32_le();
+        uint64_t services = r.read_u64_le();
+        CNetAddr addr = CNetAddr::deserialize(r);
+        if (r.error()) break;
+
+        // Validation: ignore addresses older than 3 hours
+        if (static_cast<int64_t>(ts) < now - 3 * 3600) continue;
+
+        // Ignore addresses with port 0
+        if (addr.port == 0) continue;
+
+        // Ignore addresses that are clearly invalid
+        // (loopback, unroutable, etc.)
+        if (addr.is_ipv4()) {
+            // Check for 127.x.x.x or 0.0.0.0
+            if (addr.ip[12] == 127 || addr.ip[12] == 0) continue;
+        }
+
+        // Ignore if we already have too many addresses from this peer
+        // (rate limiting: max 1000 per addr message, enforced above)
+
+        // Add to address manager with the advertised timestamp
+        netman_.addrman().add(addr, static_cast<int64_t>(ts));
+
+        // If the address is fresh (within last 10 minutes), relay it
+        if (static_cast<int64_t>(ts) >= now - 600) {
+            new_addrs.push_back(addr);
+        }
+
+        (void)services;
+    }
+
+    // Relay fresh addresses to 2 random peers (not the sender)
+    if (!new_addrs.empty()) {
+        relay_addresses(new_addrs, peer.id());
+    }
+}
+
+void MessageHandler::relay_addresses(const std::vector<CNetAddr>& addrs, uint64_t except_peer) {
+    if (addrs.empty()) return;
+
+    auto peers = netman_.get_peers();
+    if (peers.size() <= 1) return;
+
+    // Select up to 2 random peers (excluding sender)
+    std::vector<Peer*> eligible;
+    for (Peer* p : peers) {
+        if (p->state() != PeerState::HANDSHAKE_DONE) continue;
+        if (p->id() == except_peer) continue;
+        eligible.push_back(p);
+    }
+
+    if (eligible.empty()) return;
+
+    // Shuffle and pick up to 2
+    for (size_t i = eligible.size() - 1; i > 0; --i) {
+        size_t j = GetRandUint64() % (i + 1);
+        std::swap(eligible[i], eligible[j]);
+    }
+
+    size_t relay_count = std::min(eligible.size(), static_cast<size_t>(2));
+    int64_t now_ts = GetTime();
+
+    for (size_t i = 0; i < relay_count; ++i) {
+        Peer* target = eligible[i];
+
+        DataWriter w;
+        w.write_compact_size(addrs.size());
+        for (const auto& addr : addrs) {
+            w.write_u32_le(static_cast<uint32_t>(now_ts));
+            w.write_u64_le(NODE_NETWORK);
+            addr.serialize(w);
+        }
+        send(*target, NetCmd::ADDR, w.release());
+    }
+}
+
+// ===========================================================================
+// Full getaddr handler with addrman sampling
+// ===========================================================================
+
+void MessageHandler::handle_getaddr_full(Peer& peer) {
+    // Respond with addresses from addrman
+    // Return ~23% of known addresses, up to 1000
+    size_t total_known = netman_.addrman().size();
+    size_t to_send = std::min(static_cast<size_t>(consensus::ADDR_RELAY_MAX),
+                              (total_known * 23) / 100);
+    to_send = std::max(to_send, static_cast<size_t>(1));
+
+    auto addrs = netman_.addrman().get_addresses(to_send);
+    if (addrs.empty()) return;
+
+    int64_t now = GetTime();
+    DataWriter w;
+    w.write_compact_size(addrs.size());
+    for (const auto& addr : addrs) {
+        w.write_u32_le(static_cast<uint32_t>(now));
+        w.write_u64_le(NODE_NETWORK);
+        addr.serialize(w);
+    }
+    send(peer, NetCmd::ADDR, w.release());
+
+    fprintf(stderr, "net: sent %zu addresses to peer %lu (of %zu known)\n",
+            addrs.size(), (unsigned long)peer.id(), total_known);
+}
+
+// ===========================================================================
+// Self-address advertisement
+// ===========================================================================
+
+void MessageHandler::advertise_local_address() {
+    auto peers = netman_.get_peers();
+
+    CNetAddr local_addr("0.0.0.0", netman_.port());
+    int64_t now = GetTime();
+
+    // Only advertise every 24 hours
+    if (now - last_self_advertise_time_ < 86400) return;
+    last_self_advertise_time_ = now;
+
+    for (Peer* peer : peers) {
+        if (peer->state() != PeerState::HANDSHAKE_DONE) continue;
+
+        DataWriter w;
+        w.write_compact_size(1);
+        w.write_u32_le(static_cast<uint32_t>(now));
+        w.write_u64_le(NODE_NETWORK);
+        local_addr.serialize(w);
+
+        send(*peer, NetCmd::ADDR, w.release());
+    }
+}
+
+// ===========================================================================
+// Ping/pong with latency tracking
+// ===========================================================================
+
+void MessageHandler::send_ping(Peer& peer) {
+    uint64_t nonce = GetRandUint64();
+    peer.set_ping_nonce(nonce);
+    peer.set_last_ping_time(GetTimeMicros());
+
+    DataWriter w;
+    w.write_u64_le(nonce);
+    send(peer, NetCmd::PING, w.release());
+}
+
+void MessageHandler::handle_ping_full(Peer& peer, const uint8_t* data, size_t len) {
+    if (len < 8) {
+        peer.add_misbehavior(10);
+        return;
+    }
+
+    // Read the 8-byte nonce and echo it back as pong
+    DataWriter w;
+    w.write_bytes(data, 8);
+    send(peer, NetCmd::PONG, w.release());
+
+    // Update last activity time
+    peer.set_last_recv_time(GetTime());
+}
+
+void MessageHandler::handle_pong_full(Peer& peer, const uint8_t* data, size_t len) {
+    if (len < 8) return;
+
+    DataReader r(data, len);
+    uint64_t nonce = r.read_u64_le();
+
+    if (nonce == peer.ping_nonce() && peer.ping_nonce() != 0) {
+        int64_t now = GetTimeMicros();
+        int64_t latency = now - peer.last_ping_time();
+
+        // Sanity check latency (reject if > 5 minutes)
+        if (latency < 0 || latency > 300'000'000LL) {
+            fprintf(stderr, "net: bogus ping latency from peer %lu: %ld us\n",
+                    (unsigned long)peer.id(), (long)latency);
+            return;
+        }
+
+        peer.set_ping_latency_us(latency);
+        peer.set_ping_nonce(0);
+
+        // Update min ping
+        if (latency < peer.min_ping_us() || peer.min_ping_us() == 0) {
+            peer.set_min_ping_us(latency);
+        }
+
+        // Log if latency is notable
+        if (latency > 10'000'000LL) {  // > 10 seconds
+            fprintf(stderr, "net: high ping latency from peer %lu: %.1f s\n",
+                    (unsigned long)peer.id(),
+                    static_cast<double>(latency) / 1e6);
+        }
+    } else {
+        // Nonce mismatch -- could be a delayed or unsolicited pong.
+        // Not necessarily malicious, so don't penalize.
+    }
+}
+
+// ===========================================================================
+// Send reject message
+// ===========================================================================
+
+void MessageHandler::send_reject(Peer& peer, const std::string& rejected_cmd,
+                                  uint8_t code, const std::string& reason,
+                                  const uint256& hash) {
+    DataWriter w;
+
+    // Rejected command name (compact-size-prefixed string)
+    w.write_compact_size(rejected_cmd.size());
+    w.write_bytes(reinterpret_cast<const uint8_t*>(rejected_cmd.data()),
+                  rejected_cmd.size());
+
+    // Rejection code
+    w.write_u8(code);
+
+    // Reason string (compact-size-prefixed)
+    std::string truncated = reason.substr(0, 256);
+    w.write_compact_size(truncated.size());
+    if (!truncated.empty()) {
+        w.write_bytes(reinterpret_cast<const uint8_t*>(truncated.data()),
+                      truncated.size());
+    }
+
+    // Optional: hash of the rejected object
+    if (!hash.is_null()) {
+        w.write_bytes(hash.data(), 32);
+    }
+
+    send(peer, NetCmd::REJECT, w.release());
+}
+
+// ===========================================================================
+// Periodic maintenance entry point (called from NetManager tick)
+// ===========================================================================
+
+void MessageHandler::on_tick() {
+    // Trickle pending transaction announcements
+    send_inv_trickle();
+
+    // Expire old orphan transactions
+    expire_orphans();
+
+    // Periodically advertise our own address
+    advertise_local_address();
+}
+
 } // namespace flow
 

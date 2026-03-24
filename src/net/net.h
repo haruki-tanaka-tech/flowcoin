@@ -145,6 +145,52 @@ public:
     uint64_t total_bytes_sent() const { return total_bytes_sent_.load(); }
     uint64_t total_bytes_recv() const { return total_bytes_recv_.load(); }
 
+    // Bandwidth management
+    struct BandwidthStats {
+        int64_t total_sent;
+        int64_t total_received;
+        double send_rate_kbps;
+        double recv_rate_kbps;
+        int64_t uptime_seconds;
+        std::map<std::string, int64_t> sent_by_type;
+        std::map<std::string, int64_t> recv_by_type;
+    };
+
+    BandwidthStats get_bandwidth_stats() const;
+    void set_max_upload_rate(int64_t bytes_per_second);
+    bool can_send(size_t bytes) const;
+
+    // Network info for RPC
+    struct NetworkInfo {
+        uint32_t protocol_version;
+        size_t connections;
+        size_t connections_in;
+        size_t connections_out;
+        uint64_t total_bytes_sent;
+        uint64_t total_bytes_recv;
+        double send_rate;
+        double recv_rate;
+        int64_t uptime;
+        size_t known_addresses;
+        size_t banned_count;
+    };
+    NetworkInfo get_network_info() const;
+
+    // Connect by hostname:port string (with DNS resolution)
+    bool connect_to_host(const std::string& addr_str);
+
+    // Full outbound connection management
+    void maintain_outbound_connections();
+
+    // Full inbound handling with eviction
+    void on_new_inbound(uv_stream_t* server);
+
+    // Process all pending network events
+    void process_events();
+
+    // Network thread main loop
+    void network_thread_func();
+
     // Start a feeler connection (test reachability of a New table address)
     void start_feeler();
 
@@ -183,6 +229,8 @@ private:
     int64_t last_peers_save_time_ = 0;
     int64_t last_cleanup_time_ = 0;
     int64_t last_dns_seed_time_ = 0;
+    int64_t start_time_ = 0;
+    int64_t max_upload_rate_ = 0;  // 0 = unlimited
 
     // Seed nodes (ip, port)
     static const std::vector<std::pair<std::string, uint16_t>> SEED_NODES;
@@ -232,6 +280,12 @@ private:
 
     // DNS seed resolution on startup
     void resolve_dns_seeds();
+
+    // Compute eviction score for a peer (higher = more valuable)
+    int compute_eviction_score(const Peer& peer) const;
+
+    // Advanced eviction with protection groups
+    Peer* select_eviction_candidate_advanced();
 };
 
 } // namespace flow

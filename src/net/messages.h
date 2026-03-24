@@ -16,12 +16,14 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
 namespace flow {
 
 class ChainState;
+class Mempool;
 class NetManager;
 struct CBlockIndex;
 
@@ -75,6 +77,18 @@ private:
     };
     std::map<uint64_t, CompactBlockState> compact_states_;  // peer_id -> state
 
+    // Orphan transaction pool
+    struct OrphanEntry {
+        CTransaction tx;
+        uint64_t from_peer;
+        int64_t time_added;
+    };
+    std::map<uint256, OrphanEntry> orphan_pool_;
+    std::map<uint256, std::set<uint256>> orphan_by_parent_;  // parent_txid -> set<orphan_txid>
+
+    // Self-address advertisement timing
+    int64_t last_self_advertise_time_ = 0;
+
     // Compute short txid for compact blocks (first 6 bytes of siphash)
     static uint64_t compute_short_txid(const uint256& txid,
                                         uint64_t nonce,
@@ -104,6 +118,57 @@ private:
 
     // Find the fork point from a set of locator hashes
     CBlockIndex* find_fork_point(const std::vector<uint256>& locator_hashes);
+
+    // --- Full transaction relay (extended) ---
+
+    // Full tx handler with mempool/orphan integration
+    void handle_tx_full(Peer& peer, const uint8_t* data, size_t len);
+
+    // Full inv handler with mempool awareness
+    void handle_inv_full(Peer& peer, const uint8_t* data, size_t len);
+
+    // Full getdata handler serving txs from mempool
+    void handle_getdata_full(Peer& peer, const uint8_t* data, size_t len);
+
+    // Notfound response handler
+    void handle_notfound_full(Peer& peer, const uint8_t* data, size_t len);
+
+    // Orphan pool management
+    void add_orphan_tx(const CTransaction& tx, uint64_t from_peer);
+    void evict_random_orphan();
+    void process_orphan_dependents(const uint256& parent_txid);
+    void expire_orphans();
+
+    // Transaction relay to peers (respecting fee filter)
+    void relay_tx_to_peers(const uint256& txid, uint64_t except_peer);
+
+    // Trickle: batch-send pending INV announcements
+    void send_inv_trickle();
+
+    // Block relay with announcement mode selection
+    void relay_block_full(const CBlock& block);
+    void send_compact_block(Peer& peer, const CBlock& block);
+    void relay_transaction_full(const CTransaction& tx);
+
+    // Address relay with probability-based forwarding
+    void handle_addr_full(Peer& peer, const uint8_t* data, size_t len);
+    void relay_addresses(const std::vector<CNetAddr>& addrs, uint64_t except_peer);
+    void handle_getaddr_full(Peer& peer);
+    void advertise_local_address();
+
+    // Ping/pong with full latency tracking
+    void send_ping(Peer& peer);
+    void handle_ping_full(Peer& peer, const uint8_t* data, size_t len);
+    void handle_pong_full(Peer& peer, const uint8_t* data, size_t len);
+
+    // Send a reject message to a peer
+    void send_reject(Peer& peer, const std::string& rejected_cmd,
+                     uint8_t code, const std::string& reason,
+                     const uint256& hash = uint256());
+
+public:
+    // Periodic maintenance (called from NetManager tick)
+    void on_tick();
 };
 
 } // namespace flow

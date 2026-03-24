@@ -1120,5 +1120,587 @@ void NetManager::load_peers() {
     }
 }
 
+// ===========================================================================
+// Full connection lifecycle: connect_to with DNS resolution
+// ===========================================================================
+
+bool NetManager::connect_to_host(const std::string& addr_str) {
+    if (!running_.load()) return false;
+
+    // Parse host:port
+    std::string host;
+    uint16_t port = consensus::MAINNET_PORT;
+
+    size_t colon = addr_str.rfind(':');
+    if (colon != std::string::npos && colon > 0) {
+        host = addr_str.substr(0, colon);
+        int port_val = std::atoi(addr_str.substr(colon + 1).c_str());
+        if (port_val > 0 && port_val <= 65535) {
+            port = static_cast<uint16_t>(port_val);
+        }
+    } else {
+        host = addr_str;
+    }
+
+    if (host.empty()) {
+        fprintf(stderr, "net: empty host in connect_to_host\n");
+        return false;
+    }
+
+    // Strip brackets from IPv6 addresses [::1]
+    if (host.front() == '[' && host.back() == ']') {
+        host = host.substr(1, host.size() - 2);
+    }
+
+    // Try direct IP parse first
+    CNetAddr addr(host, port);
+    if (addr.port > 0) {
+        // Check if already connected
+        {
+            std::lock_guard<std::mutex> lock(peers_mutex_);
+            for (const auto& [id, peer] : peers_) {
+                if (peer->addr() == addr && peer->state() != PeerState::DISCONNECTED) {
+                    fprintf(stderr, "net: already connected to %s\n", addr_str.c_str());
+                    return false;
+                }
+            }
+        }
+
+        // Check if banned
+        if (banman_.is_banned(addr)) {
+            fprintf(stderr, "net: cannot connect to banned address %s\n", addr_str.c_str());
+            return false;
+        }
+
+        connect_to(addr);
+        return true;
+    }
+
+    // DNS resolve if it's a hostname
+    fprintf(stderr, "net: resolving hostname %s\n", host.c_str());
+    auto resolved = LookupHost(host, 1, false);
+    if (resolved.empty()) {
+        fprintf(stderr, "net: failed to resolve %s\n", host.c_str());
+        return false;
+    }
+
+    // Use the first resolved address
+    CNetAddr resolved_addr;
+    std::memcpy(resolved_addr.ip, resolved[0].GetBytes(), 16);
+    resolved_addr.port = port;
+
+    if (banman_.is_banned(resolved_addr)) {
+        fprintf(stderr, "net: resolved address %s is banned\n",
+                resolved_addr.to_string().c_str());
+        return false;
+    }
+
+    connect_to(resolved_addr);
+    return true;
+}
+
+// ===========================================================================
+// Outbound connection management with subnet diversity
+// ===========================================================================
+
+void NetManager::maintain_outbound_connections() {
+    size_t current_outbound = outbound_count();
+    size_t target = static_cast<size_t>(consensus::MAX_OUTBOUND_PEERS);
+
+    if (current_outbound >= target) return;
+
+    size_t needed = target - current_outbound;
+    size_t attempts = 0;
+    static constexpr size_t MAX_ATTEMPTS = 50;
+
+    // Track subnets of current outbound peers
+    std::map<uint16_t, int> subnet_count;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (const auto& [id, peer] : peers_) {
+            if (peer->state() == PeerState::DISCONNECTED) continue;
+            if (peer->is_inbound()) continue;
+            subnet_count[peer->get_subnet_id()]++;
+        }
+    }
+
+    for (size_t i = 0; i < needed && attempts < MAX_ATTEMPTS; ++attempts) {
+        // Alternate between tried and new tables
+        CNetAddr candidate;
+        if (attempts % 3 == 0) {
+            candidate = addrman_.select_from_new();
+        } else {
+            candidate = addrman_.select();
+        }
+
+        if (candidate.port == 0) {
+            // No candidates available
+            if (current_outbound == 0 && i == 0) {
+                connect_seeds();
+            }
+            break;
+        }
+
+        // Skip banned addresses
+        if (banman_.is_banned(candidate)) continue;
+
+        // Skip already-connected addresses
+        bool already_connected = false;
+        {
+            std::lock_guard<std::mutex> lock(peers_mutex_);
+            for (const auto& [id, peer] : peers_) {
+                if (peer->addr() == candidate &&
+                    peer->state() != PeerState::DISCONNECTED) {
+                    already_connected = true;
+                    break;
+                }
+            }
+        }
+        if (already_connected) continue;
+
+        // Enforce subnet diversity: max 2 outbound per /16
+        uint16_t subnet = 0;
+        if (candidate.is_ipv4()) {
+            subnet = static_cast<uint16_t>((candidate.ip[12] << 8) | candidate.ip[13]);
+        } else {
+            subnet = static_cast<uint16_t>((candidate.ip[0] << 8) | candidate.ip[1]);
+        }
+
+        if (subnet_count[subnet] >= 2) continue;
+
+        // Attempt connection
+        connect_to(candidate);
+        subnet_count[subnet]++;
+        ++i;
+    }
+}
+
+// ===========================================================================
+// Inbound connection handling with eviction
+// ===========================================================================
+
+void NetManager::on_new_inbound(uv_stream_t* server) {
+    // Check ban and connection limits before accepting
+    if (inbound_count() >= static_cast<size_t>(consensus::MAX_INBOUND_PEERS)) {
+        // Try to evict a low-quality inbound peer
+        Peer* victim = select_eviction_candidate();
+        if (victim) {
+            fprintf(stderr, "net: evicting peer %lu (%s) for new inbound\n",
+                    (unsigned long)victim->id(),
+                    victim->addr().to_string().c_str());
+            disconnect(*victim, "evicted for new inbound");
+        } else {
+            // Cannot evict anyone -- reject the connection
+            auto* client = new uv_tcp_t;
+            uv_tcp_init(loop_, client);
+            if (uv_accept(server, reinterpret_cast<uv_stream_t*>(client)) == 0) {
+                uv_close(reinterpret_cast<uv_handle_t*>(client), on_close);
+            } else {
+                delete client;
+            }
+            fprintf(stderr, "net: rejected inbound (at capacity, no eviction candidates)\n");
+            return;
+        }
+    }
+
+    auto* client = new uv_tcp_t;
+    uv_tcp_init(loop_, client);
+
+    if (uv_accept(server, reinterpret_cast<uv_stream_t*>(client)) != 0) {
+        uv_close(reinterpret_cast<uv_handle_t*>(client), on_close);
+        return;
+    }
+
+    // Extract remote address
+    struct sockaddr_storage addr_storage;
+    int namelen = sizeof(addr_storage);
+    uv_tcp_getpeername(client, reinterpret_cast<struct sockaddr*>(&addr_storage), &namelen);
+
+    CNetAddr remote_addr;
+    if (addr_storage.ss_family == AF_INET) {
+        auto* addr4 = reinterpret_cast<struct sockaddr_in*>(&addr_storage);
+        std::memset(remote_addr.ip, 0, 10);
+        remote_addr.ip[10] = 0xff;
+        remote_addr.ip[11] = 0xff;
+        std::memcpy(&remote_addr.ip[12], &addr4->sin_addr.s_addr, 4);
+        remote_addr.port = ntohs(addr4->sin_port);
+    } else if (addr_storage.ss_family == AF_INET6) {
+        auto* addr6 = reinterpret_cast<struct sockaddr_in6*>(&addr_storage);
+        std::memcpy(remote_addr.ip, &addr6->sin6_addr, 16);
+        remote_addr.port = ntohs(addr6->sin6_port);
+    }
+
+    // Check ban list
+    if (banman_.is_banned(remote_addr)) {
+        fprintf(stderr, "net: rejected banned inbound from %s\n",
+                remote_addr.to_string().c_str());
+        uv_close(reinterpret_cast<uv_handle_t*>(client), on_close);
+        return;
+    }
+
+    // Check for duplicate connections from same IP
+    int same_ip_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (const auto& [id, peer] : peers_) {
+            if (peer->state() == PeerState::DISCONNECTED) continue;
+            if (std::memcmp(peer->addr().ip, remote_addr.ip, 16) == 0) {
+                same_ip_count++;
+            }
+        }
+    }
+
+    // Allow at most 3 connections from the same IP
+    if (same_ip_count >= 3) {
+        fprintf(stderr, "net: rejected inbound from %s (too many connections from same IP)\n",
+                remote_addr.to_string().c_str());
+        uv_close(reinterpret_cast<uv_handle_t*>(client), on_close);
+        return;
+    }
+
+    fprintf(stderr, "net: accepted inbound connection from %s\n",
+            remote_addr.to_string().c_str());
+
+    Peer& peer = create_peer(remote_addr, true, client);
+    uv_read_start(reinterpret_cast<uv_stream_t*>(client), on_alloc, on_read);
+
+    (void)peer;
+}
+
+// ===========================================================================
+// Bandwidth management
+// ===========================================================================
+
+BandwidthStats NetManager::get_bandwidth_stats() const {
+    BandwidthStats stats;
+    stats.total_sent = static_cast<int64_t>(total_bytes_sent_.load());
+    stats.total_received = static_cast<int64_t>(total_bytes_recv_.load());
+    stats.uptime_seconds = running_.load() ? GetTime() - start_time_ : 0;
+
+    // Compute current rates from per-peer data
+    double total_send_rate = 0.0;
+    double total_recv_rate = 0.0;
+
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (const auto& [id, peer] : peers_) {
+            if (peer->state() == PeerState::DISCONNECTED) continue;
+            total_send_rate += peer->send_bandwidth();
+            total_recv_rate += peer->recv_bandwidth();
+        }
+    }
+
+    stats.send_rate_kbps = total_send_rate / 1024.0;
+    stats.recv_rate_kbps = total_recv_rate / 1024.0;
+
+    return stats;
+}
+
+void NetManager::set_max_upload_rate(int64_t bytes_per_second) {
+    max_upload_rate_ = bytes_per_second;
+    fprintf(stderr, "net: upload rate limit set to %ld bytes/s\n", (long)bytes_per_second);
+}
+
+bool NetManager::can_send(size_t bytes) const {
+    if (max_upload_rate_ <= 0) return true;  // No limit
+
+    // Simple token-bucket style rate limiting
+    // Check if the current send rate is below the limit
+    double current_rate = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (const auto& [id, peer] : peers_) {
+            if (peer->state() == PeerState::DISCONNECTED) continue;
+            current_rate += peer->send_bandwidth();
+        }
+    }
+
+    return current_rate + static_cast<double>(bytes) < static_cast<double>(max_upload_rate_);
+}
+
+// ===========================================================================
+// Network event processing
+// ===========================================================================
+
+void NetManager::process_events() {
+    if (!running_.load()) return;
+
+    int64_t now = GetTime();
+
+    // 1. Accept new connections (handled by libuv callbacks)
+    // 2. Read from all peers (handled by libuv callbacks)
+    // 3. Process complete messages (handled by process_recv)
+
+    // 4. Check for handshake timeouts
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (auto& [id, peer] : peers_) {
+            if (peer->state() == PeerState::DISCONNECTED) continue;
+
+            // Disconnect peers stuck in handshake for over 60 seconds
+            if (peer->state() != PeerState::HANDSHAKE_DONE &&
+                now - peer->connect_time() > 60) {
+                disconnect(*peer, "handshake timeout");
+                continue;
+            }
+
+            // Disconnect peers that haven't sent anything in 20 minutes
+            if (peer->state() == PeerState::HANDSHAKE_DONE &&
+                peer->last_recv_time() > 0 &&
+                now - peer->last_recv_time() > 1200) {
+                disconnect(*peer, "no messages for 20 minutes");
+                continue;
+            }
+
+            // Ban check
+            if (peer->should_ban() && peer->state() != PeerState::DISCONNECTED) {
+                banman_.ban(peer->addr());
+                disconnect(*peer, "misbehavior threshold exceeded");
+                continue;
+            }
+        }
+    }
+
+    // 5. Maintain outbound connections
+    maintain_outbound_connections();
+
+    // 6. Feeler connections (every 2 minutes)
+    if (now - last_feeler_time_ >= 120) {
+        last_feeler_time_ = now;
+        start_feeler();
+    }
+
+    // 7. Peer rotation
+    rotate_idle_peers(now);
+
+    // 8. DNS seed resolution (initially and every 11 minutes if few peers)
+    if (last_dns_seed_time_ == 0 ||
+        (now - last_dns_seed_time_ >= 660 && addrman_.size() < 100)) {
+        last_dns_seed_time_ = now;
+        resolve_dns_seeds();
+    }
+
+    // 9. Bandwidth tracking
+    update_peer_bandwidth(now);
+
+    // 10. Clean up disconnected peers
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        std::vector<uint64_t> to_remove;
+        for (auto& [id, peer] : peers_) {
+            if (peer->state() == PeerState::DISCONNECTED &&
+                now - peer->connect_time() > 60) {
+                to_remove.push_back(id);
+            }
+        }
+        for (uint64_t id : to_remove) {
+            peers_.erase(id);
+        }
+    }
+
+    // 11. Sweep expired bans (every 5 minutes)
+    if (now - last_cleanup_time_ >= 300) {
+        last_cleanup_time_ = now;
+        banman_.sweep();
+        addrman_.cleanup();
+    }
+
+    // 12. Save peers.dat periodically (every 15 minutes)
+    if (now - last_peers_save_time_ >= 900) {
+        last_peers_save_time_ = now;
+        save_peers();
+    }
+
+    // 13. Message handler periodic maintenance
+    handler_.on_tick();
+}
+
+// ===========================================================================
+// Network thread function
+// ===========================================================================
+
+void NetManager::network_thread_func() {
+    fprintf(stderr, "net: network thread started\n");
+
+    // Initialize libuv loop
+    if (!start()) {
+        fprintf(stderr, "net: failed to start network\n");
+        return;
+    }
+
+    start_time_ = GetTime();
+
+    // Run the event loop
+    run();
+
+    fprintf(stderr, "net: network thread exited\n");
+}
+
+// ===========================================================================
+// Connection quality scoring for eviction
+// ===========================================================================
+
+int NetManager::compute_eviction_score(const Peer& peer) const {
+    int score = 0;
+
+    // Penalize high latency
+    int64_t latency = peer.ping_latency_us();
+    if (latency > 0) {
+        if (latency > 5'000'000) score -= 20;       // > 5s
+        else if (latency > 1'000'000) score -= 10;  // > 1s
+        else if (latency > 500'000) score -= 5;     // > 500ms
+        else score += 5;                              // Good latency
+    }
+
+    // Reward long-lived connections
+    int64_t connected_for = GetTime() - peer.connect_time();
+    if (connected_for > 86400) score += 20;       // > 24h
+    else if (connected_for > 3600) score += 10;   // > 1h
+    else if (connected_for > 300) score += 5;     // > 5min
+
+    // Reward peers with high block height
+    if (peer.start_height() > 0) {
+        uint64_t our_height = chain_.height();
+        if (peer.start_height() >= our_height) {
+            score += 15;
+        } else if (peer.start_height() >= our_height - 10) {
+            score += 10;
+        }
+    }
+
+    // Reward peers that relay compact blocks
+    if (peer.supports_compact_blocks()) score += 5;
+
+    // Penalize peers with high misbehavior score
+    if (peer.misbehavior_score() > 50) score -= 30;
+    else if (peer.misbehavior_score() > 20) score -= 15;
+    else if (peer.misbehavior_score() > 0) score -= 5;
+
+    // Reward active peers (recent messages)
+    int64_t last_active = peer.last_recv_time();
+    if (last_active > 0) {
+        int64_t idle_time = GetTime() - last_active;
+        if (idle_time < 60) score += 10;        // Active in last minute
+        else if (idle_time < 300) score += 5;   // Active in last 5 min
+        else if (idle_time > 600) score -= 10;  // Idle > 10 min
+    }
+
+    // Reward unique subnets
+    uint16_t subnet = peer.get_subnet_id();
+    int same_subnet = 0;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (const auto& [id, p] : peers_) {
+            if (p->id() == peer.id()) continue;
+            if (p->state() == PeerState::DISCONNECTED) continue;
+            if (p->is_inbound() && p->get_subnet_id() == subnet) {
+                same_subnet++;
+            }
+        }
+    }
+    if (same_subnet == 0) score += 10;  // Only peer from this subnet
+
+    return score;
+}
+
+// ===========================================================================
+// Advanced eviction with protection groups
+// ===========================================================================
+
+Peer* NetManager::select_eviction_candidate_advanced() {
+    std::vector<std::pair<Peer*, int>> scored_candidates;
+
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (auto& [id, peer] : peers_) {
+            if (!peer->is_inbound()) continue;
+            if (peer->state() != PeerState::HANDSHAKE_DONE) continue;
+            scored_candidates.emplace_back(peer.get(), compute_eviction_score(*peer));
+        }
+    }
+
+    if (scored_candidates.size() <= 8) return nullptr;
+
+    // Sort by score (ascending -- lowest score = worst peer = first to evict)
+    std::sort(scored_candidates.begin(), scored_candidates.end(),
+              [](const auto& a, const auto& b) {
+                  return a.second < b.second;
+              });
+
+    // Protect the top half
+    size_t protect_count = scored_candidates.size() / 2;
+    protect_count = std::min(protect_count, static_cast<size_t>(16));
+
+    // Additionally protect peers from unique subnets
+    std::set<uint16_t> protected_subnets;
+    size_t protected_count = 0;
+
+    // Protect from the high-score end
+    for (size_t i = scored_candidates.size(); i > 0 && protected_count < protect_count; --i) {
+        auto* peer = scored_candidates[i - 1].first;
+        protected_subnets.insert(peer->get_subnet_id());
+        protected_count++;
+    }
+
+    // Protect 4 peers with lowest latency
+    std::vector<std::pair<Peer*, int64_t>> by_latency;
+    for (auto& [peer, score] : scored_candidates) {
+        if (peer->ping_latency_us() > 0) {
+            by_latency.emplace_back(peer, peer->ping_latency_us());
+        }
+    }
+    std::sort(by_latency.begin(), by_latency.end(),
+              [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    std::set<uint64_t> protected_ids;
+    for (size_t i = 0; i < std::min(by_latency.size(), static_cast<size_t>(4)); ++i) {
+        protected_ids.insert(by_latency[i].first->id());
+    }
+
+    // Protect 4 peers with longest connection time
+    std::vector<std::pair<Peer*, int64_t>> by_uptime;
+    for (auto& [peer, score] : scored_candidates) {
+        by_uptime.emplace_back(peer, GetTime() - peer->connect_time());
+    }
+    std::sort(by_uptime.begin(), by_uptime.end(),
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+    for (size_t i = 0; i < std::min(by_uptime.size(), static_cast<size_t>(4)); ++i) {
+        protected_ids.insert(by_uptime[i].first->id());
+    }
+
+    // Find the first unprotected candidate (lowest score)
+    for (auto& [peer, score] : scored_candidates) {
+        if (protected_ids.count(peer->id())) continue;
+        return peer;
+    }
+
+    // All are protected -- return the absolute worst
+    return scored_candidates.front().first;
+}
+
+// ===========================================================================
+// Network statistics for RPC
+// ===========================================================================
+
+NetManager::NetworkInfo NetManager::get_network_info() const {
+    NetworkInfo info;
+    info.protocol_version = consensus::PROTOCOL_VERSION;
+    info.connections = peer_count();
+    info.connections_in = inbound_count();
+    info.connections_out = outbound_count();
+    info.total_bytes_sent = total_bytes_sent_.load();
+    info.total_bytes_recv = total_bytes_recv_.load();
+
+    auto bw = get_bandwidth_stats();
+    info.send_rate = bw.send_rate_kbps;
+    info.recv_rate = bw.recv_rate_kbps;
+    info.uptime = bw.uptime_seconds;
+
+    info.known_addresses = addrman_.size();
+    info.banned_count = banman_.count();
+
+    return info;
+}
+
 } // namespace flow
 
