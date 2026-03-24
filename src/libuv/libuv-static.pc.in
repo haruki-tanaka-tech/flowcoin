@@ -1,0 +1,10 @@
+prefix=@prefix@
+exec_prefix=${prefix}
+libdir=@libdir@
+includedir=@includedir@
+
+Name: libuv
+Description: multi-platform support library with a focus on asynchronous I/O.
+Version: @PACKAGE_VERSION@
+Libs: -L${libdir} -luv
+Cflags: -I${includedir}
