@@ -2388,5 +2388,715 @@ void MessageHandler::on_tick() {
     advertise_local_address();
 }
 
+// ===========================================================================
+// Block announcement: headers mode (BIP-130 sendheaders)
+// ===========================================================================
+
+void MessageHandler::announce_block_headers(Peer& peer, const CBlock& block) {
+    // If this peer prefers headers announcements, send a headers message
+    // containing just the block's header. The peer can then decide whether
+    // to request the full block via getdata.
+
+    DataWriter w;
+    w.write_compact_size(1);  // one header
+
+    // Serialize the block header (244 unsigned + 64 signature)
+    write_block_header(w, block);
+
+    send(peer, NetCmd::HEADERS, w.release());
+    peer.record_message_sent("headers", 1);
+}
+
+// ===========================================================================
+// Block announcement: compact block (BIP-152)
+// ===========================================================================
+
+void MessageHandler::announce_compact_block(Peer& peer, const CBlock& block) {
+    // Send a compact block message containing the header, a nonce for
+    // short txid computation, short txids for each transaction, and
+    // the coinbase as a prefilled transaction.
+
+    uint256 block_hash = block.get_hash();
+    uint64_t cmpct_nonce = GetRandUint64();
+
+    DataWriter w(8192);
+
+    // Full header (244 + 64 = 308 bytes)
+    write_block_header(w, block);
+
+    // Nonce (8 bytes)
+    w.write_u64_le(cmpct_nonce);
+
+    // Short transaction IDs (6 bytes each, excluding prefilled txs)
+    // We prefill the coinbase (index 0), so short_ids cover indices 1..N-1
+    size_t short_id_count = (block.vtx.size() > 1) ? block.vtx.size() - 1 : 0;
+    w.write_compact_size(short_id_count);
+
+    for (size_t i = 1; i < block.vtx.size(); ++i) {
+        uint256 txid = block.vtx[i].get_txid();
+        uint64_t short_id = compute_short_txid(txid, cmpct_nonce, block_hash);
+
+        // Write 6 bytes of the short ID
+        uint8_t short_bytes[6];
+        std::memcpy(short_bytes, &short_id, 6);
+        w.write_bytes(short_bytes, 6);
+    }
+
+    // Prefilled transactions: just the coinbase (index 0)
+    w.write_compact_size(1);
+    w.write_compact_size(0);  // differential index = 0
+
+    // Serialize the coinbase transaction
+    auto coinbase_data = block.vtx[0].serialize();
+    w.write_bytes(coinbase_data.data(), coinbase_data.size());
+
+    send(peer, NetCmd::CMPCTBLOCK, w.release());
+    peer.record_message_sent("cmpctblock", 1);
+}
+
+// ===========================================================================
+// Block announcement: full block via inv (legacy)
+// ===========================================================================
+
+void MessageHandler::announce_full_block(Peer& peer, const CBlock& block) {
+    // Traditional three-step relay: send inv, peer sends getdata, we respond
+    // with the full block. This method just sends the inv.
+
+    uint256 block_hash = block.get_hash();
+
+    // Check if we've already announced this to this peer
+    if (peer.has_announced(block_hash)) {
+        return;
+    }
+
+    DataWriter w;
+    w.write_compact_size(1);
+    InvItem item;
+    item.type = INV_BLOCK;
+    item.hash = block_hash;
+    write_inv_item(w, item);
+
+    send(peer, NetCmd::INV, w.release());
+    peer.mark_announced(block_hash);
+}
+
+// ===========================================================================
+// Smart block relay: choose best method per peer
+// ===========================================================================
+
+void MessageHandler::relay_block_smart(const CBlock& block) {
+    auto peers = netman_.connected_peers();
+
+    for (auto& peer : peers) {
+        if (peer->state() != PeerState::HANDSHAKE_DONE) {
+            continue;
+        }
+
+        uint256 block_hash = block.get_hash();
+        if (peer->has_announced(block_hash)) {
+            continue;
+        }
+
+        // Choose relay method based on peer preferences
+        if (peer->prefers_compact_blocks() && peer->wants_cmpct_high_bandwidth()) {
+            // High bandwidth compact block mode: send immediately
+            announce_compact_block(*peer, block);
+        } else if (peer->prefers_headers() && peer->supports_compact_blocks()) {
+            // Send compact block (low bandwidth mode)
+            announce_compact_block(*peer, block);
+        } else if (peer->prefers_headers()) {
+            // Headers-only announcement
+            announce_block_headers(*peer, block);
+        } else {
+            // Legacy inv announcement
+            announce_full_block(*peer, block);
+        }
+
+        peer->mark_announced(block_hash);
+    }
+}
+
+// ===========================================================================
+// Orphan block handling
+// ===========================================================================
+
+void MessageHandler::add_orphan_block(const CBlock& block, uint64_t peer_id) {
+    uint256 hash = block.get_hash();
+
+    // Don't store duplicates
+    if (orphan_blocks_.count(hash)) {
+        return;
+    }
+
+    // Limit total orphan storage
+    limit_orphan_blocks(25);
+
+    OrphanBlock ob;
+    ob.block = block;
+    ob.hash = hash;
+    ob.prev_hash = block.prev_hash;
+    ob.peer_id = peer_id;
+    ob.received_at = GetTime();
+
+    orphan_blocks_[hash] = std::move(ob);
+    orphans_by_prev_[block.prev_hash].push_back(hash);
+
+    fprintf(stderr, "net: stored orphan block %.8s (prev=%.8s) from peer %lu\n",
+            hex_encode(hash.data(), 32).c_str(),
+            hex_encode(block.prev_hash.data(), 32).c_str(),
+            (unsigned long)peer_id);
+}
+
+bool MessageHandler::has_orphan_block(const uint256& hash) const {
+    return orphan_blocks_.count(hash) > 0;
+}
+
+void MessageHandler::process_orphan_blocks(const uint256& accepted_hash) {
+    // When a new block is accepted, check if any orphans were waiting for it.
+    // If so, try to process them recursively.
+
+    auto it = orphans_by_prev_.find(accepted_hash);
+    if (it == orphans_by_prev_.end()) {
+        return;
+    }
+
+    // Copy the list since we'll modify the map during processing
+    std::vector<uint256> children = it->second;
+    orphans_by_prev_.erase(it);
+
+    for (const auto& child_hash : children) {
+        auto orphan_it = orphan_blocks_.find(child_hash);
+        if (orphan_it == orphan_blocks_.end()) {
+            continue;
+        }
+
+        CBlock orphan_block = std::move(orphan_it->second.block);
+        uint64_t from_peer = orphan_it->second.peer_id;
+        orphan_blocks_.erase(orphan_it);
+
+        uint256 orphan_hash = orphan_block.get_hash();
+
+        // Try to accept this previously orphaned block
+        consensus::ValidationState vstate;
+        if (chain_.accept_block(orphan_block, vstate)) {
+            fprintf(stderr, "net: accepted former orphan block at height %lu\n",
+                    (unsigned long)orphan_block.height);
+            relay_block(orphan_hash);
+
+            // Recursively process orphans of this block
+            process_orphan_blocks(orphan_hash);
+        } else {
+            fprintf(stderr, "net: rejected orphan block: %s (peer %lu)\n",
+                    vstate.reject_reason().c_str(), (unsigned long)from_peer);
+        }
+    }
+}
+
+void MessageHandler::limit_orphan_blocks(size_t max_orphans) {
+    while (orphan_blocks_.size() >= max_orphans) {
+        // Evict the oldest orphan
+        int64_t oldest_time = INT64_MAX;
+        uint256 oldest_hash;
+
+        for (const auto& [hash, ob] : orphan_blocks_) {
+            if (ob.received_at < oldest_time) {
+                oldest_time = ob.received_at;
+                oldest_hash = hash;
+            }
+        }
+
+        if (oldest_time == INT64_MAX) break;
+
+        // Remove from by_prev index
+        auto it = orphan_blocks_.find(oldest_hash);
+        if (it != orphan_blocks_.end()) {
+            auto prev_it = orphans_by_prev_.find(it->second.prev_hash);
+            if (prev_it != orphans_by_prev_.end()) {
+                auto& vec = prev_it->second;
+                vec.erase(std::remove(vec.begin(), vec.end(), oldest_hash), vec.end());
+                if (vec.empty()) {
+                    orphans_by_prev_.erase(prev_it);
+                }
+            }
+            orphan_blocks_.erase(it);
+        }
+    }
+}
+
+// ===========================================================================
+// Header chain download (IBD batch requests)
+// ===========================================================================
+
+void MessageHandler::request_headers_batch(Peer& peer, const uint256& from_hash) {
+    // Build a getheaders message requesting headers starting after from_hash.
+    // This is used during Initial Block Download to request batches of 2000 headers.
+
+    DataWriter w;
+    w.write_u32_le(consensus::PROTOCOL_VERSION);
+
+    // Build a locator with just the from_hash
+    w.write_compact_size(1);
+    w.write_bytes(from_hash.data(), 32);
+
+    // Hash stop = zero (get as many as possible)
+    uint256 zero_stop;
+    w.write_bytes(zero_stop.data(), 32);
+
+    send(peer, NetCmd::GETHEADERS, w.release());
+
+    fprintf(stderr, "net: requesting headers batch from peer %lu starting at %.8s\n",
+            (unsigned long)peer.id(), hex_encode(from_hash.data(), 32).c_str());
+}
+
+void MessageHandler::process_headers_batch(Peer& peer,
+                                            const std::vector<CBlockHeader>& headers) {
+    // Process a batch of received headers. Accept each one into the block tree.
+    // If we received a full batch (2000), request more.
+
+    int accepted = 0;
+    int rejected = 0;
+    uint256 last_accepted_hash;
+
+    for (const auto& hdr : headers) {
+        uint256 hdr_hash = hdr.get_hash();
+
+        // Skip if already known
+        if (chain_.block_tree().find(hdr_hash)) {
+            continue;
+        }
+
+        consensus::ValidationState vstate;
+        CBlockIndex* new_idx = chain_.accept_header(hdr, vstate);
+        if (new_idx) {
+            accepted++;
+            last_accepted_hash = hdr_hash;
+            peer.set_synced_headers(new_idx->height);
+        } else {
+            rejected++;
+            fprintf(stderr, "net: rejected header from batch: %s\n",
+                    vstate.reject_reason().c_str());
+            if (rejected > 10) {
+                // Too many bad headers; penalize and stop
+                peer.add_misbehavior(20);
+                break;
+            }
+        }
+    }
+
+    fprintf(stderr, "net: processed headers batch from peer %lu: "
+            "%d accepted, %d rejected (of %zu)\n",
+            (unsigned long)peer.id(), accepted, rejected, headers.size());
+
+    // If we got a full batch, request more
+    if (headers.size() >= 2000 && accepted > 0 && !last_accepted_hash.is_null()) {
+        request_headers_batch(peer, last_accepted_hash);
+    }
+}
+
+// ===========================================================================
+// Transaction broadcasting with tracking
+// ===========================================================================
+
+void MessageHandler::track_tx_broadcast(const uint256& txid) {
+    BroadcastState state;
+    state.txid = txid;
+    state.peers_relayed_to = 0;
+    state.first_relay_time = GetTime();
+    state.relay_attempts = 0;
+    state.confirmed = false;
+
+    broadcast_states_[txid] = state;
+}
+
+MessageHandler::BroadcastState MessageHandler::get_broadcast_state(
+        const uint256& txid) const {
+    auto it = broadcast_states_.find(txid);
+    if (it != broadcast_states_.end()) {
+        return it->second;
+    }
+
+    BroadcastState empty;
+    empty.txid = txid;
+    empty.peers_relayed_to = 0;
+    empty.first_relay_time = 0;
+    empty.relay_attempts = 0;
+    empty.confirmed = false;
+    return empty;
+}
+
+void MessageHandler::rebroadcast_wallet_txs(
+        const std::vector<CTransaction>& wallet_txs) {
+    // Re-broadcast unconfirmed wallet transactions to all connected peers.
+    // This ensures our transactions propagate even if the initial broadcast
+    // was to a limited set of peers.
+
+    int64_t now = GetTime();
+
+    // Only rebroadcast transactions that are still unconfirmed and old enough
+    // (at least 30 minutes since first broadcast)
+    static constexpr int64_t MIN_REBROADCAST_INTERVAL = 1800;  // 30 minutes
+
+    for (const auto& tx : wallet_txs) {
+        uint256 txid = tx.get_txid();
+
+        auto it = broadcast_states_.find(txid);
+        if (it != broadcast_states_.end()) {
+            if (it->second.confirmed) {
+                continue;  // already confirmed
+            }
+            if (now - it->second.first_relay_time < MIN_REBROADCAST_INTERVAL) {
+                continue;  // too soon to rebroadcast
+            }
+        }
+
+        // Relay the transaction via inv to all peers
+        relay_tx(txid);
+
+        // Update broadcast state
+        if (it != broadcast_states_.end()) {
+            it->second.relay_attempts++;
+        } else {
+            track_tx_broadcast(txid);
+        }
+
+        fprintf(stderr, "net: rebroadcast wallet tx %.8s\n",
+                hex_encode(txid.data(), 32).c_str());
+    }
+}
+
+// ===========================================================================
+// Feeler connection support
+// ===========================================================================
+
+void MessageHandler::send_ping(Peer& peer) {
+    // Generate a random nonce for the ping and record the send time
+    uint64_t nonce = GetRandUint64();
+    peer.set_ping_nonce(nonce);
+    peer.set_last_ping_time(GetTimeMicros());
+
+    DataWriter w;
+    w.write_u64_le(nonce);
+    send(peer, NetCmd::PING, w.release());
+}
+
+void MessageHandler::check_peer_timeouts() {
+    // Check all connected peers for various timeout conditions
+    int64_t now = GetTime();
+    auto peers = netman_.connected_peers();
+
+    for (auto& peer : peers) {
+        if (peer->state() != PeerState::HANDSHAKE_DONE) {
+            // Handshake timeout: disconnect if version not completed within 60s
+            int64_t elapsed = now - peer->connect_time();
+            if (elapsed > 60) {
+                fprintf(stderr, "net: handshake timeout for peer %lu, disconnecting\n",
+                        (unsigned long)peer->id());
+                netman_.disconnect(*peer, "handshake timeout");
+            }
+            continue;
+        }
+
+        // No data received timeout: disconnect after 20 minutes of silence
+        if (peer->last_recv_time() > 0) {
+            int64_t since_recv = now - peer->last_recv_time();
+            if (since_recv > 1200) {
+                fprintf(stderr, "net: no data from peer %lu for %ld seconds, disconnecting\n",
+                        (unsigned long)peer->id(), (long)since_recv);
+                netman_.disconnect(*peer, "no data timeout");
+                continue;
+            }
+        }
+
+        // Ping timeout: if we sent a ping and haven't got a pong in 20 minutes
+        if (peer->ping_nonce() != 0 && peer->last_ping_time() > 0) {
+            int64_t ping_elapsed = (GetTimeMicros() - peer->last_ping_time()) / 1000000;
+            if (ping_elapsed > 1200) {
+                fprintf(stderr, "net: ping timeout for peer %lu, disconnecting\n",
+                        (unsigned long)peer->id());
+                netman_.disconnect(*peer, "ping timeout");
+                continue;
+            }
+        }
+
+        // Check for stalled block downloads
+        auto stalled = peer->get_stalled_requests(now);
+        if (stalled.size() > 3) {
+            fprintf(stderr, "net: peer %lu has %zu stalled requests, adding misbehavior\n",
+                    (unsigned long)peer->id(), stalled.size());
+            peer->add_misbehavior(5);
+        }
+
+        // Send periodic pings (every 2 minutes)
+        if (peer->ping_nonce() == 0) {
+            int64_t since_ping = (peer->last_ping_time() > 0)
+                ? (GetTimeMicros() - peer->last_ping_time()) / 1000000
+                : 999;
+            if (since_ping >= 120) {
+                send_ping(*peer);
+            }
+        }
+    }
+}
+
+// ===========================================================================
+// Address advertisement
+// ===========================================================================
+
+void MessageHandler::send_local_addr(Peer& peer, const CNetAddr& local_addr) {
+    DataWriter w;
+    w.write_compact_size(1);
+    w.write_u32_le(static_cast<uint32_t>(GetTime()));
+    w.write_u64_le(NODE_NETWORK);
+    local_addr.serialize(w);
+
+    send(peer, NetCmd::ADDR, w.release());
+}
+
+// ===========================================================================
+// Block download scheduler
+// ===========================================================================
+
+void MessageHandler::schedule_block_downloads() {
+    // For each peer that has announced headers we don't have bodies for,
+    // schedule block downloads. Distribute requests across peers to avoid
+    // overloading any single one.
+
+    auto peers = netman_.connected_peers();
+    if (peers.empty()) return;
+
+    int64_t now = GetTime();
+
+    // Find blocks we need to download (have headers but not bodies)
+    CBlockIndex* tip = chain_.tip();
+    if (!tip) return;
+
+    // Walk forward from our last fully validated block to find gaps
+    std::vector<CBlockIndex*> needed_blocks;
+    CBlockIndex* scan = tip;
+    // Look ahead up to 1024 blocks beyond tip
+    // In practice, we'd use the header chain, but for now we check
+    // the block tree for entries with status HEADER_VALID but not BLOCK_VALID
+
+    // For each needed block, assign to the best peer
+    size_t peer_idx = 0;
+    for (auto* blk : needed_blocks) {
+        if (peer_idx >= peers.size()) peer_idx = 0;
+
+        auto& peer = peers[peer_idx];
+        if (peer->state() != PeerState::HANDSHAKE_DONE) {
+            peer_idx++;
+            continue;
+        }
+
+        // Don't send duplicate requests
+        if (peer->has_announced(blk->hash)) {
+            continue;
+        }
+
+        // Request the block via getdata
+        DataWriter w;
+        w.write_compact_size(1);
+        InvItem item;
+        item.type = INV_BLOCK;
+        item.hash = blk->hash;
+        write_inv_item(w, item);
+        send(*peer, NetCmd::GETDATA, w.release());
+
+        peer->add_pending_request(blk->hash, INV_BLOCK, now);
+        peer_idx++;
+    }
+}
+
+// ===========================================================================
+// Peer rotation for block download
+// ===========================================================================
+
+Peer* MessageHandler::select_download_peer(
+        const std::vector<std::shared_ptr<Peer>>& peers,
+        const uint256& block_hash) {
+    // Select the best peer to download a specific block from.
+    // Criteria: low latency, high bandwidth, has the block, not stalled.
+
+    Peer* best = nullptr;
+    double best_score = -1.0;
+
+    for (const auto& peer : peers) {
+        if (peer->state() != PeerState::HANDSHAKE_DONE) continue;
+
+        // Skip peers with too many pending requests
+        auto stalled = peer->get_stalled_requests(GetTime());
+        if (stalled.size() > 5) continue;
+
+        // Skip peers with high misbehavior
+        if (peer->misbehavior() >= 50) continue;
+
+        // Compute download score
+        double score = peer->eviction_score();
+
+        // Bonus for peers that have announced this block
+        if (peer->has_received_inv(block_hash)) {
+            score += 50.0;
+        }
+
+        // Bonus for low pending request count
+        size_t pending = peer->pending_requests_.size();
+        if (pending == 0) {
+            score += 30.0;
+        } else if (pending < 3) {
+            score += 15.0;
+        }
+
+        if (score > best_score) {
+            best_score = score;
+            best = peer.get();
+        }
+    }
+
+    return best;
+}
+
+// ===========================================================================
+// Transaction relay policy
+// ===========================================================================
+
+bool MessageHandler::should_relay_tx(const Peer& peer, const CTransaction& tx) const {
+    // Check if this transaction should be relayed to a specific peer.
+
+    // Don't relay if peer has set a fee filter and the tx doesn't meet it
+    if (peer.fee_filter() > 0) {
+        size_t tx_size = tx.get_serialize_size();
+        if (tx_size > 0) {
+            Amount tx_fee = 0;  // Would need mempool to get actual fee
+            double fee_rate = (tx_size > 0)
+                ? static_cast<double>(tx_fee) / static_cast<double>(tx_size)
+                : 0.0;
+            if (fee_rate < static_cast<double>(peer.fee_filter())) {
+                return false;
+            }
+        }
+    }
+
+    // Don't relay if peer already knows about it
+    uint256 txid = tx.get_txid();
+    if (peer.has_announced(txid) || peer.has_received_inv(txid)) {
+        return false;
+    }
+
+    return true;
+}
+
+void MessageHandler::batch_relay_txs(const std::vector<uint256>& txids) {
+    // Relay multiple transaction inv items in a single inv message per peer.
+    // This is more efficient than sending individual inv messages.
+
+    if (txids.empty()) return;
+
+    auto peers = netman_.connected_peers();
+
+    for (auto& peer : peers) {
+        if (peer->state() != PeerState::HANDSHAKE_DONE) continue;
+
+        // Filter to txids this peer doesn't know about
+        std::vector<uint256> relay_set;
+        for (const auto& txid : txids) {
+            if (!peer->has_announced(txid) && !peer->has_received_inv(txid)) {
+                relay_set.push_back(txid);
+                peer->mark_announced(txid);
+            }
+        }
+
+        if (relay_set.empty()) continue;
+
+        // Send inv message with all tx ids
+        DataWriter w;
+        w.write_compact_size(relay_set.size());
+        for (const auto& txid : relay_set) {
+            InvItem item;
+            item.type = INV_TX;
+            item.hash = txid;
+            write_inv_item(w, item);
+        }
+        send(*peer, NetCmd::INV, w.release());
+    }
+}
+
+// ===========================================================================
+// Block locator construction
+// ===========================================================================
+
+std::vector<uint256> MessageHandler::build_block_locator() const {
+    // Build a block locator for getheaders/getblocks messages.
+    // The locator contains hashes at exponentially increasing distances:
+    // tip, tip-1, tip-2, tip-3, tip-5, tip-9, tip-17, tip-33, ...
+    // This allows efficient fork detection with O(log N) hashes.
+
+    std::vector<uint256> locator;
+
+    CBlockIndex* tip = chain_.tip();
+    if (!tip) {
+        // Return just the genesis hash
+        CBlockIndex* genesis = chain_.block_tree().genesis();
+        if (genesis) {
+            locator.push_back(genesis->hash);
+        }
+        return locator;
+    }
+
+    // Walk back from tip with exponentially increasing steps
+    int step = 1;
+    CBlockIndex* current = tip;
+
+    while (current) {
+        locator.push_back(current->hash);
+
+        // After the first 10 entries, start exponential stepping
+        if (locator.size() >= 10) {
+            step *= 2;
+        }
+
+        // Walk back 'step' blocks
+        for (int i = 0; i < step && current; ++i) {
+            if (current->height == 0) {
+                current = nullptr;
+                break;
+            }
+            current = current->prev;
+        }
+
+        // Safety: limit locator size
+        if (locator.size() >= 101) break;
+    }
+
+    // Always include genesis
+    CBlockIndex* genesis = chain_.block_tree().genesis();
+    if (genesis && (locator.empty() || locator.back() != genesis->hash)) {
+        locator.push_back(genesis->hash);
+    }
+
+    return locator;
+}
+
+// ===========================================================================
+// Compact block high-bandwidth negotiation
+// ===========================================================================
+
+void MessageHandler::send_sendcmpct(Peer& peer, bool high_bandwidth) {
+    DataWriter w;
+    w.write_u8(high_bandwidth ? 1 : 0);
+    w.write_u64_le(1);  // compact block version 1
+
+    send(peer, NetCmd::SENDCMPCT, w.release());
+}
+
+void MessageHandler::send_sendheaders(Peer& peer) {
+    send(peer, NetCmd::SENDHEADERS);
+}
+
+void MessageHandler::send_feefilter(Peer& peer, Amount min_fee_rate) {
+    DataWriter w;
+    w.write_i64_le(min_fee_rate);
+    send(peer, NetCmd::FEEFILTER, w.release());
+}
+
 } // namespace flow
 

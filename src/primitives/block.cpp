@@ -600,4 +600,401 @@ size_t compute_block_weight(const CBlockHeader& header,
     return weight;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Block analysis
+// ═══════════════════════════════════════════════════════════════════════════
+
+CBlock::BlockAnalysis CBlock::analyze() const {
+    BlockAnalysis a;
+
+    // Header info
+    a.height = height;
+    a.hash = get_hash();
+    a.prev_hash = prev_hash;
+    a.timestamp = timestamp;
+
+    // Difficulty
+    {
+        arith_uint256 target;
+        arith_uint256 pow_limit;
+        pow_limit.SetCompact(consensus::INITIAL_NBITS);
+        if (consensus::derive_target(nbits, target) && !target.IsNull()) {
+            // Approximate difficulty = powLimit / target
+            a.difficulty = static_cast<double>(pow_limit.GetCompact() >> 24) /
+                          static_cast<double>((nbits >> 24) > 0 ? (nbits >> 24) : 1);
+        } else {
+            a.difficulty = 1.0;
+        }
+    }
+
+    // Transaction stats
+    a.tx_count = vtx.size();
+    a.total_size = get_block_size();
+    a.total_weight = get_block_weight();
+
+    a.total_output_value = 0;
+    a.total_input_value = 0;
+    a.total_fees = 0;
+    a.coinbase_value = 0;
+    a.total_sigops = 0;
+    a.p2pkh_count = 0;
+    a.multisig_count = 0;
+    a.op_return_count = 0;
+
+    for (size_t i = 0; i < vtx.size(); i++) {
+        const CTransaction& tx = vtx[i];
+
+        Amount out_value = tx.get_value_out();
+        a.total_output_value += out_value;
+
+        if (i == 0) {
+            a.coinbase_value = out_value;
+        }
+
+        // Count inputs for input value estimation
+        // (We don't have UTXO lookups here, so input value is not directly computable)
+
+        // Sigops: each input contributes 1 sigop (Ed25519 signature verification)
+        if (!tx.is_coinbase()) {
+            a.total_sigops += static_cast<int>(tx.vin.size());
+        }
+
+        // Transaction type classification
+        // P2PKH: standard single-input, single/multi-output
+        if (!tx.is_coinbase()) {
+            if (tx.vin.size() >= 2) {
+                // Multiple inputs might indicate consolidated inputs
+                a.p2pkh_count++;
+            } else {
+                a.p2pkh_count++;
+            }
+        }
+
+        // Check for OP_RETURN-like outputs (zero-value outputs)
+        for (const auto& out : tx.vout) {
+            if (out.amount == 0) {
+                a.op_return_count++;
+            }
+        }
+    }
+
+    // Training info
+    a.val_loss = val_loss;
+    a.d_model = d_model;
+    a.n_layers = n_layers;
+    a.n_slots = n_slots;
+    a.model_params = consensus::estimate_param_count(d_model, n_layers, d_ff, n_slots);
+    a.delta_size_compressed = delta_payload.size();
+
+    // Estimate uncompressed delta size from sparse_count
+    a.delta_size_uncompressed = static_cast<size_t>(sparse_count) * sizeof(float);
+    if (a.delta_size_uncompressed == 0 && !delta_payload.empty()) {
+        // If sparse_count is zero but we have a payload, approximate
+        a.delta_size_uncompressed = delta_payload.size() * 2;
+    }
+
+    // Delta sparsity: ratio of non-zero elements to total parameters
+    if (a.model_params > 0) {
+        a.delta_sparsity = 1.0f - (static_cast<float>(sparse_count) /
+                                    static_cast<float>(a.model_params));
+    } else {
+        a.delta_sparsity = 1.0f;
+    }
+
+    // Time since previous block (unknown without context, set to 0)
+    a.time_since_prev = 0;
+
+    return a;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Block comparison (for fork analysis)
+// ═══════════════════════════════════════════════════════════════════════════
+
+CBlock::BlockDiff CBlock::compare(const CBlock& a, const CBlock& b) {
+    BlockDiff diff;
+    diff.same_height = (a.height == b.height);
+    diff.same_prev = (a.prev_hash == b.prev_hash);
+
+    // Compare transaction sets
+    std::vector<uint256> txids_a;
+    txids_a.reserve(a.vtx.size());
+    for (const auto& tx : a.vtx) {
+        txids_a.push_back(tx.get_txid());
+    }
+
+    std::vector<uint256> txids_b;
+    txids_b.reserve(b.vtx.size());
+    for (const auto& tx : b.vtx) {
+        txids_b.push_back(tx.get_txid());
+    }
+
+    // Sort for set operations
+    std::sort(txids_a.begin(), txids_a.end());
+    std::sort(txids_b.begin(), txids_b.end());
+
+    // Count shared transactions
+    diff.shared_tx_count = 0;
+    size_t ia = 0, ib = 0;
+    while (ia < txids_a.size() && ib < txids_b.size()) {
+        if (txids_a[ia] == txids_b[ib]) {
+            diff.shared_tx_count++;
+            ia++;
+            ib++;
+        } else if (txids_a[ia] < txids_b[ib]) {
+            ia++;
+        } else {
+            ib++;
+        }
+    }
+
+    diff.unique_a_count = static_cast<int>(txids_a.size()) - diff.shared_tx_count;
+    diff.unique_b_count = static_cast<int>(txids_b.size()) - diff.shared_tx_count;
+    diff.same_txs = (diff.unique_a_count == 0 && diff.unique_b_count == 0);
+    diff.val_loss_diff = a.val_loss - b.val_loss;
+
+    return diff;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Coinbase creation helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+CTransaction CBlock::create_coinbase(uint64_t cb_height, Amount reward,
+                                       const std::array<uint8_t, 32>& miner_pubkey,
+                                       const std::string& extra_data) {
+    // Delegate to existing make_coinbase
+    return CBlock::make_coinbase(cb_height, reward, miner_pubkey, extra_data);
+}
+
+CTransaction CBlock::create_coinbase_multi(
+        uint64_t cb_height, Amount reward,
+        const std::vector<std::pair<std::array<uint8_t, 32>, Amount>>& payees) {
+
+    CTransaction coinbase;
+    coinbase.version = 1;
+    coinbase.locktime = 0;
+
+    // Coinbase input: null prevout
+    CTxIn cb_in;
+    cb_in.prevout = COutPoint();
+
+    // Encode height in the coinbase pubkey field (BIP34 style)
+    std::memset(cb_in.pubkey.data(), 0, 32);
+    for (int i = 0; i < 8; ++i) {
+        cb_in.pubkey[i] = static_cast<uint8_t>(cb_height >> (i * 8));
+    }
+    std::memset(cb_in.signature.data(), 0, 64);
+
+    coinbase.vin.push_back(cb_in);
+
+    // Validate: sum of payee amounts must not exceed reward
+    Amount total_allocated = 0;
+    for (const auto& payee : payees) {
+        if (payee.second <= 0) continue;
+        total_allocated += payee.second;
+    }
+
+    if (total_allocated > reward) {
+        // Scale down proportionally
+        for (const auto& payee : payees) {
+            if (payee.second <= 0) continue;
+
+            CTxOut out;
+            double ratio = static_cast<double>(payee.second) /
+                          static_cast<double>(total_allocated);
+            out.amount = static_cast<Amount>(static_cast<double>(reward) * ratio);
+
+            // Compute pubkey_hash = keccak256(pubkey)
+            uint256 pkh = keccak256(payee.first.data(), 32);
+            std::memcpy(out.pubkey_hash.data(), pkh.data(), 32);
+            coinbase.vout.push_back(out);
+        }
+    } else {
+        // Allocate as specified
+        Amount remaining = reward;
+
+        for (size_t i = 0; i < payees.size(); i++) {
+            const auto& payee = payees[i];
+            if (payee.second <= 0) continue;
+
+            CTxOut out;
+
+            if (i == payees.size() - 1) {
+                // Last payee gets the remainder (avoids rounding errors)
+                out.amount = remaining;
+            } else {
+                out.amount = payee.second;
+                remaining -= payee.second;
+            }
+
+            uint256 pkh = keccak256(payee.first.data(), 32);
+            std::memcpy(out.pubkey_hash.data(), pkh.data(), 32);
+            coinbase.vout.push_back(out);
+        }
+    }
+
+    return coinbase;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Merkle proof generation and verification
+// ═══════════════════════════════════════════════════════════════════════════
+
+CBlock::MerkleProof CBlock::get_tx_proof(uint32_t tx_index) const {
+    MerkleProof proof;
+
+    if (tx_index >= vtx.size()) {
+        return proof;
+    }
+
+    // Compute all transaction hashes
+    std::vector<uint256> hashes;
+    hashes.reserve(vtx.size());
+    for (const auto& tx : vtx) {
+        hashes.push_back(tx.get_txid());
+    }
+
+    proof.txid = hashes[tx_index];
+    proof.root = merkle_root;
+    proof.index = tx_index;
+
+    // Build merkle tree and extract proof branch
+    // The merkle tree is built bottom-up by pairwise hashing.
+    // For each level, we record which sibling hash is needed.
+
+    std::vector<uint256> level = hashes;
+    uint32_t idx = tx_index;
+
+    while (level.size() > 1) {
+        // If odd number, duplicate the last element
+        if (level.size() % 2 != 0) {
+            level.push_back(level.back());
+        }
+
+        // Record the sibling of the current index
+        uint32_t sibling_idx;
+        if (idx % 2 == 0) {
+            sibling_idx = idx + 1;
+        } else {
+            sibling_idx = idx - 1;
+        }
+
+        if (sibling_idx < level.size()) {
+            proof.branch.push_back(level[sibling_idx]);
+        }
+
+        // Move to the next level
+        std::vector<uint256> next_level;
+        next_level.reserve(level.size() / 2);
+
+        for (size_t i = 0; i < level.size(); i += 2) {
+            // Hash pair: keccak256(left || right)
+            std::vector<uint8_t> combined;
+            combined.reserve(64);
+            combined.insert(combined.end(),
+                             level[i].begin(), level[i].end());
+            combined.insert(combined.end(),
+                             level[i + 1].begin(), level[i + 1].end());
+            next_level.push_back(keccak256(combined.data(), combined.size()));
+        }
+
+        idx = idx / 2;
+        level = std::move(next_level);
+    }
+
+    return proof;
+}
+
+bool CBlock::MerkleProof::verify() const {
+    if (branch.empty() && root == txid) {
+        return true;  // Single-transaction tree
+    }
+
+    uint256 current = txid;
+    uint32_t idx = index;
+
+    for (const auto& sibling : branch) {
+        std::vector<uint8_t> combined;
+        combined.reserve(64);
+
+        if (idx % 2 == 0) {
+            // Current is left child
+            combined.insert(combined.end(), current.begin(), current.end());
+            combined.insert(combined.end(), sibling.begin(), sibling.end());
+        } else {
+            // Current is right child
+            combined.insert(combined.end(), sibling.begin(), sibling.end());
+            combined.insert(combined.end(), current.begin(), current.end());
+        }
+
+        current = keccak256(combined.data(), combined.size());
+        idx = idx / 2;
+    }
+
+    return current == root;
+}
+
+std::vector<uint8_t> CBlock::MerkleProof::serialize() const {
+    std::vector<uint8_t> out;
+
+    // txid (32 bytes)
+    out.insert(out.end(), txid.begin(), txid.end());
+
+    // root (32 bytes)
+    out.insert(out.end(), root.begin(), root.end());
+
+    // index (4 bytes LE)
+    append_u32(out, index);
+
+    // branch count (4 bytes LE)
+    append_u32(out, static_cast<uint32_t>(branch.size()));
+
+    // branch hashes (32 bytes each)
+    for (const auto& h : branch) {
+        append_bytes(out, h.data(), 32);
+    }
+
+    return out;
+}
+
+CBlock::MerkleProof CBlock::MerkleProof::deserialize(
+        const uint8_t* data, size_t len) {
+    MerkleProof proof;
+
+    // Minimum: 32 (txid) + 32 (root) + 4 (index) + 4 (count) = 72
+    if (len < 72) return proof;
+
+    size_t pos = 0;
+
+    std::memcpy(proof.txid.data(), data + pos, 32);
+    pos += 32;
+
+    std::memcpy(proof.root.data(), data + pos, 32);
+    pos += 32;
+
+    proof.index = read_u32_le(data + pos);
+    pos += 4;
+
+    uint32_t count = read_u32_le(data + pos);
+    pos += 4;
+
+    if (count > 256) return proof;  // sanity check
+    if (pos + count * 32 > len) return proof;
+
+    proof.branch.resize(count);
+    for (uint32_t i = 0; i < count; i++) {
+        std::memcpy(proof.branch[i].data(), data + pos, 32);
+        pos += 32;
+    }
+
+    return proof;
+}
+
+bool CBlock::verify_tx_proof(const MerkleProof& proof) const {
+    // Verify the proof resolves to our merkle root
+    if (proof.root != merkle_root) return false;
+    return proof.verify();
+}
+
 } // namespace flow

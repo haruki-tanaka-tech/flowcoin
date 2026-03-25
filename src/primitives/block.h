@@ -242,6 +242,75 @@ struct CBlock : public CBlockHeader {
 
     /** Get a string representation for logging. */
     std::string to_string() const;
+
+    // ═══ Block analysis ═══
+
+    struct BlockAnalysis {
+        uint64_t height;
+        uint256 hash;
+        uint256 prev_hash;
+        double difficulty;
+        int64_t timestamp;
+        size_t tx_count;
+        size_t total_size;
+        size_t total_weight;
+        Amount total_output_value;
+        Amount total_input_value;
+        Amount total_fees;
+        Amount coinbase_value;
+        float val_loss;
+        uint32_t d_model;
+        uint32_t n_layers;
+        uint32_t n_slots;
+        size_t model_params;
+        size_t delta_size_compressed;
+        size_t delta_size_uncompressed;
+        float delta_sparsity;
+        int total_sigops;
+        int p2pkh_count;
+        int multisig_count;
+        int op_return_count;
+        int64_t time_since_prev;
+    };
+    BlockAnalysis analyze() const;
+
+    // ═══ Block comparison ═══
+
+    struct BlockDiff {
+        bool same_height;
+        bool same_prev;
+        bool same_txs;
+        int shared_tx_count;
+        int unique_a_count;
+        int unique_b_count;
+        float val_loss_diff;
+    };
+    static BlockDiff compare(const CBlock& a, const CBlock& b);
+
+    // ═══ Coinbase creation helpers ═══
+
+    static CTransaction create_coinbase(uint64_t height, Amount reward,
+                                          const std::array<uint8_t, 32>& miner_pubkey,
+                                          const std::string& extra_data = "");
+
+    static CTransaction create_coinbase_multi(
+        uint64_t height, Amount reward,
+        const std::vector<std::pair<std::array<uint8_t, 32>, Amount>>& payees);
+
+    // ═══ Merkle proof generation ═══
+
+    struct MerkleProof {
+        uint256 txid;
+        uint256 root;
+        std::vector<uint256> branch;
+        uint32_t index;
+
+        bool verify() const;
+        std::vector<uint8_t> serialize() const;
+        static MerkleProof deserialize(const uint8_t* data, size_t len);
+    };
+    MerkleProof get_tx_proof(uint32_t tx_index) const;
+    bool verify_tx_proof(const MerkleProof& proof) const;
 };
 
 // ---------------------------------------------------------------------------

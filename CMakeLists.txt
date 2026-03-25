@@ -504,6 +504,15 @@ if(BUILD_TESTS)
         src/test/test_wallet_transactions.cpp
         src/test/test_mining_session.cpp
         src/test/test_protocol_spec.cpp
+        src/test/test_inference.cpp
+        src/test/test_chain_stats.cpp
+        src/test/test_mutable_tx.cpp
+        src/test/test_block_analysis.cpp
+        src/test/test_wallet_advanced.cpp
+        src/test/test_difficulty_analysis.cpp
+        src/test/test_supply.cpp
+        src/test/test_http_parser.cpp
+        src/test/test_peer_scoring.cpp
     )
     target_include_directories(flowcoin_tests PRIVATE src)
     target_link_libraries(flowcoin_tests PRIVATE

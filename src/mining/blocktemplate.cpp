@@ -1068,4 +1068,511 @@ double BlockAssembler::estimate_fee_rate_percentile(
     return fee_rates[lower] * (1.0 - frac) + fee_rates[upper] * frac;
 }
 
+// ===========================================================================
+// CPFP-aware fee rate computation (ancestor packages)
+// ===========================================================================
+
+std::vector<BlockAssembler::AncestorPackage> BlockAssembler::build_ancestor_packages(
+        const Mempool& mempool) {
+    std::vector<AncestorPackage> packages;
+
+    auto sorted = mempool.get_sorted_transactions();
+    if (sorted.empty()) return packages;
+
+    // Build lookup maps
+    std::map<uint256, size_t> txid_to_idx;
+    std::vector<uint256> all_txids;
+    for (size_t i = 0; i < sorted.size(); ++i) {
+        uint256 txid = sorted[i].get_txid();
+        txid_to_idx[txid] = i;
+        all_txids.push_back(txid);
+    }
+
+    // For each transaction, build its ancestor set and compute the
+    // effective fee rate across the entire ancestor chain
+    std::set<uint256> processed;
+
+    for (size_t i = 0; i < sorted.size(); ++i) {
+        uint256 txid = all_txids[i];
+        if (processed.count(txid)) continue;
+
+        AncestorPackage pkg;
+        pkg.total_size = 0;
+        pkg.total_weight = 0;
+        pkg.total_fees = 0;
+        pkg.depth = 0;
+
+        // BFS to collect all ancestors
+        std::vector<uint256> stack;
+        stack.push_back(txid);
+        std::set<uint256> visited;
+
+        while (!stack.empty()) {
+            uint256 current = stack.back();
+            stack.pop_back();
+
+            if (visited.count(current)) continue;
+            visited.insert(current);
+
+            auto idx_it = txid_to_idx.find(current);
+            if (idx_it == txid_to_idx.end()) continue;
+
+            const CTransaction& tx = sorted[idx_it->second];
+            pkg.txids.push_back(current);
+            size_t tx_size = tx.get_serialize_size();
+            pkg.total_size += tx_size;
+            pkg.total_weight += tx_size * WITNESS_SCALE_FACTOR;
+            pkg.total_fees += mempool.get_fee(current);
+
+            // Track depth
+            int chain_depth = 0;
+            for (const auto& vin : tx.vin) {
+                if (txid_to_idx.count(vin.prevout.txid)) {
+                    if (!visited.count(vin.prevout.txid)) {
+                        stack.push_back(vin.prevout.txid);
+                    }
+                    chain_depth++;
+                }
+            }
+            if (chain_depth > pkg.depth) {
+                pkg.depth = chain_depth;
+            }
+        }
+
+        // Compute effective fee rate
+        pkg.effective_fee_rate = (pkg.total_weight > 0)
+            ? static_cast<double>(pkg.total_fees) / static_cast<double>(pkg.total_weight)
+            : 0.0;
+
+        // Order txids topologically (ancestors first)
+        // Simple approach: reverse the BFS order so ancestors come first
+        std::reverse(pkg.txids.begin(), pkg.txids.end());
+
+        packages.push_back(std::move(pkg));
+
+        // Mark all txids in this package as processed
+        for (const auto& id : packages.back().txids) {
+            processed.insert(id);
+        }
+    }
+
+    return packages;
+}
+
+void BlockAssembler::sort_by_ancestor_package_fee_rate(
+        std::vector<AncestorPackage>& packages) {
+    std::sort(packages.begin(), packages.end(),
+              [](const AncestorPackage& a, const AncestorPackage& b) {
+                  return a.effective_fee_rate > b.effective_fee_rate;
+              });
+}
+
+// ===========================================================================
+// Fee sniping protection
+// ===========================================================================
+
+void BlockAssembler::apply_fee_snipe_protection(CTransaction& coinbase,
+                                                 uint64_t height) {
+    // Set nLockTime on the coinbase to the current height.
+    // This prevents miners from re-mining old blocks just for their
+    // transaction fees. The coinbase locktime makes the coinbase
+    // invalid if included in a block at a different height.
+    //
+    // Note: In FlowCoin, locktime is interpreted as a block height
+    // when the value is below the locktime threshold (500000000).
+    coinbase.locktime = static_cast<int64_t>(height);
+
+    // Also encode the height in the coinbase input for BIP34 compliance
+    if (!coinbase.vin.empty()) {
+        // Height is already encoded in vin[0].pubkey by build_coinbase,
+        // but we also set locktime for extra protection against fee sniping.
+        // Some miners use a random offset to the locktime for privacy:
+        // locktime = height - random(0, 10)
+        // This makes it harder to fingerprint miner software.
+        // We implement this as a simple deterministic offset.
+        if (height > 10) {
+            // Use the low bits of the first input's pubkey hash as entropy
+            uint8_t offset = coinbase.vin[0].pubkey[0] % 11;
+            coinbase.locktime = static_cast<int64_t>(height - offset);
+        }
+    }
+}
+
+// ===========================================================================
+// Block weight management
+// ===========================================================================
+
+bool BlockAssembler::BlockBudget::can_add(size_t tx_weight, int tx_sigops) const {
+    if (current_weight + tx_weight > max_weight) return false;
+    if (current_sigops + tx_sigops > max_sigops) return false;
+    return true;
+}
+
+void BlockAssembler::BlockBudget::add(size_t tx_weight, int tx_sigops) {
+    current_weight += tx_weight;
+    current_sigops += tx_sigops;
+}
+
+size_t BlockAssembler::BlockBudget::remaining_weight() const {
+    if (current_weight >= max_weight) return 0;
+    return max_weight - current_weight;
+}
+
+double BlockAssembler::BlockBudget::fill_percentage() const {
+    if (max_weight == 0) return 0.0;
+    return 100.0 * static_cast<double>(current_weight) /
+           static_cast<double>(max_weight);
+}
+
+// ===========================================================================
+// Template monitoring and statistics
+// ===========================================================================
+
+BlockAssembler::TemplateStats BlockAssembler::get_template_stats(
+        const BlockTemplate& tmpl) const {
+    TemplateStats stats;
+
+    stats.tx_count = static_cast<int>(tmpl.transactions.size());
+    stats.total_size = 0;
+    stats.total_weight = 0;
+    stats.total_fees = tmpl.total_fees;
+    stats.coinbase_value = tmpl.coinbase_value;
+    stats.min_fee_rate = std::numeric_limits<double>::max();
+    stats.max_fee_rate = 0.0;
+    stats.packages_count = 0;
+    stats.assembly_time_ms = 0;
+
+    Amount total_fee_for_avg = 0;
+    size_t total_size_for_avg = 0;
+
+    for (size_t i = 0; i < tmpl.transactions.size(); ++i) {
+        size_t tx_size = tmpl.transactions[i].get_serialize_size();
+        stats.total_size += tx_size;
+        stats.total_weight += tx_size * WITNESS_SCALE_FACTOR;
+
+        // Per-transaction fee rate
+        Amount tx_fee = (i < tmpl.tx_fees.size()) ? tmpl.tx_fees[i] : 0;
+        if (tx_size > 0) {
+            double rate = static_cast<double>(tx_fee) / static_cast<double>(tx_size);
+            if (rate < stats.min_fee_rate) stats.min_fee_rate = rate;
+            if (rate > stats.max_fee_rate) stats.max_fee_rate = rate;
+            total_fee_for_avg += tx_fee;
+            total_size_for_avg += tx_size;
+        }
+    }
+
+    if (stats.tx_count == 0) {
+        stats.min_fee_rate = 0.0;
+        stats.max_fee_rate = 0.0;
+    }
+
+    stats.avg_fee_rate = (total_size_for_avg > 0)
+        ? static_cast<double>(total_fee_for_avg) / static_cast<double>(total_size_for_avg)
+        : 0.0;
+
+    // Add header and coinbase to total size
+    stats.total_size += BLOCK_HEADER_SIZE + tmpl.coinbase_tx.get_serialize_size();
+    stats.total_weight += (BLOCK_HEADER_SIZE + tmpl.coinbase_tx.get_serialize_size()) *
+                          WITNESS_SCALE_FACTOR;
+
+    stats.fill_percentage = (max_block_weight_ > 0)
+        ? 100.0 * static_cast<double>(stats.total_weight) /
+          static_cast<double>(max_block_weight_)
+        : 0.0;
+
+    return stats;
+}
+
+std::string BlockAssembler::TemplateStats::format() const {
+    char buf[512];
+    std::snprintf(buf, sizeof(buf),
+        "Template: %d txs, %zu bytes (%zu weight), "
+        "fees=%ld sat, coinbase=%ld sat, "
+        "fee_rate=[%.2f, %.2f, avg=%.2f] sat/byte, "
+        "fill=%.1f%%, assembly=%ldms",
+        tx_count,
+        total_size,
+        total_weight,
+        (long)total_fees,
+        (long)coinbase_value,
+        min_fee_rate, max_fee_rate, avg_fee_rate,
+        fill_percentage,
+        (long)assembly_time_ms);
+    return std::string(buf);
+}
+
+// ===========================================================================
+// Multiple template variant generation
+// ===========================================================================
+
+std::vector<BlockAssembler::TemplateVariant> BlockAssembler::generate_template_variants(
+        const std::string& coinbase_address, int count) {
+    std::vector<TemplateVariant> variants;
+    variants.reserve(static_cast<size_t>(count));
+
+    // Generate templates with different minimum fee rate thresholds
+    // This lets pool operators compare profitability at different thresholds
+    Amount original_min_fee = min_fee_rate_;
+
+    // Fee rate thresholds: 0, 1, 5, 10, 50, 100 sat/byte
+    std::vector<Amount> thresholds = {0, 1, 5, 10, 50, 100};
+    if (count < static_cast<int>(thresholds.size())) {
+        thresholds.resize(static_cast<size_t>(count));
+    }
+
+    for (int i = 0; i < count && i < static_cast<int>(thresholds.size()); ++i) {
+        min_fee_rate_ = thresholds[static_cast<size_t>(i)];
+
+        auto start = std::chrono::steady_clock::now();
+        BlockTemplate tmpl = create_template(coinbase_address);
+        auto end = std::chrono::steady_clock::now();
+
+        TemplateVariant variant;
+        variant.min_fee_rate = min_fee_rate_;
+        variant.tmpl = std::move(tmpl);
+        variant.stats = get_template_stats(variant.tmpl);
+        variant.stats.assembly_time_ms = std::chrono::duration_cast<
+            std::chrono::milliseconds>(end - start).count();
+
+        variants.push_back(std::move(variant));
+    }
+
+    // Restore original fee rate
+    min_fee_rate_ = original_min_fee;
+
+    return variants;
+}
+
+// ===========================================================================
+// Priority transaction handling
+// ===========================================================================
+
+void BlockAssembler::add_priority_tx(const uint256& txid) {
+    priority_txids_.insert(txid);
+}
+
+void BlockAssembler::remove_priority_tx(const uint256& txid) {
+    priority_txids_.erase(txid);
+}
+
+void BlockAssembler::clear_priority_txs() {
+    priority_txids_.clear();
+}
+
+bool BlockAssembler::is_priority_tx(const uint256& txid) const {
+    return priority_txids_.count(txid) > 0;
+}
+
+// ===========================================================================
+// Block template refresh detection
+// ===========================================================================
+
+bool BlockAssembler::should_refresh_template(const BlockTemplate& current,
+                                              int64_t max_age_seconds) const {
+    // Check age
+    int64_t now = GetTime();
+    if (now - current.creation_time > max_age_seconds) {
+        return true;
+    }
+
+    // Check if chain tip has changed
+    CBlockIndex* tip = chain_.tip();
+    if (tip) {
+        if (current.header.prev_hash != tip->hash) {
+            return true;
+        }
+    }
+
+    // Check if mempool has changed significantly
+    if (mempool_) {
+        size_t current_mempool_size = mempool_->size();
+        size_t template_tx_count = current.transactions.size();
+
+        // Refresh if mempool has grown by more than 25%
+        if (current_mempool_size > template_tx_count * 5 / 4 + 10) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// ===========================================================================
+// Block template JSON serialization (for RPC getblocktemplate)
+// ===========================================================================
+
+nlohmann::json BlockAssembler::template_to_json(const BlockTemplate& tmpl) const {
+    nlohmann::json j;
+
+    // Header fields
+    j["version"] = tmpl.header.version;
+    j["height"] = tmpl.header.height;
+    j["previousblockhash"] = hex_encode(tmpl.header.prev_hash.data(), 32);
+    j["curtime"] = tmpl.header.timestamp;
+    j["bits"] = tmpl.header.nbits;
+    j["target"] = tmpl.target_hex;
+
+    // Model dimensions
+    j["model"] = {
+        {"d_model", tmpl.dims.d_model},
+        {"n_layers", tmpl.dims.n_layers},
+        {"d_ff", tmpl.dims.d_ff},
+        {"n_heads", tmpl.dims.n_heads},
+        {"gru_dim", tmpl.dims.gru_dim},
+        {"n_slots", tmpl.dims.n_slots}
+    };
+
+    // Coinbase info
+    j["coinbasevalue"] = tmpl.coinbase_value;
+    j["totalfees"] = tmpl.total_fees;
+
+    // Previous val_loss
+    j["prev_val_loss"] = tmpl.header.prev_val_loss;
+    j["stagnation"] = tmpl.header.stagnation;
+
+    // Transaction list
+    nlohmann::json txs_json = nlohmann::json::array();
+    for (size_t i = 0; i < tmpl.transactions.size(); ++i) {
+        nlohmann::json tx_entry;
+        uint256 txid = tmpl.transactions[i].get_txid();
+        tx_entry["txid"] = hex_encode(txid.data(), 32);
+        tx_entry["fee"] = (i < tmpl.tx_fees.size()) ? tmpl.tx_fees[i] : 0;
+        tx_entry["sigops"] = estimate_sigops(tmpl.transactions[i]);
+        tx_entry["size"] = tmpl.transactions[i].get_serialize_size();
+
+        // Dependencies
+        nlohmann::json deps = nlohmann::json::array();
+        for (const auto& vin : tmpl.transactions[i].vin) {
+            if (!vin.is_coinbase()) {
+                // Check if this input references another tx in the template
+                for (size_t k = 0; k < tmpl.transactions.size(); ++k) {
+                    if (k == i) continue;
+                    uint256 dep_txid = tmpl.transactions[k].get_txid();
+                    if (dep_txid == vin.prevout.txid) {
+                        deps.push_back(static_cast<int>(k));
+                        break;
+                    }
+                }
+            }
+        }
+        tx_entry["depends"] = deps;
+        txs_json.push_back(tx_entry);
+    }
+    j["transactions"] = txs_json;
+
+    // Template metadata
+    j["template_id"] = tmpl.template_id;
+    j["creation_time"] = tmpl.creation_time;
+
+    // Size/weight estimates
+    j["estimated_size"] = tmpl.estimated_block_size();
+    j["estimated_weight"] = tmpl.estimated_block_weight();
+    j["max_block_size"] = max_block_size_;
+    j["max_block_weight"] = max_block_weight_;
+
+    // Stats
+    auto stats = get_template_stats(tmpl);
+    j["stats"] = {
+        {"tx_count", stats.tx_count},
+        {"total_size", stats.total_size},
+        {"total_weight", stats.total_weight},
+        {"total_fees", stats.total_fees},
+        {"avg_fee_rate", stats.avg_fee_rate},
+        {"min_fee_rate", stats.min_fee_rate},
+        {"max_fee_rate", stats.max_fee_rate},
+        {"fill_percentage", stats.fill_percentage}
+    };
+
+    return j;
+}
+
+// ===========================================================================
+// Coinbase extra data
+// ===========================================================================
+
+void BlockAssembler::set_coinbase_extra_data(const std::vector<uint8_t>& data) {
+    if (data.size() > 100) {
+        // Limit extra data to 100 bytes to avoid bloating the coinbase
+        coinbase_extra_data_.assign(data.begin(), data.begin() + 100);
+    } else {
+        coinbase_extra_data_ = data;
+    }
+}
+
+void BlockAssembler::set_coinbase_extra_text(const std::string& text) {
+    coinbase_extra_data_.assign(text.begin(), text.end());
+    // Truncate to 100 bytes
+    if (coinbase_extra_data_.size() > 100) {
+        coinbase_extra_data_.resize(100);
+    }
+}
+
+CTransaction BlockAssembler::build_coinbase_with_extra(
+        uint64_t height, Amount reward_plus_fees,
+        const std::string& address) {
+    CTransaction coinbase = build_coinbase(height, reward_plus_fees, address);
+
+    // Embed extra data in the coinbase input's signature field
+    // The coinbase input signature field is not used for actual signatures,
+    // so we can use it to embed arbitrary data (like pool name, etc.)
+    if (!coinbase_extra_data_.empty() && !coinbase.vin.empty()) {
+        // Write the extra data into the first 64 bytes of the signature field
+        // (since coinbase inputs don't have real signatures)
+        size_t copy_len = std::min(coinbase_extra_data_.size(), size_t(64));
+        std::memcpy(coinbase.vin[0].signature.data(),
+                    coinbase_extra_data_.data(), copy_len);
+    }
+
+    return coinbase;
+}
+
+// ===========================================================================
+// Transaction conflict detection
+// ===========================================================================
+
+std::vector<uint256> BlockAssembler::find_conflicts(
+        const BlockTemplate& tmpl,
+        const CTransaction& new_tx) const {
+    std::vector<uint256> conflicts;
+
+    // A transaction conflicts with template transactions if it spends
+    // any of the same inputs (double-spend detection)
+    std::set<COutPoint> new_tx_inputs;
+    for (const auto& vin : new_tx.vin) {
+        if (!vin.is_coinbase()) {
+            new_tx_inputs.insert(vin.prevout);
+        }
+    }
+
+    for (const auto& tx : tmpl.transactions) {
+        for (const auto& vin : tx.vin) {
+            if (!vin.is_coinbase() && new_tx_inputs.count(vin.prevout)) {
+                conflicts.push_back(tx.get_txid());
+                break;
+            }
+        }
+    }
+
+    return conflicts;
+}
+
+// ===========================================================================
+// Block subsidy schedule display
+// ===========================================================================
+
+std::vector<std::pair<uint64_t, Amount>> BlockAssembler::get_subsidy_schedule(
+        uint64_t from_height, uint64_t to_height, uint64_t step) const {
+    std::vector<std::pair<uint64_t, Amount>> schedule;
+
+    for (uint64_t h = from_height; h <= to_height; h += step) {
+        Amount reward = consensus::compute_block_reward(h);
+        schedule.emplace_back(h, reward);
+
+        // Stop if reward reaches zero
+        if (reward == 0) break;
+    }
+
+    return schedule;
+}
+
 } // namespace flow

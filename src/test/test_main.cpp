@@ -80,6 +80,15 @@ void test_full_chain();
 void test_wallet_transactions();
 void test_mining_session();
 void test_protocol_spec();
+void test_inference();
+void test_chain_stats();
+void test_mutable_tx();
+void test_block_analysis();
+void test_wallet_advanced();
+void test_difficulty_analysis();
+void test_supply();
+void test_http_parser();
+void test_peer_scoring();
 
 struct TestCase {
     std::string name;
@@ -159,6 +168,15 @@ int main() {
         {"wallet_transactions", test_wallet_transactions},
         {"mining_session", test_mining_session},
         {"protocol_spec", test_protocol_spec},
+        {"inference", test_inference},
+        {"chain_stats", test_chain_stats},
+        {"mutable_tx", test_mutable_tx},
+        {"block_analysis", test_block_analysis},
+        {"wallet_advanced", test_wallet_advanced},
+        {"difficulty_analysis", test_difficulty_analysis},
+        {"supply", test_supply},
+        {"http_parser", test_http_parser},
+        {"peer_scoring", test_peer_scoring},
     };
 
     int passed = 0, failed = 0;

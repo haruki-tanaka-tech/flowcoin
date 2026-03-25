@@ -71,6 +71,51 @@ Amount compute_remaining_supply(uint64_t height);
 /// @return        true if compute_block_reward(height) returns 0.
 bool is_subsidy_exhausted(uint64_t height);
 
+// ═══ Supply analysis ═══
+
+struct SupplyInfo {
+    uint64_t height;
+    Amount block_reward;
+    Amount cumulative_supply;
+    Amount remaining_supply;
+    double percent_mined;
+    int halving_era;
+    uint64_t next_halving_height;
+    uint64_t blocks_until_halving;
+    double annual_inflation_rate;
+};
+
+SupplyInfo get_supply_info(uint64_t height);
+
+// ═══ Emission schedule ═══
+
+struct EmissionEntry {
+    uint64_t start_height;
+    uint64_t end_height;
+    Amount reward_per_block;
+    Amount total_in_era;
+    Amount cumulative;
+    double percent_of_total;
+};
+
+std::vector<EmissionEntry> get_emission_schedule();
+
+// ═══ Mining revenue estimation ═══
+
+struct MiningRevenue {
+    Amount block_reward;
+    Amount estimated_fees;
+    double blocks_per_day;
+    Amount daily_revenue;
+    Amount monthly_revenue;
+    double roi_days;
+};
+
+MiningRevenue estimate_mining_revenue(double steps_per_second,
+                                        uint32_t current_nbits,
+                                        uint64_t current_height,
+                                        double fee_per_block = 0);
+
 } // namespace flow::consensus
 
 #endif // FLOWCOIN_CONSENSUS_REWARD_H

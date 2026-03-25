@@ -10,6 +10,7 @@
 
 #include "params.h"
 #include "../util/types.h"
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -70,6 +71,79 @@ public:
     // Returns: average cross-entropy loss (float32)
     // MUST be single-threaded, float32, deterministic
     float forward_eval(const std::vector<uint8_t>& data) const;
+
+    // ════════════════════════════════════════════════════════════
+    // Text Generation (non-consensus, for model usage)
+    // ════════════════════════════════════════════════════════════
+
+    struct GenerationConfig {
+        int max_tokens = 1024;
+        float temperature = 0.8f;
+        int top_k = 40;
+        float top_p = 0.95f;
+        float repetition_penalty = 1.1f;
+        int repetition_window = 64;
+        uint64_t seed = 0;
+        bool greedy = false;
+    };
+
+    struct GenerationResult {
+        std::vector<uint8_t> tokens;
+        float avg_logprob;
+        int64_t generation_time_ms;
+        float tokens_per_second;
+    };
+
+    GenerationResult generate(const std::vector<uint8_t>& prompt,
+                               const GenerationConfig& config) const;
+
+    // ════════════════════════════════════════════════════════════
+    // Perplexity evaluation
+    // ════════════════════════════════════════════════════════════
+
+    struct PerplexityResult {
+        float perplexity;
+        float bits_per_byte;
+        float cross_entropy;
+        int num_tokens;
+        int64_t eval_time_ms;
+        std::vector<float> per_token_logprobs;
+    };
+
+    PerplexityResult evaluate_perplexity(const std::vector<uint8_t>& text) const;
+
+    // ════════════════════════════════════════════════════════════
+    // Embedding extraction
+    // ════════════════════════════════════════════════════════════
+
+    std::vector<float> get_embedding(const std::vector<uint8_t>& text) const;
+
+    // ════════════════════════════════════════════════════════════
+    // Token probabilities
+    // ════════════════════════════════════════════════════════════
+
+    std::vector<float> get_next_token_probs(const std::vector<uint8_t>& context) const;
+
+    // ════════════════════════════════════════════════════════════
+    // Interactive session
+    // ════════════════════════════════════════════════════════════
+
+    class InferenceSession {
+    public:
+        explicit InferenceSession(const ConsensusModel& model);
+
+        void feed(const std::vector<uint8_t>& tokens);
+        std::vector<uint8_t> generate(int n_tokens, const GenerationConfig& config);
+        std::vector<float> get_probs();
+        void reset();
+        std::vector<float> get_state() const;
+        void set_state(const std::vector<float>& state);
+
+    private:
+        const ConsensusModel& model_;
+        std::vector<std::vector<float>> layer_states_;
+        bool has_state_ = false;
+    };
 
     // ════════════════════════════════════════════════════════════
     // Persistence
