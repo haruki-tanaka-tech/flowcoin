@@ -28,18 +28,23 @@
 // ============================================================================
 
 static flow::NodeContext* g_node = nullptr;
+static volatile sig_atomic_t g_signal_count = 0;
 
 static void signal_handler(int signum) {
     if (signum == SIGINT || signum == SIGTERM) {
-        // Write directly to stderr — async-signal-safe
-        const char* msg = "\nReceived shutdown signal, stopping...\n";
-        // write() is async-signal-safe
-        if (::write(STDERR_FILENO, msg, strlen(msg)) < 0) {}
+        g_signal_count++;
 
-        if (g_node) {
-            g_node->interrupt();
+        if (g_signal_count == 1) {
+            const char* msg = "\nShutting down...\n";
+            if (::write(STDERR_FILENO, msg, strlen(msg)) < 0) {}
+            if (g_node) g_node->interrupt();
+            flow::get_shutdown_state().request_shutdown();
+        } else {
+            // Second signal: force exit
+            const char* msg = "Forced exit.\n";
+            if (::write(STDERR_FILENO, msg, strlen(msg)) < 0) {}
+            _exit(0);
         }
-        flow::get_shutdown_state().request_shutdown();
     }
 }
 
