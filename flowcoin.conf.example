@@ -1,0 +1,95 @@
+# FlowCoin Core configuration file
+# Lines beginning with # are comments.
+# All command line options (except for -conf) may be specified here.
+
+# ═══ Network ═══
+# Run on the test network (default: 0)
+#testnet=0
+
+# Run on regression test network (default: 0)
+#regtest=0
+
+# Listen for connections (default: 1)
+#listen=1
+
+# Port to listen on (default: 9333, testnet: 19333, regtest: 29333)
+#port=9333
+
+# Maximum number of connections (default: 125)
+#maxconnections=125
+
+# Add a node to connect to
+#addnode=seed1.flowcoin.org:9333
+#addnode=211.205.13.203:9333
+
+# Connect only to specified nodes (no other connections)
+#connect=192.168.1.100:9333
+
+# Use DNS seeds to find peers (default: 1)
+#dnsseed=1
+
+# ═══ JSON-RPC ═══
+# Enable RPC server (default: 1)
+#server=1
+
+# RPC username (required if server=1)
+rpcuser=flowcoin
+
+# RPC password (required if server=1)
+rpcpassword=changeme_to_a_strong_password
+
+# RPC port (default: 9334, testnet: 19334, regtest: 29334)
+#rpcport=9334
+
+# RPC bind address (default: 127.0.0.1)
+#rpcbind=127.0.0.1
+
+# Allow RPC connections from specified IPs
+#rpcallowip=127.0.0.1
+#rpcallowip=192.168.1.0/24
+
+# ═══ Wallet ═══
+# Disable wallet (default: 0)
+#disablewallet=0
+
+# Wallet file path (default: wallet.dat in datadir)
+#wallet=wallet.dat
+
+# ═══ Mining ═══
+# Mine blocks with built-in CPU miner (default: 0, use flowminer.py instead)
+#gen=0
+
+# ═══ Performance ═══
+# Database cache size in MB (default: 450)
+#dbcache=450
+
+# Number of script verification threads (0=auto, default: 0)
+#par=0
+
+# ═══ Pruning ═══
+# Prune old block files (0=disable, N=target size in MB)
+#prune=0
+
+# ═══ Logging ═══
+# Log file path (default: debug.log in datadir)
+#debuglogfile=debug.log
+
+# Enable debug logging for categories
+#debug=net
+#debug=validation
+#debug=mining
+#debug=rpc
+#debug=wallet
+#debug=mempool
+#debug=model
+#debug=sync
+
+# Print to console instead of log file
+#printtoconsole=0
+
+# ═══ Model ═══
+# Skip Check 15 (model eval) below this block hash
+#assumevalid=0000000000000000000000000000000000000000000000000000000000000000
+
+# Model checkpoint interval (default: 2016 blocks)
+#checkpointinterval=2016

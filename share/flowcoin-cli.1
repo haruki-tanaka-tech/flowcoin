@@ -1,0 +1,77 @@
+.\" Copyright (c) 2026 The FlowCoin Developers
+.\" Distributed under the MIT software license.
+.TH FLOWCOIN-CLI "1" "March 2026" "FlowCoin Core 1.0.0" "User Commands"
+.SH NAME
+flowcoin\-cli \- FlowCoin RPC client
+.SH SYNOPSIS
+.B flowcoin\-cli
+[\fIOPTIONS\fR] \fICOMMAND\fR [\fIPARAMS\fR]
+.SH DESCRIPTION
+Command\-line client for communicating with a running \fBflowcoind\fR(1)
+instance via JSON\-RPC. Sends the specified RPC command and prints the
+result as JSON.
+.SH OPTIONS
+.TP
+\fB\-conf=\fR\fIfile\fR
+Specify configuration file to read RPC credentials from.
+.TP
+\fB\-datadir=\fR\fIdir\fR
+Specify data directory (for locating flowcoin.conf).
+.TP
+\fB\-rpcconnect=\fR\fIip\fR
+Send commands to node running on \fIip\fR (default: 127.0.0.1).
+.TP
+\fB\-rpcport=\fR\fIN\fR
+Connect on port \fIN\fR (default: 9334).
+.TP
+\fB\-rpcuser=\fR\fIuser\fR
+RPC username (overrides config file).
+.TP
+\fB\-rpcpassword=\fR\fIpw\fR
+RPC password (overrides config file).
+.TP
+\fB\-testnet\fR
+Connect to testnet daemon (port 19334).
+.TP
+\fB\-regtest\fR
+Connect to regtest daemon (port 29334).
+.SH COMMANDS
+Use \fBflowcoin\-cli help\fR to list all commands, or
+\fBflowcoin\-cli help \fICOMMAND\fR to get detailed usage for a command.
+.PP
+Common commands:
+.TP
+.B getblockcount
+Returns the number of blocks in the longest blockchain.
+.TP
+.B getblockchaininfo
+Returns an object containing various state info about blockchain processing.
+.TP
+.B getbalance
+Returns the wallet balance.
+.TP
+.B sendtoaddress \fIaddress amount\fR
+Send an amount to a given address.
+.TP
+.B getnewaddress
+Returns a new FlowCoin address for receiving payments.
+.TP
+.B getmininginfo
+Returns mining\-related information including model dimensions and loss.
+.TP
+.B stop
+Stop FlowCoin server.
+.SH EXAMPLES
+.nf
+flowcoin\-cli getblockcount
+flowcoin\-cli getbalance
+flowcoin\-cli sendtoaddress fl1q... 1.5
+flowcoin\-cli getblock $(flowcoin\-cli getblockhash 100)
+.fi
+.SH SEE ALSO
+.BR flowcoind (1),
+.BR flowcoin\-tx (1)
+.SH BUGS
+Report bugs at https://github.com/flowcoin/flowcoin/issues
+.SH AUTHOR
+Haruki Tanaka and The FlowCoin Developers.

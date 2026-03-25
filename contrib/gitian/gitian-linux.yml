@@ -1,0 +1,86 @@
+---
+# Copyright (c) 2026 The FlowCoin Developers
+# Distributed under the MIT software license.
+#
+# Gitian descriptor for reproducible Linux builds.
+# Produces: flowcoind, flowcoin-cli, flowcoin-tx
+
+name: flowcoin-linux-1.0
+enable_cache: true
+distro: ubuntu
+suites:
+  - focal
+architectures:
+  - amd64
+packages:
+  - cmake
+  - g++-10
+  - make
+  - pkg-config
+  - libc6-dev
+  - git
+reference_datetime: "2026-03-01 00:00:00"
+remotes:
+  - url: https://github.com/flowcoin/flowcoin.git
+    dir: flowcoin
+files: []
+script: |
+  set -e -o pipefail
+
+  WRAP_DIR=$HOME/wrapped
+  mkdir -p $WRAP_DIR
+
+  export CC=gcc-10
+  export CXX=g++-10
+
+  # Ensure reproducible build flags
+  export SOURCE_DATE_EPOCH=$(date -d "2026-03-01 00:00:00" +%s)
+  export ZERO_AR_DATE=1
+
+  cd flowcoin
+
+  # Configure with CMake
+  mkdir -p build && cd build
+  cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_CXX_STANDARD=20 \
+    -DCMAKE_C_COMPILER=$CC \
+    -DCMAKE_CXX_COMPILER=$CXX \
+    -DCMAKE_CXX_FLAGS="-O2 -ffile-prefix-map=$PWD/..=. -fmacro-prefix-map=$PWD/..=." \
+    -DCMAKE_C_FLAGS="-O2 -ffile-prefix-map=$PWD/..=. -fmacro-prefix-map=$PWD/..=." \
+    -DCMAKE_EXE_LINKER_FLAGS="-Wl,--build-id=none" \
+    -DBUILD_TESTS=OFF
+
+  make -j$(nproc)
+
+  # Strip binaries deterministically
+  strip --strip-all flowcoind
+  strip --strip-all flowcoin-cli
+  strip --strip-all flowcoin-tx
+
+  # Package
+  DISTDIR=$OUTDIR/flowcoin-1.0.0-linux-amd64
+  mkdir -p $DISTDIR/bin
+  cp flowcoind flowcoin-cli flowcoin-tx $DISTDIR/bin/
+
+  # Man pages
+  mkdir -p $DISTDIR/share/man/man1
+  if [ -d ../share ]; then
+    cp -f ../share/*.1 $DISTDIR/share/man/man1/ 2>/dev/null || true
+  fi
+
+  # Config example
+  cp ../flowcoin.conf.example $DISTDIR/ 2>/dev/null || true
+
+  # License
+  cp ../COPYING $DISTDIR/ 2>/dev/null || true
+
+  # Create tarball
+  cd $OUTDIR
+  find flowcoin-1.0.0-linux-amd64 | sort | \
+    tar --mtime="$REFERENCE_DATETIME" --owner=0 --group=0 --numeric-owner \
+    --no-recursion -czf flowcoin-1.0.0-linux-amd64.tar.gz -T -
+
+  # SHA256
+  sha256sum flowcoin-1.0.0-linux-amd64.tar.gz > SHA256SUMS

@@ -1,0 +1,29 @@
+Source: flowcoin
+Section: net
+Priority: optional
+Maintainer: Haruki Tanaka <haruki@flowcoin.org>
+Build-Depends: debhelper (>= 12),
+               cmake (>= 3.20),
+               g++ (>= 10),
+               pkg-config,
+               libc6-dev
+Standards-Version: 4.5.1
+Homepage: https://flowcoin.org
+Vcs-Git: https://github.com/flowcoin/flowcoin.git
+
+Package: flowcoind
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: FlowCoin daemon - Proof-of-Training blockchain
+ FlowCoin is a blockchain where mining trains a neural network
+ using Proof-of-Useful-Training consensus. This package contains
+ the full node daemon (flowcoind), the CLI client (flowcoin-cli),
+ and the offline transaction utility (flowcoin-tx).
+
+Package: flowcoin-cli
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: FlowCoin CLI - command line RPC client
+ Lightweight command-line client for communicating with a running
+ flowcoind instance via JSON-RPC. Does not include the full node
+ daemon or wallet functionality.

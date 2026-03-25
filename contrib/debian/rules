@@ -1,0 +1,33 @@
+#!/usr/bin/make -f
+# Copyright (c) 2026 The FlowCoin Developers
+# Distributed under the MIT software license.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_CFLAGS_MAINT_APPEND  = -Wall -Wextra
+export DEB_CXXFLAGS_MAINT_APPEND = -Wall -Wextra
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	mkdir -p build
+	cd build && cmake .. \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_CXX_STANDARD=20 \
+		-DBUILD_TESTS=OFF
+
+override_dh_auto_build:
+	cd build && $(MAKE) -j$(shell nproc)
+
+override_dh_auto_install:
+	cd build && $(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
+
+override_dh_auto_test:
+	@echo "Skipping tests during packaging"
+
+override_dh_strip:
+	dh_strip --dbgsym-migration='flowcoin-dbg (<< 1.0.0~)'
+
+override_dh_auto_clean:
+	rm -rf build

@@ -1,0 +1,115 @@
+.\" Copyright (c) 2026 The FlowCoin Developers
+.\" Distributed under the MIT software license.
+.TH FLOWCOIND "1" "March 2026" "FlowCoin Core 1.0.0" "User Commands"
+.SH NAME
+flowcoind \- FlowCoin full node daemon
+.SH SYNOPSIS
+.B flowcoind
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+FlowCoin daemon. Runs a full node on the FlowCoin Proof\-of\-Training
+blockchain network. Validates blocks, relays transactions, serves the
+JSON\-RPC API, and optionally manages a wallet.
+.PP
+The daemon stores blockchain data, UTXO set, and wallet in the data
+directory (default: \fI~/.flowcoin\fR).
+.SH OPTIONS
+.TP
+\fB\-conf=\fR\fIfile\fR
+Specify configuration file (default: \fIflowcoin.conf\fR in datadir).
+.TP
+\fB\-datadir=\fR\fIdir\fR
+Specify data directory for blocks, chainstate, and wallet.
+.TP
+\fB\-daemon\fR
+Run in the background as a daemon and accept commands.
+.TP
+\fB\-pid=\fR\fIfile\fR
+Specify pid file (default: \fIflowcoind.pid\fR in datadir).
+.TP
+\fB\-testnet\fR
+Use the test network (port 19333, HRP \fItfl\fR).
+.TP
+\fB\-regtest\fR
+Enter regression test mode. Blocks can be generated on demand.
+.TP
+\fB\-listen\fR
+Accept incoming connections (default: 1 unless \fI\-connect\fR is used).
+.TP
+\fB\-port=\fR\fIN\fR
+Listen for connections on port \fIN\fR (default: 9333).
+.TP
+\fB\-maxconnections=\fR\fIN\fR
+Maintain at most \fIN\fR connections to peers (default: 125).
+.TP
+\fB\-addnode=\fR\fIip:port\fR
+Add a node to connect to and attempt to keep the connection open.
+.TP
+\fB\-connect=\fR\fIip:port\fR
+Connect only to the specified node(s). No other outbound connections.
+.TP
+\fB\-dnsseed\fR
+Query DNS seeds for peer addresses (default: 1).
+.TP
+\fB\-server\fR
+Accept JSON\-RPC commands (default: 1).
+.TP
+\fB\-rpcuser=\fR\fIuser\fR
+Username for JSON\-RPC connections.
+.TP
+\fB\-rpcpassword=\fR\fIpw\fR
+Password for JSON\-RPC connections.
+.TP
+\fB\-rpcport=\fR\fIN\fR
+Listen for JSON\-RPC connections on port \fIN\fR (default: 9334).
+.TP
+\fB\-rpcbind=\fR\fIaddr\fR
+Bind the JSON\-RPC server to address \fIaddr\fR (default: 127.0.0.1).
+.TP
+\fB\-rpcallowip=\fR\fIsubnet\fR
+Allow JSON\-RPC connections from specified subnet (CIDR notation).
+.TP
+\fB\-disablewallet\fR
+Do not load the wallet and disable wallet RPC calls.
+.TP
+\fB\-wallet=\fR\fIfile\fR
+Specify wallet file (default: \fIwallet.dat\fR in datadir).
+.TP
+\fB\-dbcache=\fR\fIN\fR
+Set database cache size in megabytes (default: 450).
+.TP
+\fB\-par=\fR\fIN\fR
+Set the number of script verification threads (0=auto, default: 0).
+.TP
+\fB\-prune=\fR\fIN\fR
+Prune block files to a target size of \fIN\fR MB (0=disable).
+.TP
+\fB\-debug=\fR\fIcategory\fR
+Output debugging information for a category. Categories: net, validation,
+mining, rpc, wallet, mempool, model, sync.
+.TP
+\fB\-printtoconsole\fR
+Send log output to stdout instead of the debug log file.
+.SH FILES
+.TP
+\fI~/.flowcoin/flowcoin.conf\fR
+Default configuration file.
+.TP
+\fI~/.flowcoin/blocks/\fR
+Block data files (blk*.dat).
+.TP
+\fI~/.flowcoin/chainstate/\fR
+UTXO set database (SQLite).
+.TP
+\fI~/.flowcoin/wallet.dat\fR
+Wallet database.
+.TP
+\fI~/.flowcoin/debug.log\fR
+Debug log file.
+.SH SEE ALSO
+.BR flowcoin\-cli (1),
+.BR flowcoin\-tx (1)
+.SH BUGS
+Report bugs at https://github.com/flowcoin/flowcoin/issues
+.SH AUTHOR
+Haruki Tanaka and The FlowCoin Developers.

@@ -1,0 +1,65 @@
+.\" Copyright (c) 2026 The FlowCoin Developers
+.\" Distributed under the MIT software license.
+.TH FLOWCOIN-TX "1" "March 2026" "FlowCoin Core 1.0.0" "User Commands"
+.SH NAME
+flowcoin\-tx \- FlowCoin offline transaction utility
+.SH SYNOPSIS
+.B flowcoin\-tx
+[\fIOPTIONS\fR] \fICOMMAND\fR [\fIPARAMS\fR]
+.SH DESCRIPTION
+Offline transaction creation and manipulation utility for FlowCoin.
+Creates, inspects, and signs transactions without requiring a running
+\fBflowcoind\fR(1) daemon or network connectivity.
+.PP
+Useful for cold storage, hardware wallet integration, and offline
+transaction signing workflows.
+.SH OPTIONS
+.TP
+\fB\-create\fR
+Create a new raw transaction.
+.TP
+\fB\-json\fR
+Output results as JSON.
+.TP
+\fB\-txid\fR
+Output only the transaction ID (hash).
+.TP
+\fB\-testnet\fR
+Use testnet address format (HRP: \fItfl\fR).
+.TP
+\fB\-regtest\fR
+Use regtest address format (HRP: \fIflrt\fR).
+.SH COMMANDS
+.TP
+\fBin=\fR\fItxid:vout\fR
+Add a transaction input. May be specified multiple times.
+.TP
+\fBout=\fR\fIaddress:amount\fR
+Add a transaction output. May be specified multiple times.
+.TP
+\fBsign=\fR\fIprivkey_hex\fR
+Sign all inputs with the given Ed25519 private key (hex format).
+.TP
+\fBset=\fR\fIkey:value\fR
+Set a transaction field (version, locktime).
+.TP
+\fBdecode\fR
+Decode a raw transaction (hex) and print its contents.
+.SH EXAMPLES
+.nf
+# Create a transaction
+flowcoin\-tx \-create in=abc123:0 out=fl1q...:1.5 out=fl1q...:3.2
+
+# Decode a raw transaction
+flowcoin\-tx decode 0100000001...
+
+# Sign a transaction
+flowcoin\-tx sign=abcdef... < unsigned.hex
+.fi
+.SH SEE ALSO
+.BR flowcoind (1),
+.BR flowcoin\-cli (1)
+.SH BUGS
+Report bugs at https://github.com/flowcoin/flowcoin/issues
+.SH AUTHOR
+Haruki Tanaka and The FlowCoin Developers.
