@@ -477,13 +477,10 @@ float GGMLModel::train_step(const uint8_t* input, const uint8_t* target,
 
 float GGMLModel::eval_loss(const uint8_t* input, const uint8_t* target,
                             int seq_len) {
-    // Same as train_step but no backward pass
-    const size_t est_tensors = 128 + static_cast<size_t>(n_layers_) * 32;
-    const size_t compute_mem = est_tensors * ggml_tensor_overhead()
-                             + ggml_graph_overhead()
-                             + static_cast<size_t>(seq_len) * vocab_ * sizeof(float) * 2
-                             + static_cast<size_t>(seq_len) * d_model_ * sizeof(float) * n_layers_ * 10
-                             + 32 * 1024 * 1024;
+    // Forward-only evaluation
+    const size_t compute_mem = param_count() * sizeof(float) * 4
+                             + static_cast<size_t>(seq_len) * vocab_ * sizeof(float) * 4
+                             + 256 * 1024 * 1024;
 
     struct ggml_init_params cparams = {
         /*.mem_size   =*/ compute_mem,
