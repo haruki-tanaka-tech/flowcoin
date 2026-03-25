@@ -29,32 +29,16 @@ struct SeedNode {
 // ---------------------------------------------------------------------------
 
 const std::vector<SeedNode> MAINNET_SEEDS = {
-    // Core developer nodes (geographically distributed)
-    {"seed1.flowcoin.org",       9333},
-    {"seed2.flowcoin.org",       9333},
-    {"seed3.flowcoin.org",       9333},
-    {"seed4.flowcoin.org",       9333},
+    // ── DNS seeds (primary) ──────────────────────────────────
+    // DNS is the primary discovery method. These hostnames resolve
+    // to currently active nodes. As the network grows, more DNS
+    // seeds will be added by community operators.
+    {"seed.flowcoin.org",        9333},   // Genesis seed node
 
-    // Community-operated seed nodes
-    {"seed.flowcoin.network",    9333},
-    {"node.flowcoin.dev",        9333},
-
-    // Static IP fallback nodes (multiple continents)
-    // North America
-    {"45.33.32.156",             9333},
-    {"104.237.137.109",          9333},
-    // Europe
-    {"85.214.107.77",            9333},
-    {"138.201.82.166",           9333},
-    {"176.9.50.14",              9333},
-    // Asia-Pacific
-    {"211.205.13.203",           9333},
-    {"103.24.77.24",             9333},
-    {"139.162.57.10",            9333},
-    // South America
-    {"191.232.38.12",            9333},
-    // Africa
-    {"41.185.8.16",              9333},
+    // ── Static IP fallback ───────────────────────────────────
+    // Used when DNS resolution fails (firewall, censorship, etc.)
+    // These are stable nodes operated by the core team.
+    {"211.205.13.203",           9333},   // Korea — genesis seed node
 };
 
 // ---------------------------------------------------------------------------
@@ -62,11 +46,8 @@ const std::vector<SeedNode> MAINNET_SEEDS = {
 // ---------------------------------------------------------------------------
 
 const std::vector<SeedNode> TESTNET_SEEDS = {
-    {"testseed1.flowcoin.org",   19333},
-    {"testseed2.flowcoin.org",   19333},
-    {"testnode.flowcoin.dev",    19333},
-    {"45.33.32.156",             19333},
-    {"85.214.107.77",            19333},
+    {"seed.flowcoin.org",        19333},  // Testnet on same host, different port
+    {"211.205.13.203",           19333},
 };
 
 // ---------------------------------------------------------------------------
@@ -83,15 +64,15 @@ const std::vector<SeedNode> REGTEST_SEEDS = {};
 // ---------------------------------------------------------------------------
 
 const std::vector<std::string> MAINNET_DNS_SEEDS = {
-    "dnsseed.flowcoin.org",
-    "seed.flowcoin.network",
-    "dnsseed.flowcoin.dev",
-    "seed.flowcoin.info",
+    // DNS seeds are queried first. Each hostname should resolve to
+    // multiple A/AAAA records pointing to active FlowCoin nodes.
+    // As the network grows, community operators can run DNS seed
+    // servers and be added here.
+    "seed.flowcoin.org",           // Primary DNS seed
 };
 
 const std::vector<std::string> TESTNET_DNS_SEEDS = {
-    "testnet-seed.flowcoin.org",
-    "testnet-seed.flowcoin.dev",
+    "seed.flowcoin.org",
 };
 
 const std::vector<std::string> REGTEST_DNS_SEEDS = {};
