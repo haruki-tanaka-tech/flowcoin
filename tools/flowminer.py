@@ -18,9 +18,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 # Keccak-256 (pad=0x01, NOT SHA-3)
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 try:
     from Crypto.Hash import keccak as _keccak
@@ -40,9 +40,76 @@ except ImportError:
         sys.exit(1)
 
 
-# ═══════════════════════════════════════════════════════════════════
+def keccak256d(data: bytes) -> bytes:
+    """Double Keccak-256: keccak256(keccak256(data))."""
+    return keccak256(keccak256(data))
+
+
+# ===================================================================
+# Ed25519 signing (using pycryptodome)
+# ===================================================================
+
+try:
+    from Crypto.PublicKey import ECC
+    from Crypto.Signature import eddsa
+
+    def generate_ed25519_keypair() -> Tuple[bytes, bytes]:
+        """Generate a new Ed25519 keypair.
+        Returns (privkey_seed_32_bytes, pubkey_32_bytes)."""
+        key = ECC.generate(curve='Ed25519')
+        privkey_seed = key.seed
+        pub_bytes = key.public_key().export_key(format='raw')
+        return privkey_seed, pub_bytes
+
+    def ed25519_sign(message: bytes, privkey_seed: bytes) -> bytes:
+        """Sign a message with Ed25519. Returns 64-byte signature."""
+        key = ECC.construct(seed=privkey_seed, curve='Ed25519')
+        signer = eddsa.new(key, mode='rfc8032')
+        return signer.sign(message)
+
+    def ed25519_pubkey_from_seed(privkey_seed: bytes) -> bytes:
+        """Derive the 32-byte public key from a 32-byte private key seed."""
+        key = ECC.construct(seed=privkey_seed, curve='Ed25519')
+        return key.public_key().export_key(format='raw')
+
+    _HAS_ED25519 = True
+
+except (ImportError, AttributeError):
+    # Fallback: try nacl
+    try:
+        import nacl.signing
+
+        def generate_ed25519_keypair() -> Tuple[bytes, bytes]:
+            sk = nacl.signing.SigningKey.generate()
+            return bytes(sk), bytes(sk.verify_key)
+
+        def ed25519_sign(message: bytes, privkey_seed: bytes) -> bytes:
+            sk = nacl.signing.SigningKey(privkey_seed)
+            return sk.sign(message).signature
+
+        def ed25519_pubkey_from_seed(privkey_seed: bytes) -> bytes:
+            sk = nacl.signing.SigningKey(privkey_seed)
+            return bytes(sk.verify_key)
+
+        _HAS_ED25519 = True
+
+    except ImportError:
+        _HAS_ED25519 = False
+
+        def generate_ed25519_keypair() -> Tuple[bytes, bytes]:
+            print("ERROR: No Ed25519 library. Install pycryptodome or PyNaCl.")
+            sys.exit(1)
+
+        def ed25519_sign(message: bytes, privkey_seed: bytes) -> bytes:
+            raise RuntimeError("No Ed25519 library available")
+
+        def ed25519_pubkey_from_seed(privkey_seed: bytes) -> bytes:
+            raise RuntimeError("No Ed25519 library available")
+
+
+# ===================================================================
 # RPC Client (raw sockets, no dependencies)
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 class RPCError(Exception):
     pass
@@ -98,9 +165,9 @@ class RPC:
         return result.get("result")
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 # ResonanceNet V5 — Model Classes
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 class RMSNorm(nn.Module):
     """Root Mean Square Layer Normalization."""
@@ -375,9 +442,9 @@ class ResonanceNetV5(nn.Module):
         return logits, new_hiddens
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 # Growth schedule — mirrors consensus/growth.cpp
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 def compute_growth(height: int) -> dict:
     """Compute model dimensions at a given block height."""
@@ -393,9 +460,9 @@ def compute_growth(height: int) -> dict:
     }
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 # Target derivation
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 def derive_target(nbits: int) -> int:
     """Decode compact target (nBits) into a 256-bit integer."""
@@ -406,9 +473,9 @@ def derive_target(nbits: int) -> int:
     return mantissa << (8 * (exp - 3))
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 # Training data
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 class TrainingData:
     """Load byte-level training data from ~/.flowcoin/training/."""
@@ -451,9 +518,9 @@ class TrainingData:
         return batch[:, :-1], batch[:, 1:]
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 # Delta computation
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 def compute_fast_hash(model: ResonanceNetV5) -> bytes:
     """Fast hash: sample every 1000th parameter. Zero overhead."""
@@ -478,9 +545,399 @@ def compute_full_delta(
     return keccak256(delta_bytes), delta_bytes
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
+# CompactSize encoding (Bitcoin-style varint)
+# ===================================================================
+
+def encode_compact_size(n: int) -> bytes:
+    """Encode an integer as a Bitcoin-style CompactSize.
+    Matches the C++ CompactSize::encode format exactly."""
+    if n < 253:
+        return struct.pack('<B', n)
+    elif n <= 0xFFFF:
+        return struct.pack('<BH', 0xFD, n)
+    elif n <= 0xFFFFFFFF:
+        return struct.pack('<BI', 0xFE, n)
+    else:
+        return struct.pack('<BQ', 0xFF, n)
+
+
+# ===================================================================
+# Consensus constants (from consensus/params.h)
+# ===================================================================
+
+COIN = 100_000_000
+INITIAL_REWARD = 50 * COIN
+HALVING_INTERVAL = 210_000
+
+
+def compute_block_reward(height: int) -> int:
+    """Compute block subsidy at a given height."""
+    halvings = height // HALVING_INTERVAL
+    if halvings >= 64:
+        return 0
+    return INITIAL_REWARD >> halvings
+
+
+# ===================================================================
+# Transaction serialization (matching CTransaction in transaction.cpp)
+# ===================================================================
+
+def serialize_coinbase_tx(height: int, reward: int,
+                          miner_pubkey: bytes) -> bytes:
+    """Build and serialize a coinbase transaction.
+
+    Transaction wire format (from transaction.cpp):
+        version      (4 bytes, uint32 LE)
+        vin_count    (CompactSize)
+        vin[]:
+            txid       (32 bytes)       -- all zeros for coinbase
+            index      (4 bytes, LE)    -- 0 for coinbase
+            pubkey     (32 bytes)       -- height encoded in first 8 bytes (BIP34)
+            signature  (64 bytes)       -- arbitrary data (coinbase message)
+        vout_count   (CompactSize)
+        vout[]:
+            amount     (8 bytes, int64 LE)
+            pubkey_hash (32 bytes)      -- keccak256(miner_pubkey)
+        locktime     (8 bytes, int64 LE)
+    """
+    buf = bytearray()
+
+    # version = 1
+    buf += struct.pack('<I', 1)
+
+    # vin_count = 1
+    buf += encode_compact_size(1)
+
+    # Coinbase input:
+    # prevout txid = 32 zero bytes (null)
+    buf += b'\x00' * 32
+    # prevout index = 0
+    buf += struct.pack('<I', 0)
+    # pubkey: height encoded in first 8 bytes (BIP34 style), rest zero
+    cb_pubkey = bytearray(32)
+    struct.pack_into('<Q', cb_pubkey, 0, height)
+    buf += bytes(cb_pubkey)
+    # signature: 64 zero bytes (no coinbase message for mined blocks)
+    buf += b'\x00' * 64
+
+    # vout_count = 1
+    buf += encode_compact_size(1)
+
+    # Coinbase output:
+    # amount (int64 LE)
+    buf += struct.pack('<q', reward)
+    # pubkey_hash = keccak256(miner_pubkey)[0:32]
+    pkh = keccak256(miner_pubkey)
+    buf += pkh[:32]
+
+    # locktime = 0
+    buf += struct.pack('<q', 0)
+
+    return bytes(buf)
+
+
+def serialize_coinbase_tx_for_hash(height: int, reward: int,
+                                   miner_pubkey: bytes) -> bytes:
+    """Serialize a coinbase tx for txid computation (excludes signatures).
+
+    Format (from transaction.cpp serialize_for_hash):
+        version      (4 bytes, uint32 LE)
+        vin_count    (CompactSize)
+        vin[]:
+            txid       (32 bytes)
+            index      (4 bytes, LE)
+            pubkey     (32 bytes)
+            [NO signature]
+        vout_count   (CompactSize)
+        vout[]:
+            amount     (8 bytes, int64 LE)
+            pubkey_hash (32 bytes)
+        locktime     (8 bytes, int64 LE)
+    """
+    buf = bytearray()
+
+    # version = 1
+    buf += struct.pack('<I', 1)
+
+    # vin_count = 1
+    buf += encode_compact_size(1)
+
+    # Coinbase input (no signature):
+    buf += b'\x00' * 32         # prevout txid
+    buf += struct.pack('<I', 0)  # prevout index
+    cb_pubkey = bytearray(32)
+    struct.pack_into('<Q', cb_pubkey, 0, height)
+    buf += bytes(cb_pubkey)
+    # No signature field for hash computation
+
+    # vout_count = 1
+    buf += encode_compact_size(1)
+
+    # Coinbase output:
+    buf += struct.pack('<q', reward)
+    pkh = keccak256(miner_pubkey)
+    buf += pkh[:32]
+
+    # locktime = 0
+    buf += struct.pack('<q', 0)
+
+    return bytes(buf)
+
+
+def compute_txid(height: int, reward: int, miner_pubkey: bytes) -> bytes:
+    """Compute the coinbase txid = keccak256d(serialize_for_hash)."""
+    data = serialize_coinbase_tx_for_hash(height, reward, miner_pubkey)
+    return keccak256d(data)
+
+
+def compute_merkle_root(tx_hashes: List[bytes]) -> bytes:
+    """Compute the Merkle root from a list of transaction hashes.
+    Matches the C++ compute_merkle_root in hash/merkle.cpp.
+    Each pair is hashed with keccak256d(left || right).
+    Odd levels duplicate the last hash."""
+    if not tx_hashes:
+        return b'\x00' * 32
+
+    level = list(tx_hashes)
+    while len(level) > 1:
+        if len(level) % 2 != 0:
+            level.append(level[-1])
+        next_level = []
+        for i in range(0, len(level), 2):
+            combined = level[i] + level[i + 1]
+            next_level.append(keccak256d(combined))
+        level = next_level
+
+    return level[0]
+
+
+# ===================================================================
+# Block building
+# ===================================================================
+
+def build_block_header(
+    prev_hash: bytes,
+    merkle_root: bytes,
+    training_hash: bytes,
+    dataset_hash: bytes,
+    height: int,
+    timestamp: int,
+    nbits: int,
+    val_loss: float,
+    prev_val_loss: float,
+    dims: dict,
+    delta_offset: int,
+    delta_length: int,
+    sparse_count: int,
+    sparse_threshold: float,
+    nonce: int,
+    version: int,
+    miner_pubkey: bytes,
+    miner_privkey: bytes,
+) -> Tuple[bytes, bytes]:
+    """Build a complete 308-byte block header.
+
+    Layout matches CBlockHeader::serialize() in block.cpp exactly:
+        Bytes   0- 31: prev_hash        (32 bytes, raw)
+        Bytes  32- 63: merkle_root      (32 bytes)
+        Bytes  64- 95: training_hash    (32 bytes)
+        Bytes  96-127: dataset_hash     (32 bytes)
+        Bytes 128-135: height           (uint64 LE)
+        Bytes 136-143: timestamp        (int64 LE)
+        Bytes 144-147: nbits            (uint32 LE)
+        Bytes 148-151: val_loss         (float32 IEEE754)
+        Bytes 152-155: prev_val_loss    (float32 IEEE754)
+        Bytes 156-159: d_model          (uint32 LE)
+        Bytes 160-163: n_layers         (uint32 LE)
+        Bytes 164-167: d_ff             (uint32 LE)
+        Bytes 168-171: n_heads          (uint32 LE)
+        Bytes 172-175: gru_dim          (uint32 LE)
+        Bytes 176-179: n_slots          (uint32 LE)
+        Bytes 180-183: reserved_field   (uint32 LE, must be 0)
+        Bytes 184-187: stagnation       (uint32 LE)
+        Bytes 188-191: delta_offset     (uint32 LE)
+        Bytes 192-195: delta_length     (uint32 LE)
+        Bytes 196-199: sparse_count     (uint32 LE)
+        Bytes 200-203: sparse_threshold (float32 IEEE754)
+        Bytes 204-207: nonce            (uint32 LE)
+        Bytes 208-211: version          (uint32 LE)
+        Bytes 212-243: miner_pubkey     (32 bytes)
+        Bytes 244-307: miner_sig        (64 bytes, Ed25519)
+
+    Returns (header_308_bytes, block_hash).
+    """
+    header = bytearray(308)
+
+    # 32-byte hash fields (stored as raw bytes, no reversal)
+    header[0:32] = prev_hash[:32]
+    header[32:64] = merkle_root[:32]
+    header[64:96] = training_hash[:32]
+    header[96:128] = dataset_hash[:32]
+
+    # 8-byte integer fields
+    struct.pack_into('<Q', header, 128, height)
+    struct.pack_into('<q', header, 136, timestamp)
+
+    # 4-byte fields
+    struct.pack_into('<I', header, 144, nbits)
+    struct.pack_into('<f', header, 148, val_loss)
+    struct.pack_into('<f', header, 152, prev_val_loss)
+
+    # Architecture dimensions
+    d_model = dims['d_model']
+    n_layers = dims['n_layers']
+    d_ff = dims['d_ff']
+    n_heads = dims.get('n_heads', d_model // 64)
+    gru_dim = dims.get('gru_dim', d_model)
+    n_slots = dims['n_slots']
+
+    struct.pack_into('<I', header, 156, d_model)
+    struct.pack_into('<I', header, 160, n_layers)
+    struct.pack_into('<I', header, 164, d_ff)
+    struct.pack_into('<I', header, 168, n_heads)
+    struct.pack_into('<I', header, 172, gru_dim)
+    struct.pack_into('<I', header, 176, n_slots)
+
+    # reserved_field = 0 (already zero)
+    # stagnation = 0
+    struct.pack_into('<I', header, 180, 0)   # reserved
+    struct.pack_into('<I', header, 184, 0)   # stagnation
+
+    # Delta reference
+    struct.pack_into('<I', header, 188, delta_offset)
+    struct.pack_into('<I', header, 192, delta_length)
+    struct.pack_into('<I', header, 196, sparse_count)
+    struct.pack_into('<f', header, 200, sparse_threshold)
+
+    # Nonce + version
+    struct.pack_into('<I', header, 204, nonce)
+    struct.pack_into('<I', header, 208, version)
+
+    # Miner pubkey
+    header[212:244] = miner_pubkey[:32]
+
+    # Sign the unsigned portion (bytes 0-243)
+    unsigned_data = bytes(header[:244])
+    signature = ed25519_sign(unsigned_data, miner_privkey)
+    header[244:308] = signature[:64]
+
+    # Block hash = keccak256d(unsigned portion, bytes 0-243)
+    block_hash = keccak256d(unsigned_data)
+
+    return bytes(header), block_hash
+
+
+def build_block(
+    height: int,
+    prev_hash_hex: str,
+    nbits: int,
+    dims: dict,
+    val_loss: float,
+    prev_val_loss: float,
+    delta_hash: bytes,
+    dataset_hash: bytes,
+    delta_bytes: bytes,
+    miner_privkey: bytes,
+    miner_pubkey: bytes,
+) -> Tuple[str, str]:
+    """Build a complete serialized block and return (block_hex, block_hash_hex).
+
+    Block wire format (from block.cpp CBlock::serialize):
+        header           (308 bytes)
+        tx_count         (CompactSize)
+        transactions[]   (each serialized per transaction.cpp)
+        delta_len        (CompactSize)
+        delta_payload    (raw bytes)
+    """
+    # Compute block reward
+    reward = compute_block_reward(height)
+
+    # Compute training_hash = keccak256(delta_hash || dataset_hash)
+    training_hash = keccak256(delta_hash + dataset_hash)
+
+    # Build coinbase transaction
+    coinbase_data = serialize_coinbase_tx(height, reward, miner_pubkey)
+    coinbase_txid = compute_txid(height, reward, miner_pubkey)
+
+    # Compute Merkle root (single tx = keccak256d of txid paired with itself
+    # is NOT correct -- for a single leaf, merkle root IS the leaf)
+    merkle_root = compute_merkle_root([coinbase_txid])
+
+    # Compute delta_offset: offset of delta payload within the block body
+    # header(308) + compact_size(1 tx) + coinbase_tx_size + compact_size(delta_len)
+    cs_tx_count = encode_compact_size(1)
+    cs_delta_len = encode_compact_size(len(delta_bytes))
+    delta_offset = 308 + len(cs_tx_count) + len(coinbase_data) + len(cs_delta_len)
+
+    # Decode prev_hash from hex (raw byte order, no reversal needed)
+    prev_hash = bytes.fromhex(prev_hash_hex)
+
+    # Build the header
+    timestamp = int(time.time())
+    header_bytes, block_hash = build_block_header(
+        prev_hash=prev_hash,
+        merkle_root=merkle_root,
+        training_hash=training_hash,
+        dataset_hash=dataset_hash,
+        height=height,
+        timestamp=timestamp,
+        nbits=nbits,
+        val_loss=val_loss,
+        prev_val_loss=prev_val_loss,
+        dims=dims,
+        delta_offset=delta_offset,
+        delta_length=len(delta_bytes),
+        sparse_count=0,
+        sparse_threshold=0.0,
+        nonce=0,
+        version=1,
+        miner_pubkey=miner_pubkey,
+        miner_privkey=miner_privkey,
+    )
+
+    # Assemble the full block
+    block_data = bytearray()
+    block_data += header_bytes                     # 308 bytes
+    block_data += cs_tx_count                      # CompactSize(1)
+    block_data += coinbase_data                    # coinbase transaction
+    block_data += cs_delta_len                     # CompactSize(delta_len)
+    block_data += delta_bytes                      # delta payload
+
+    return block_data.hex(), block_hash.hex()
+
+
+# ===================================================================
+# Miner key management
+# ===================================================================
+
+def load_or_create_miner_key(datadir: str) -> Tuple[bytes, bytes]:
+    """Load miner Ed25519 keypair from disk, or generate a new one.
+    Stores the 32-byte private key seed in datadir/miner_key.bin.
+    Returns (privkey_seed, pubkey)."""
+    keypath = os.path.join(datadir, "miner_key.bin")
+    if os.path.exists(keypath):
+        with open(keypath, 'rb') as f:
+            privkey_seed = f.read(32)
+        if len(privkey_seed) == 32:
+            pubkey = ed25519_pubkey_from_seed(privkey_seed)
+            print(f"  Miner key: {pubkey[:8].hex()}... (loaded)")
+            return privkey_seed, pubkey
+        else:
+            print(f"  Warning: corrupt miner key, generating new one")
+
+    privkey_seed, pubkey = generate_ed25519_keypair()
+    os.makedirs(datadir, exist_ok=True)
+    with open(keypath, 'wb') as f:
+        f.write(privkey_seed[:32])
+    os.chmod(keypath, 0o600)
+    print(f"  Miner key: {pubkey[:8].hex()}... (new)")
+    return privkey_seed, pubkey
+
+
+# ===================================================================
 # Config
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 def read_conf(datadir: str) -> dict:
     """Read flowcoin.conf from the data directory."""
@@ -496,9 +953,9 @@ def read_conf(datadir: str) -> dict:
     return conf
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 # Device selection
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 def select_device(force_cpu: bool = False) -> torch.device:
     """Auto-detect best device: CUDA > MPS > CPU."""
@@ -514,15 +971,18 @@ def select_device(force_cpu: bool = False) -> torch.device:
     return torch.device("cpu")
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 # Main mining loop
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 def mine(args: argparse.Namespace) -> None:
     """Main training/mining loop."""
     device = select_device(args.cpu)
     rpc = RPC(port=args.rpcport, user=args.rpcuser, pw=args.rpcpassword)
     data = TrainingData(args.datadir, batch_size=args.batch)
+
+    # Load or generate miner keypair
+    miner_privkey, miner_pubkey = load_or_create_miner_key(args.datadir)
 
     # Test RPC connection
     try:
@@ -547,7 +1007,19 @@ def mine(args: argparse.Namespace) -> None:
             height = tmpl["height"]
             nbits = tmpl.get("nbits", 0x1f00ffff)
             target = derive_target(nbits)
+            prev_hash_hex = tmpl["previousblockhash"]
+            prev_val_loss = tmpl.get("prev_val_loss", 100.0)
             dims = compute_growth(height)
+
+            # Use template dims if available (authoritative from node)
+            if "model" in tmpl:
+                mdims = tmpl["model"]
+                dims['d_model'] = mdims.get('d_model', dims['d_model'])
+                dims['n_layers'] = mdims.get('n_layers', dims['n_layers'])
+                dims['d_ff'] = mdims.get('d_ff', dims['d_ff'])
+                dims['n_slots'] = mdims.get('n_slots', dims['n_slots'])
+                dims['n_heads'] = mdims.get('n_heads', dims['d_model'] // 64)
+                dims['gru_dim'] = mdims.get('gru_dim', dims['d_model'])
 
             print(f"  Mining block {height} | d={dims['d_model']} "
                   f"L={dims['n_layers']} slots={dims['n_slots']}")
@@ -623,22 +1095,50 @@ def mine(args: argparse.Namespace) -> None:
                     )
 
                 if training_int < target:
-                    # Candidate! Compute full delta hash for block submission
+                    # Candidate found. Compute full delta for block submission.
                     full_hash, full_bytes = compute_full_delta(model, consensus)
                     full_training = keccak256(full_hash + data.hash)
                     elapsed = time.time() - cycle_start
                     blocks_found += 1
+
                     print(f"\n\n  *** BLOCK {height} FOUND! ***")
                     print(f"  Step: {step} | Loss: {best_loss:.4f} | "
                           f"Time: {elapsed:.1f}s")
                     print(f"  Mining hash:  {training_hash.hex()[:16]}...")
                     print(f"  Delta hash:   {full_hash.hex()[:16]}...")
                     print(f"  Delta size:   {len(full_bytes):,} bytes")
-                    print()
+
+                    # Build the actual block
+                    print(f"  Building block...")
+                    block_hex, block_hash_hex = build_block(
+                        height=height,
+                        prev_hash_hex=prev_hash_hex,
+                        nbits=nbits,
+                        dims=dims,
+                        val_loss=best_loss,
+                        prev_val_loss=prev_val_loss,
+                        delta_hash=full_hash,
+                        dataset_hash=data.hash,
+                        delta_bytes=full_bytes,
+                        miner_privkey=miner_privkey,
+                        miner_pubkey=miner_pubkey,
+                    )
+
+                    print(f"  Block hash:   {block_hash_hex[:16]}...")
+                    print(f"  Block size:   {len(block_hex) // 2:,} bytes")
+
+                    # Submit to node
+                    print(f"  Submitting to node...")
                     try:
-                        rpc.call("submitblock", ["0000"])
-                    except RPCError:
-                        pass
+                        result = rpc.call("submitblock", [block_hex])
+                        if result is None:
+                            print(f"  Block accepted!")
+                        else:
+                            print(f"  Block rejected: {result}")
+                    except RPCError as e:
+                        print(f"  Submit error: {e}")
+
+                    print()
                     break
 
                 # Check for new blocks from network every 100 steps
@@ -669,9 +1169,9 @@ def mine(args: argparse.Namespace) -> None:
             time.sleep(5)
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 # Entry point
-# ═══════════════════════════════════════════════════════════════════
+# ===================================================================
 
 def main():
     p = argparse.ArgumentParser(description="FlowCoin Miner")
