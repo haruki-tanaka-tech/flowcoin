@@ -27,9 +27,7 @@ namespace flow {
 // ===========================================================================
 
 const std::vector<std::pair<std::string, uint16_t>> NetManager::SEED_NODES = {
-    {"seed1.flowcoin.org", consensus::MAINNET_PORT},
-    {"seed2.flowcoin.org", consensus::MAINNET_PORT},
-    {"seed3.flowcoin.org", consensus::MAINNET_PORT},
+    {"seed.flowcoin.org", consensus::MAINNET_PORT},
 };
 
 // ===========================================================================
@@ -245,6 +243,13 @@ void NetManager::run() {
 
 void NetManager::connect_to(const CNetAddr& addr) {
     if (!loop_ || !running_.load()) return;
+
+    // Skip null/unroutable addresses (::, 0.0.0.0, etc.)
+    bool all_zero = true;
+    for (int i = 0; i < 16; i++) {
+        if (addr.ip[i] != 0) { all_zero = false; break; }
+    }
+    if (all_zero) return;  // skip :: and 0.0.0.0
 
     // Don't connect if we already have too many outbound peers
     if (outbound_count() >= static_cast<size_t>(consensus::MAX_OUTBOUND_PEERS)) {
