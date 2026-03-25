@@ -1064,6 +1064,12 @@ def mine(args: argparse.Namespace) -> None:
             # Consensus weights = zeros (genesis model has no initial state)
             consensus = {k: torch.zeros_like(v) for k, v in model.state_dict().items()}
 
+            # Pre-cache flattened consensus on GPU for fast hash check
+            consensus_flat = torch.zeros(
+                sum(p.numel() for p in model.parameters()),
+                device=device, dtype=torch.float32
+            )
+
             # Optimizer
             optimizer = torch.optim.AdamW(
                 model.parameters(), lr=args.lr, weight_decay=0.01
@@ -1093,15 +1099,11 @@ def mine(args: argparse.Namespace) -> None:
 
                 total_checks += 1
 
-                # Hash check every step using GPU-folded summary (1ms, not 285ms)
-                # Fold all params into 256 sums on GPU, hash the 1KB summary
+                # Hash check every step using GPU-folded summary (1ms)
                 with torch.no_grad():
                     all_params = torch.cat([p.data.flatten() for p in model.parameters()])
-                    all_consensus = torch.cat([consensus[k].to(device).flatten()
-                                               for k in sorted(consensus.keys())])
-                    delta_gpu = all_params - all_consensus
-                    n = delta_gpu.numel()
-                    chunk = n // 256
+                    delta_gpu = all_params - consensus_flat
+                    chunk = delta_gpu.numel() // 256
                     summary = delta_gpu[:chunk * 256].view(256, chunk).sum(dim=1)
                     summary_bytes = summary.cpu().numpy().tobytes()
                 delta_hash = keccak256(summary_bytes)
