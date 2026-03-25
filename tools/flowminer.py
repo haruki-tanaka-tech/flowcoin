@@ -1086,7 +1086,7 @@ def mine(args: argparse.Namespace) -> None:
                 logits, _ = model(x)
                 loss = F.cross_entropy(logits.reshape(-1, 256), y.reshape(-1))
 
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
@@ -1094,20 +1094,21 @@ def mine(args: argparse.Namespace) -> None:
                 step += 1
                 total_steps += 1
                 lv = loss.item()
+
+                # Prevent CUDA memory fragmentation
+                if step % 500 == 0 and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 if lv < best_loss:
                     best_loss = lv
 
                 total_checks += 1
 
-                # Hash check EVERY step — use loss+step as nonce
-                # Each step changes weights → changes loss → unique hash
-                # Zero GPU overhead: only struct.pack + keccak256 on CPU
-                nonce_data = struct.pack('<fQd', lv, step, time.time())
-                # Include first 64 bytes of embedding (stable, weight-dependent)
-                with torch.no_grad():
-                    emb_sample = next(model.parameters()).data[:4, :4].cpu().numpy().tobytes()
-                nonce_data += emb_sample
-                delta_hash = keccak256(nonce_data)
+                # Hash check EVERY step — pure CPU, zero GPU interaction
+                # loss.item() already triggers GPU→CPU sync (needed for print anyway)
+                # Use loss + step + grad_norm as unique nonce per step
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1e9).item()
+                nonce_data = struct.pack('<dfQ', lv, grad_norm, step)
+                delta_hash = keccak256(nonce_data + data.hash)
                 training_hash = keccak256(delta_hash + data.hash)
                 training_int = int.from_bytes(training_hash, "big")
 
