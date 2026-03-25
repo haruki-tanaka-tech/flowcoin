@@ -1,0 +1,6 @@
+usr/bin/flowcoind
+usr/bin/flowcoin-cli
+usr/bin/flowcoin-tx
+usr/share/man/man1/flowcoind.1
+usr/share/man/man1/flowcoin-cli.1
+usr/share/man/man1/flowcoin-tx.1

@@ -285,6 +285,46 @@ add_library(flowcoin_mempool STATIC
 target_include_directories(flowcoin_mempool PUBLIC src)
 target_link_libraries(flowcoin_mempool PUBLIC flowcoin_chain flowcoin_crypto flowcoin_hash)
 
+# --- flowcoin_index ---
+add_library(flowcoin_index STATIC
+    src/index/base.cpp
+    src/index/txindex.cpp
+    src/index/blockfilterindex.cpp
+    src/index/coinstatsindex.cpp
+)
+target_include_directories(flowcoin_index PUBLIC src)
+target_link_libraries(flowcoin_index PUBLIC flowcoin_chain flowcoin_hash sqlite)
+
+# --- flowcoin_policy ---
+add_library(flowcoin_policy STATIC
+    src/policy/policy.cpp
+    src/policy/fees.cpp
+    src/policy/rbf.cpp
+)
+target_include_directories(flowcoin_policy PUBLIC src)
+target_link_libraries(flowcoin_policy PUBLIC flowcoin_mempool flowcoin_hash flowcoin_script)
+
+# --- flowcoin_interfaces ---
+add_library(flowcoin_interfaces STATIC
+    src/interfaces/node.cpp
+    src/interfaces/wallet.cpp
+    src/interfaces/chain.cpp
+    src/interfaces/handler.cpp
+)
+target_include_directories(flowcoin_interfaces PUBLIC src)
+target_link_libraries(flowcoin_interfaces PUBLIC
+    flowcoin_chain flowcoin_wallet flowcoin_mempool flowcoin_hash
+)
+
+# --- flowcoin_rest ---
+add_library(flowcoin_rest STATIC
+    src/rest.cpp
+)
+target_include_directories(flowcoin_rest PUBLIC src)
+target_link_libraries(flowcoin_rest PUBLIC
+    flowcoin_chain flowcoin_mempool flowcoin_hash json
+)
+
 # --- flowcoin_node ---
 add_library(flowcoin_node STATIC
     src/node/context.cpp
@@ -301,6 +341,10 @@ target_link_libraries(flowcoin_node PUBLIC
     flowcoin_chain
     flowcoin_consensus
     flowcoin_mempool
+    flowcoin_index
+    flowcoin_policy
+    flowcoin_interfaces
+    flowcoin_rest
     flowcoin_primitives
     flowcoin_crypto
     flowcoin_hash
@@ -328,6 +372,10 @@ target_link_libraries(flowcoind PRIVATE
     flowcoin_net
     flowcoin_chain
     flowcoin_consensus
+    flowcoin_index
+    flowcoin_policy
+    flowcoin_interfaces
+    flowcoin_rest
     flowcoin_primitives
     flowcoin_crypto
     flowcoin_hash
@@ -468,6 +516,10 @@ if(BUILD_TESTS)
         flowcoin_net
         flowcoin_chain
         flowcoin_consensus
+        flowcoin_index
+        flowcoin_policy
+        flowcoin_interfaces
+        flowcoin_rest
         flowcoin_primitives
         flowcoin_crypto
         flowcoin_hash
@@ -484,4 +536,48 @@ if(BUILD_TESTS)
         m
     )
     add_test(NAME flowcoin_tests COMMAND flowcoin_tests)
+endif()
+
+# =============================================================================
+# Benchmarks
+# =============================================================================
+option(BUILD_BENCH "Build performance benchmarks" ON)
+if(BUILD_BENCH)
+    add_executable(flowcoin_bench
+        src/bench/bench_main.cpp
+        src/bench/bench_keccak.cpp
+        src/bench/bench_ed25519.cpp
+        src/bench/bench_model.cpp
+        src/bench/bench_chain.cpp
+        src/bench/bench_script.cpp
+        src/bench/bench_mempool.cpp
+        src/bench/bench_crypto.cpp
+        src/bench/bench_net.cpp
+    )
+    target_include_directories(flowcoin_bench PRIVATE src)
+    target_link_libraries(flowcoin_bench PRIVATE
+        flowcoin_node
+        flowcoin_mempool
+        flowcoin_script
+        flowcoin_rpc
+        flowcoin_mining
+        flowcoin_wallet
+        flowcoin_net
+        flowcoin_chain
+        flowcoin_consensus
+        flowcoin_primitives
+        flowcoin_crypto
+        flowcoin_hash
+        flowcoin_util
+        ggml
+        sqlite
+        ed25519
+        xkcp
+        zstd
+        uv_a
+        json
+        pthread
+        dl
+        m
+    )
 endif()

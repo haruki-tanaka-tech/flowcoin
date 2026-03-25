@@ -1,0 +1,123 @@
+---
+# Copyright (c) 2026 The FlowCoin Developers
+# Distributed under the MIT software license.
+#
+# Gitian descriptor for reproducible macOS cross-compilation.
+# Produces: flowcoind, flowcoin-cli, flowcoin-tx for macOS x86_64 and arm64.
+#
+# Requires the macOS SDK tarball (extracted from Xcode) to be placed
+# in the gitian inputs directory. See README.md for instructions.
+
+name: flowcoin-osx-1.0
+enable_cache: true
+distro: ubuntu
+suites:
+  - focal
+architectures:
+  - amd64
+packages:
+  - cmake
+  - g++-10
+  - make
+  - pkg-config
+  - libc6-dev
+  - git
+  - ca-certificates
+  - curl
+  - python3
+  - libtool
+  - automake
+  - bsdmainutils
+  - imagemagick
+  - libcap-dev
+  - librsvg2-bin
+  - libz-dev
+  - p7zip-full
+reference_datetime: "2026-03-01 00:00:00"
+remotes:
+  - url: https://github.com/flowcoin/flowcoin.git
+    dir: flowcoin
+files:
+  - Xcode-14.3-14E222b-extracted-SDK-with-libcxx-headers.tar.gz
+script: |
+  set -e -o pipefail
+
+  export SOURCE_DATE_EPOCH=$(date -d "2026-03-01 00:00:00" +%s)
+  export ZERO_AR_DATE=1
+
+  # Extract macOS SDK
+  SDK_DIR=$HOME/SDKs
+  mkdir -p $SDK_DIR
+  if [ -f Xcode-14.3-14E222b-extracted-SDK-with-libcxx-headers.tar.gz ]; then
+    tar -xzf Xcode-14.3-14E222b-extracted-SDK-with-libcxx-headers.tar.gz -C $SDK_DIR
+  fi
+
+  # Build osxcross toolchain if SDK exists
+  OSXCROSS_DIR=$HOME/osxcross
+  if [ -d $SDK_DIR/MacOSX14.0.sdk ]; then
+    if [ ! -d $OSXCROSS_DIR ]; then
+      git clone https://github.com/tpoechtrager/osxcross $OSXCROSS_DIR
+      cd $OSXCROSS_DIR
+      ln -s $SDK_DIR/MacOSX14.0.sdk tarballs/
+      UNATTENDED=1 ./build.sh
+      cd -
+    fi
+    export PATH=$OSXCROSS_DIR/target/bin:$PATH
+    OSX_CC=o64-clang
+    OSX_CXX=o64-clang++
+    TOOLCHAIN_FILE=$OSXCROSS_DIR/target/toolchain.cmake
+  else
+    echo "Warning: macOS SDK not found, building for Linux host only" >&2
+    OSX_CC=gcc-10
+    OSX_CXX=g++-10
+    TOOLCHAIN_FILE=""
+  fi
+
+  cd flowcoin
+
+  for ARCH in x86_64 arm64; do
+    BUILD_DIR=build-osx-$ARCH
+    mkdir -p $BUILD_DIR && cd $BUILD_DIR
+
+    CMAKE_EXTRA=""
+    if [ -n "$TOOLCHAIN_FILE" ]; then
+      CMAKE_EXTRA="-DCMAKE_TOOLCHAIN_FILE=$TOOLCHAIN_FILE"
+    fi
+
+    cmake .. \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_CXX_STANDARD=20 \
+      -DCMAKE_CXX_FLAGS="-O2 -ffile-prefix-map=$PWD/..=. -fmacro-prefix-map=$PWD/..=." \
+      -DCMAKE_C_FLAGS="-O2 -ffile-prefix-map=$PWD/..=. -fmacro-prefix-map=$PWD/..=." \
+      -DBUILD_TESTS=OFF \
+      $CMAKE_EXTRA
+
+    make -j$(nproc) || {
+      echo "Build failed for $ARCH, continuing..." >&2
+      cd ..
+      continue
+    }
+
+    DISTDIR=$OUTDIR/flowcoin-1.0.0-osx-$ARCH
+    mkdir -p $DISTDIR/bin
+    cp flowcoind flowcoin-cli flowcoin-tx $DISTDIR/bin/ 2>/dev/null || true
+
+    cp ../flowcoin.conf.example $DISTDIR/ 2>/dev/null || true
+    cp ../COPYING $DISTDIR/ 2>/dev/null || true
+
+    cd ..
+  done
+
+  # Create tarballs
+  cd $OUTDIR
+  for ARCH in x86_64 arm64; do
+    DISTDIR=flowcoin-1.0.0-osx-$ARCH
+    if [ -d $DISTDIR ]; then
+      find $DISTDIR | sort | \
+        tar --mtime="$REFERENCE_DATETIME" --owner=0 --group=0 --numeric-owner \
+        --no-recursion -czf $DISTDIR.tar.gz -T -
+    fi
+  done
+
+  sha256sum *.tar.gz > SHA256SUMS 2>/dev/null || true

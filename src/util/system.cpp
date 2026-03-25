@@ -13,6 +13,7 @@
 #include <fstream>
 #include <map>
 #include <sstream>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
 #include <unistd.h>

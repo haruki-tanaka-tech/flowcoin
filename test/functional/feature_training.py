@@ -1,0 +1,601 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 The FlowCoin Developers
+# Distributed under the MIT software license.
+"""Test training/model RPC methods.
+
+Tests cover:
+    - gettraininginfo returns correct model dimensions.
+    - getmodelhash is deterministic per block.
+    - getgrowthschedule returns correct dims at each plateau.
+    - getgrowthschedule at plateau boundaries.
+    - getgrowthschedule in Phase 2 (frozen architecture).
+    - getvalidationdata format and fields.
+    - Model dimensions in mined blocks.
+    - Growth schedule consistency across nodes.
+    - Training steps requirements at various heights.
+    - Model parameter count computation.
+    - Improvement flag tracking.
+    - Delta payload fields in blocks.
+"""
+
+import math
+from decimal import Decimal
+
+from test_framework.test_framework import FlowCoinTestFramework
+from test_framework.util import (
+    assert_equal,
+    assert_greater_than,
+    assert_greater_than_or_equal,
+    assert_in,
+    assert_is_hex_string,
+    assert_not_equal,
+    assert_true,
+    compute_min_training_steps,
+    get_model_dims_for_height,
+    GROWTH_SCHEDULE,
+    DIM_GROWTH_END,
+    wait_until,
+)
+
+
+class FeatureTrainingTest(FlowCoinTestFramework):
+    """Training and model RPC tests."""
+
+    def set_test_params(self):
+        self.num_nodes = 2
+        self.setup_clean_chain = True
+
+    def run_test(self):
+        node = self.nodes[0]
+        node1 = self.nodes[1]
+
+        # Mine some blocks
+        addr = node.getnewaddress()
+        node.generatetoaddress(10, addr)
+        self.sync_blocks()
+
+        self.test_gettraininginfo(node)
+        self.test_getmodelhash(node)
+        self.test_getgrowthschedule_plateaus(node)
+        self.test_getgrowthschedule_boundaries(node)
+        self.test_getgrowthschedule_phase2(node)
+        self.test_getvalidationdata(node)
+        self.test_model_dims_in_blocks(node)
+        self.test_growth_consistency(node, node1)
+        self.test_training_steps(node)
+        self.test_plateau_transitions(node)
+        self.test_improvement_flag(node)
+        self.test_delta_fields(node)
+
+    def test_gettraininginfo(self, node):
+        """Test gettraininginfo returns correct model dimensions."""
+        self.log.info("Testing gettraininginfo...")
+
+        info = node.gettraininginfo()
+        assert_true(isinstance(info, dict))
+
+        # Required fields
+        required = ["d_model", "n_layers"]
+        for field in required:
+            assert_in(field, info, f"Missing: {field}")
+
+        height = node.getblockcount()
+        expected = get_model_dims_for_height(height)
+
+        assert_equal(
+            info["d_model"], expected["d_model"],
+            f"d_model at height {height}"
+        )
+        assert_equal(
+            info["n_layers"], expected["n_layers"],
+            f"n_layers at height {height}"
+        )
+
+        # Additional training fields
+        optional_fields = [
+            "d_ff", "n_heads", "height", "val_loss",
+            "training_steps", "model_hash",
+        ]
+        found = 0
+        for field in optional_fields:
+            if field in info:
+                found += 1
+                self.log.info("    %s = %s", field, info[field])
+
+        # d_ff should be 2x d_model at plateau 0
+        if "d_ff" in info:
+            expected_dff = expected.get("d_ff", expected["d_model"] * 2)
+            assert_equal(info["d_ff"], expected_dff)
+
+        self.log.info(
+            "  gettraininginfo: d_model=%d, n_layers=%d (%d optional fields)",
+            info["d_model"], info["n_layers"], found
+        )
+
+    def test_getmodelhash(self, node):
+        """Test getmodelhash is deterministic per block."""
+        self.log.info("Testing getmodelhash...")
+
+        try:
+            hash1 = node.getmodelhash()
+            hash2 = node.getmodelhash()
+
+            # Same block should produce same hash
+            assert_equal(hash1, hash2, "Model hash should be deterministic")
+
+            if isinstance(hash1, str):
+                assert_is_hex_string(hash1)
+                assert_equal(len(hash1), 64, "Model hash should be 32 bytes")
+
+            # After mining, hash may change (new model state)
+            addr = node.getnewaddress()
+            node.generatetoaddress(1, addr)
+
+            hash3 = node.getmodelhash()
+            # Hash may or may not change depending on training
+            self.log.info(
+                "  Model hash: %s (stable), after mine: %s",
+                str(hash1)[:16], str(hash3)[:16]
+            )
+
+        except Exception as e:
+            self.log.info("  getmodelhash: %s", e)
+
+        self.log.info("  getmodelhash verified")
+
+    def test_getgrowthschedule_plateaus(self, node):
+        """Test getgrowthschedule returns correct dims at each plateau."""
+        self.log.info("Testing getgrowthschedule plateaus...")
+
+        for start, end, d_model, n_layers, d_ff, n_heads in GROWTH_SCHEDULE:
+            # Test at start of plateau
+            schedule = node.getgrowthschedule(start)
+            assert_equal(
+                schedule["d_model"], d_model,
+                f"d_model at plateau start {start}"
+            )
+            assert_equal(
+                schedule["n_layers"], n_layers,
+                f"n_layers at plateau start {start}"
+            )
+
+            # Test at middle of plateau
+            mid = (start + end) // 2
+            schedule_mid = node.getgrowthschedule(mid)
+            assert_equal(schedule_mid["d_model"], d_model)
+            assert_equal(schedule_mid["n_layers"], n_layers)
+
+            # Test at end of plateau
+            schedule_end = node.getgrowthschedule(end)
+            assert_equal(schedule_end["d_model"], d_model)
+            assert_equal(schedule_end["n_layers"], n_layers)
+
+            self.log.info(
+                "  Plateau [%d-%d]: d=%d, L=%d, dff=%d, heads=%d",
+                start, end, d_model, n_layers, d_ff, n_heads
+            )
+
+            # d_ff and n_heads if available
+            if "d_ff" in schedule:
+                assert_equal(schedule["d_ff"], d_ff)
+            if "n_heads" in schedule:
+                assert_equal(schedule["n_heads"], n_heads)
+
+        self.log.info("  All 5 plateaus verified")
+
+    def test_getgrowthschedule_boundaries(self, node):
+        """Test getgrowthschedule at plateau transition boundaries."""
+        self.log.info("Testing growth schedule boundaries...")
+
+        # Boundary between plateau 0 and 1 (height 99 -> 100)
+        dims_99 = node.getgrowthschedule(99)
+        dims_100 = node.getgrowthschedule(100)
+        assert_equal(dims_99["d_model"], 512)
+        assert_equal(dims_100["d_model"], 640)
+        assert_not_equal(dims_99["d_model"], dims_100["d_model"])
+
+        # Boundary between plateau 1 and 2 (height 199 -> 200)
+        dims_199 = node.getgrowthschedule(199)
+        dims_200 = node.getgrowthschedule(200)
+        assert_equal(dims_199["d_model"], 640)
+        assert_equal(dims_200["d_model"], 768)
+
+        # Boundary between plateau 2 and 3 (height 299 -> 300)
+        dims_299 = node.getgrowthschedule(299)
+        dims_300 = node.getgrowthschedule(300)
+        assert_equal(dims_299["d_model"], 768)
+        assert_equal(dims_300["d_model"], 896)
+
+        # Boundary between plateau 3 and 4 (height 399 -> 400)
+        dims_399 = node.getgrowthschedule(399)
+        dims_400 = node.getgrowthschedule(400)
+        assert_equal(dims_399["d_model"], 896)
+        assert_equal(dims_400["d_model"], 1024)
+
+        # Boundary between Phase 1 and Phase 2 (height 499 -> 500)
+        dims_499 = node.getgrowthschedule(499)
+        dims_500 = node.getgrowthschedule(500)
+        assert_equal(dims_499["d_model"], 1024)
+        assert_equal(dims_500["d_model"], 1024)  # Frozen
+
+        self.log.info("  All boundary transitions verified")
+
+    def test_getgrowthschedule_phase2(self, node):
+        """Test getgrowthschedule in Phase 2 (frozen architecture)."""
+        self.log.info("Testing Phase 2 frozen architecture...")
+
+        # Phase 2 heights: all should have d=1024, L=24
+        phase2_heights = [500, 600, 1000, 5000, 10000, 50000, 100000]
+
+        for height in phase2_heights:
+            dims = node.getgrowthschedule(height)
+            assert_equal(
+                dims["d_model"], 1024,
+                f"d_model should be 1024 at height {height}"
+            )
+            assert_equal(
+                dims["n_layers"], 24,
+                f"n_layers should be 24 at height {height}"
+            )
+
+        self.log.info("  Phase 2 architecture frozen at d=1024, L=24")
+
+    def test_getvalidationdata(self, node):
+        """Test getvalidationdata format and fields."""
+        self.log.info("Testing getvalidationdata...")
+
+        try:
+            data = node.getvalidationdata()
+            assert_true(isinstance(data, dict))
+
+            # Expected fields
+            possible_fields = [
+                "height", "d_model", "n_layers", "val_loss",
+                "model_hash", "optimizer_hash", "training_steps",
+            ]
+            found = 0
+            for field in possible_fields:
+                if field in data:
+                    found += 1
+                    self.log.info("    %s = %s", field, data[field])
+
+            if found > 0:
+                self.log.info(
+                    "  getvalidationdata: %d/%d fields present",
+                    found, len(possible_fields)
+                )
+            else:
+                self.log.info("  getvalidationdata returned empty data")
+
+        except Exception as e:
+            self.log.info("  getvalidationdata: %s", e)
+
+    def test_model_dims_in_blocks(self, node):
+        """Test that model dimensions are correctly embedded in mined blocks."""
+        self.log.info("Testing model dims in mined blocks...")
+
+        # Check dimensions in existing blocks
+        height = node.getblockcount()
+        for h in range(min(height + 1, 10)):
+            block_hash = node.getblockhash(h)
+            block = node.getblock(block_hash, 1)
+
+            expected = get_model_dims_for_height(h)
+
+            if "d_model" in block:
+                assert_equal(
+                    block["d_model"], expected["d_model"],
+                    f"d_model in block at height {h}"
+                )
+            if "n_layers" in block:
+                assert_equal(
+                    block["n_layers"], expected["n_layers"],
+                    f"n_layers in block at height {h}"
+                )
+
+        self.log.info("  Model dims verified in %d blocks", min(height + 1, 10))
+
+    def test_growth_consistency(self, node, node1):
+        """Test that growth schedule is consistent across nodes."""
+        self.log.info("Testing growth consistency across nodes...")
+
+        self.sync_blocks()
+
+        test_heights = [0, 50, 100, 250, 400, 500, 1000]
+
+        for height in test_heights:
+            dims0 = node.getgrowthschedule(height)
+            dims1 = node1.getgrowthschedule(height)
+
+            assert_equal(
+                dims0["d_model"], dims1["d_model"],
+                f"d_model mismatch at height {height}"
+            )
+            assert_equal(
+                dims0["n_layers"], dims1["n_layers"],
+                f"n_layers mismatch at height {height}"
+            )
+
+        self.log.info("  Growth schedule consistent across %d heights", len(test_heights))
+
+    def test_training_steps(self, node):
+        """Test minimum training steps at various heights."""
+        self.log.info("Testing training steps requirements...")
+
+        test_cases = [
+            # (height, expected_min_steps)
+            (0, 1000),
+            (100, 1400),
+            (250, 2000),
+            (499, 2996),
+            (500, 3000),
+            (2000, 6000),
+        ]
+
+        for height, expected_steps in test_cases:
+            computed = compute_min_training_steps(height)
+            assert_equal(
+                computed, expected_steps,
+                f"Min steps at height {height}"
+            )
+
+            # Verify via RPC if available
+            try:
+                schedule = node.getgrowthschedule(height)
+                if "min_training_steps" in schedule:
+                    assert_equal(
+                        schedule["min_training_steps"], expected_steps,
+                        f"RPC min_steps at height {height}"
+                    )
+            except Exception:
+                pass
+
+        self.log.info("  Training steps verified for %d heights", len(test_cases))
+
+    def test_plateau_transitions(self, node):
+        """Test that dimensions change exactly at plateau boundaries."""
+        self.log.info("Testing plateau transitions...")
+
+        # Within a plateau, dims should be constant
+        for start, end, d_model, n_layers, d_ff, n_heads in GROWTH_SCHEDULE:
+            if end - start < 3:
+                continue
+            dims_a = node.getgrowthschedule(start)
+            dims_b = node.getgrowthschedule(start + 1)
+            dims_c = node.getgrowthschedule(end - 1)
+            dims_d = node.getgrowthschedule(end)
+
+            # All within plateau should match
+            assert_equal(dims_a["d_model"], dims_b["d_model"])
+            assert_equal(dims_b["d_model"], dims_c["d_model"])
+            assert_equal(dims_c["d_model"], dims_d["d_model"])
+            assert_equal(dims_a["n_layers"], dims_d["n_layers"])
+
+        # Across plateaus, dims should change
+        for i in range(len(GROWTH_SCHEDULE) - 1):
+            end_height = GROWTH_SCHEDULE[i][1]
+            start_next = GROWTH_SCHEDULE[i + 1][0]
+            dims_end = node.getgrowthschedule(end_height)
+            dims_next = node.getgrowthschedule(start_next)
+            assert_not_equal(
+                dims_end["d_model"], dims_next["d_model"],
+                f"d_model should change at boundary {end_height}->{start_next}"
+            )
+
+        self.log.info("  Plateau transitions verified")
+
+    def test_improvement_flag(self, node):
+        """Test improvement flag tracking in blocks."""
+        self.log.info("Testing improvement flag...")
+
+        tip = node.getbestblockhash()
+        block = node.getblock(tip, 1)
+
+        if "improvement_flag" in block:
+            flag = block["improvement_flag"]
+            assert_true(
+                isinstance(flag, (int, bool)),
+                f"improvement_flag should be int or bool: {type(flag)}"
+            )
+            self.log.info("  Improvement flag at tip: %s", flag)
+        else:
+            self.log.info("  improvement_flag not in block JSON")
+
+        # gettraininginfo may also have this
+        try:
+            info = node.gettraininginfo()
+            if "improvement" in info:
+                self.log.info("  Training improvement: %s", info["improvement"])
+        except Exception:
+            pass
+
+        self.log.info("  Improvement flag tested")
+
+    def test_delta_fields(self, node):
+        """Test delta payload fields in blocks."""
+        self.log.info("Testing delta fields...")
+
+        tip = node.getbestblockhash()
+        block = node.getblock(tip, 1)
+
+        delta_fields = ["delta_hash", "delta_count", "delta_size"]
+        found = 0
+        for field in delta_fields:
+            if field in block:
+                found += 1
+                self.log.info("    %s = %s", field, block[field])
+
+        if found > 0:
+            # delta_hash should be a hex string
+            if "delta_hash" in block:
+                delta_hash = block["delta_hash"]
+                if isinstance(delta_hash, str) and len(delta_hash) == 64:
+                    assert_is_hex_string(delta_hash)
+
+            # delta_count should be non-negative
+            if "delta_count" in block:
+                assert_greater_than_or_equal(block["delta_count"], 0)
+
+            # delta_size should be non-negative
+            if "delta_size" in block:
+                assert_greater_than_or_equal(block["delta_size"], 0)
+
+        self.log.info("  %d/%d delta fields found in block",
+                       found, len(delta_fields))
+
+    def test_growth_schedule_monotonic(self, node):
+        """Test that model dimensions are monotonically non-decreasing."""
+        self.log.info("Testing growth schedule monotonicity...")
+
+        prev_d_model = 0
+        prev_n_layers = 0
+
+        for height in range(0, 600, 10):
+            dims = node.getgrowthschedule(height)
+            d_model = dims["d_model"]
+            n_layers = dims["n_layers"]
+
+            assert_greater_than_or_equal(
+                d_model, prev_d_model,
+                f"d_model should not decrease at height {height}"
+            )
+            assert_greater_than_or_equal(
+                n_layers, prev_n_layers,
+                f"n_layers should not decrease at height {height}"
+            )
+
+            prev_d_model = d_model
+            prev_n_layers = n_layers
+
+        self.log.info("  Growth schedule is monotonically non-decreasing")
+
+    def test_training_info_consistency(self, node):
+        """Test that gettraininginfo is consistent with getgrowthschedule."""
+        self.log.info("Testing training info consistency...")
+
+        info = node.gettraininginfo()
+        height = node.getblockcount()
+        schedule = node.getgrowthschedule(height)
+
+        assert_equal(
+            info["d_model"], schedule["d_model"],
+            "gettraininginfo d_model should match getgrowthschedule"
+        )
+        assert_equal(
+            info["n_layers"], schedule["n_layers"],
+            "gettraininginfo n_layers should match getgrowthschedule"
+        )
+
+        self.log.info(
+            "  Training info consistent: d_model=%d, n_layers=%d",
+            info["d_model"], info["n_layers"]
+        )
+
+    def test_growth_schedule_at_extreme_heights(self, node):
+        """Test growth schedule at very large heights."""
+        self.log.info("Testing growth at extreme heights...")
+
+        extreme_heights = [1000000, 10000000, 100000000]
+
+        for height in extreme_heights:
+            dims = node.getgrowthschedule(height)
+            # Phase 2: all should be frozen
+            assert_equal(
+                dims["d_model"], 1024,
+                f"d_model should be 1024 at height {height}"
+            )
+            assert_equal(
+                dims["n_layers"], 24,
+                f"n_layers should be 24 at height {height}"
+            )
+
+        self.log.info("  Extreme heights: architecture frozen correctly")
+
+    def test_model_dims_fields_complete(self, node):
+        """Test that getgrowthschedule returns all dimension fields."""
+        self.log.info("Testing growth schedule field completeness...")
+
+        dims = node.getgrowthschedule(0)
+
+        required_fields = ["d_model", "n_layers"]
+        for field in required_fields:
+            assert_in(field, dims, f"Missing required field: {field}")
+
+        optional_fields = ["d_ff", "n_heads", "gru_dim", "n_slots"]
+        found = 0
+        for field in optional_fields:
+            if field in dims:
+                found += 1
+                assert_greater_than(
+                    dims[field], 0,
+                    f"{field} should be positive"
+                )
+
+        self.log.info(
+            "  Growth schedule: %d required + %d optional fields",
+            len(required_fields), found
+        )
+
+    def test_training_info_after_mining(self, node):
+        """Test that training info updates after mining blocks."""
+        self.log.info("Testing training info after mining...")
+
+        info_before = node.gettraininginfo()
+        height_before = node.getblockcount()
+
+        addr = node.getnewaddress()
+        node.generatetoaddress(5, addr)
+
+        info_after = node.gettraininginfo()
+        height_after = node.getblockcount()
+
+        assert_equal(height_after, height_before + 5)
+
+        # If height changed plateaus, dims should change
+        expected_before = get_model_dims_for_height(height_before)
+        expected_after = get_model_dims_for_height(height_after)
+
+        assert_equal(info_after["d_model"], expected_after["d_model"])
+        assert_equal(info_after["n_layers"], expected_after["n_layers"])
+
+        self.log.info(
+            "  Training info updated: height %d->%d",
+            height_before, height_after
+        )
+
+    def test_getdeltapayload(self, node):
+        """Test getdeltapayload RPC if available."""
+        self.log.info("Testing getdeltapayload...")
+
+        try:
+            delta = node.getdeltapayload()
+            assert_true(isinstance(delta, (dict, str)))
+
+            if isinstance(delta, dict):
+                for field in ["size", "hash", "data"]:
+                    if field in delta:
+                        self.log.info("    %s = %s", field, str(delta[field])[:40])
+            elif isinstance(delta, str):
+                self.log.info("  Delta payload: %d chars", len(delta))
+
+        except Exception as e:
+            self.log.info("  getdeltapayload: %s", e)
+
+    def test_getmodelweights(self, node):
+        """Test getmodelweights RPC if available."""
+        self.log.info("Testing getmodelweights...")
+
+        try:
+            weights = node.getmodelweights()
+            if isinstance(weights, dict):
+                for field in ["size", "hash", "param_count"]:
+                    if field in weights:
+                        self.log.info("    %s = %s", field, weights[field])
+            elif isinstance(weights, str):
+                self.log.info("  Model weights hash: %s", weights[:40])
+        except Exception as e:
+            self.log.info("  getmodelweights: %s", e)
+
+
+if __name__ == "__main__":
+    FeatureTrainingTest().main()

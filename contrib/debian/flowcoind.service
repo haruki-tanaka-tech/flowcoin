@@ -1,0 +1,29 @@
+[Unit]
+Description=FlowCoin Daemon
+Documentation=man:flowcoind(1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+ExecStart=/usr/bin/flowcoind -daemon -pid=/run/flowcoind/flowcoind.pid -conf=/etc/flowcoin/flowcoin.conf -datadir=/var/lib/flowcoind
+ExecStop=/usr/bin/flowcoin-cli stop
+PIDFile=/run/flowcoind/flowcoind.pid
+Restart=on-failure
+RestartSec=30
+
+User=flowcoin
+Group=flowcoin
+
+RuntimeDirectory=flowcoind
+StateDirectory=flowcoind
+ConfigurationDirectory=flowcoin
+
+PrivateTmp=true
+ProtectSystem=full
+NoNewPrivileges=true
+ProtectHome=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

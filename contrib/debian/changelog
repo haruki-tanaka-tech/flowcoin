@@ -1,0 +1,11 @@
+flowcoin (1.0.0-1) unstable; urgency=medium
+
+  * Initial release.
+  * Full node daemon with Proof-of-Training consensus.
+  * ResonanceNet V5 model architecture with deterministic evaluation.
+  * Ed25519 signatures with Keccak-256 hashing.
+  * SLIP-0010 HD key derivation.
+  * Bech32m address encoding (HRP: fl).
+  * Bitcoin-compatible UTXO model and script system.
+
+ -- Haruki Tanaka <haruki@flowcoin.org>  Mon, 25 Mar 2026 00:00:00 +0000
