@@ -52,9 +52,20 @@ CBlock create_genesis_block() {
     genesis.sparse_threshold = 0.0f;
     genesis.nonce           = 0;
 
-    // No real miner for genesis
-    genesis.miner_pubkey.fill(0);
-    genesis.miner_sig.fill(0);
+    // Genesis creator's Ed25519 public key (proof of authorship)
+    // Private key is kept offline by the creator.
+    // Coinbase is still unspendable (pubkey_hash = 0x00...00),
+    // but this signature proves who created FlowCoin.
+    static constexpr uint8_t GENESIS_PUBKEY[32] = {
+        0x36, 0x4a, 0x0a, 0x94, 0x80, 0x08, 0x56, 0x8a,
+        0x1c, 0xe2, 0xfd, 0x77, 0x6b, 0x61, 0xc2, 0x26,
+        0x4c, 0x21, 0x36, 0x70, 0xda, 0xeb, 0xfe, 0x1d,
+        0x5d, 0xf8, 0x32, 0xba, 0x0c, 0xb5, 0xbb, 0x62
+    };
+    std::memcpy(genesis.miner_pubkey.data(), GENESIS_PUBKEY, 32);
+
+    // Signature will be computed over the unsigned header after all fields are set
+    genesis.miner_sig.fill(0);  // filled below after merkle root
 
     // Training/dataset hashes are null for genesis
     genesis.training_hash.set_null();
