@@ -455,11 +455,19 @@ class TrainingData:
 # Delta computation
 # ═══════════════════════════════════════════════════════════════════
 
-def compute_delta_hash(
+def compute_fast_hash(model: ResonanceNetV5) -> bytes:
+    """Fast hash: sample every 1000th parameter. Zero overhead."""
+    with torch.no_grad():
+        all_params = torch.cat([p.data.flatten() for p in model.parameters()])
+        subset = all_params[::1000].cpu().numpy().tobytes()
+    return keccak256(subset)
+
+
+def compute_full_delta(
     model: ResonanceNetV5,
     consensus_state: dict,
 ) -> Tuple[bytes, bytes]:
-    """Compute keccak256 of weight delta. Returns (delta_hash, delta_bytes)."""
+    """Full delta hash (expensive ~300ms). Only called when candidate found."""
     parts = []
     with torch.no_grad():
         for key in sorted(model.state_dict().keys()):
@@ -585,18 +593,17 @@ def mine(args: argparse.Namespace) -> None:
                 if lv < best_loss:
                     best_loss = lv
 
-                # Status + hash check every 10 steps
+                # Fast hash check EVERY step (zero overhead)
+                fast_hash = compute_fast_hash(model)
+                fast_training = keccak256(fast_hash + data.hash)
+                fast_int = int.from_bytes(fast_training, "big")
+                total_checks += 1
+
+                # Status every 10 steps
                 if step % 10 == 0:
                     elapsed = time.time() - cycle_start
                     st_s = step / elapsed
                     tok_s = step * args.batch * 256 / elapsed
-
-                    # Hash check
-                    delta_hash, _ = compute_delta_hash(model, consensus)
-                    training_hash = keccak256(delta_hash + data.hash)
-                    training_int = int.from_bytes(training_hash, "big")
-                    total_checks += 1
-
                     print(
                         f"\r  step {step:>6d} | loss {lv:.4f} | "
                         f"best {best_loss:.4f} | {st_s:.1f} st/s "
@@ -604,14 +611,20 @@ def mine(args: argparse.Namespace) -> None:
                         end="", flush=True,
                     )
 
+                # Candidate found — verify with full delta hash
+                if fast_int < target:
+                    delta_hash, delta_bytes = compute_full_delta(model, consensus)
+                    training_hash = keccak256(delta_hash + data.hash)
+                    training_int = int.from_bytes(training_hash, "big")
+
                     if training_int < target:
+                        elapsed = time.time() - cycle_start
                         blocks_found += 1
                         print(f"\n\n  *** BLOCK {height} FOUND! ***")
                         print(f"  Step: {step} | Loss: {best_loss:.4f} | "
                               f"Time: {elapsed:.1f}s")
                         print(f"  Hash: {training_hash.hex()[:16]}...")
                         print()
-
                         try:
                             rpc.call("submitblock", ["0000"])
                         except RPCError:
