@@ -593,11 +593,19 @@ def mine(args: argparse.Namespace) -> None:
                 if lv < best_loss:
                     best_loss = lv
 
-                # Fast hash check EVERY step (zero overhead)
-                fast_hash = compute_fast_hash(model)
-                fast_training = keccak256(fast_hash + data.hash)
-                fast_int = int.from_bytes(fast_training, "big")
                 total_checks += 1
+
+                # Hash check every step — use full delta hash
+                # Compute delta on GPU, transfer only once
+                with torch.no_grad():
+                    delta_parts = []
+                    for key in sorted(model.state_dict().keys()):
+                        d = model.state_dict()[key].float() - consensus[key].to(device).float()
+                        delta_parts.append(d.cpu().numpy().tobytes())
+                delta_bytes = b"".join(delta_parts)
+                delta_hash = keccak256(delta_bytes)
+                training_hash = keccak256(delta_hash + data.hash)
+                training_int = int.from_bytes(training_hash, "big")
 
                 # Status every 10 steps
                 if step % 10 == 0:
@@ -611,13 +619,7 @@ def mine(args: argparse.Namespace) -> None:
                         end="", flush=True,
                     )
 
-                # Candidate found — verify with full delta hash
-                if fast_int < target:
-                    delta_hash, delta_bytes = compute_full_delta(model, consensus)
-                    training_hash = keccak256(delta_hash + data.hash)
-                    training_int = int.from_bytes(training_hash, "big")
-
-                    if training_int < target:
+                if training_int < target:
                         elapsed = time.time() - cycle_start
                         blocks_found += 1
                         print(f"\n\n  *** BLOCK {height} FOUND! ***")
