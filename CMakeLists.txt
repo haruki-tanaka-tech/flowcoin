@@ -53,10 +53,12 @@ set(CMAKE_CXX_ARCHIVE_APPEND "<CMAKE_AR> qD <TARGET> <LINK_FLAGS> <OBJECTS>")
 # --- ggml (GGML tensor library, CPU backend) ---
 add_library(ggml STATIC
     src/ggml/ggml.c
+    src/ggml/ggml.cpp
     src/ggml/ggml-alloc.c
     src/ggml/ggml-backend.cpp
     src/ggml/ggml-threading.cpp
     src/ggml/ggml-quants.c
+    src/ggml/ggml-opt.cpp
     src/ggml/gguf.cpp
     src/ggml/ggml-cpu/ggml-cpu.c
     src/ggml/ggml-cpu/ggml-cpu.cpp
@@ -65,6 +67,13 @@ add_library(ggml STATIC
     src/ggml/ggml-cpu/unary-ops.cpp
     src/ggml/ggml-cpu/binary-ops.cpp
     src/ggml/ggml-cpu/quants.c
+    src/ggml/ggml-cpu/repack.cpp
+    src/ggml/ggml-cpu/traits.cpp
+    src/ggml/ggml-cpu/hbm.cpp
+    src/ggml/ggml-cpu/llamafile/sgemm.cpp
+    src/ggml/ggml-cpu/arch/x86/quants.c
+    src/ggml/ggml-cpu/arch/x86/cpu-feats.cpp
+    src/ggml/ggml-cpu/arch/x86/repack.cpp
 )
 target_compile_definitions(ggml PUBLIC GGML_USE_CPU _GNU_SOURCE
     GGML_VERSION="0.0.0"
@@ -73,9 +82,10 @@ target_compile_definitions(ggml PUBLIC GGML_USE_CPU _GNU_SOURCE
 target_include_directories(ggml PUBLIC
     src/ggml
     src/ggml/ggml-cpu
+    src/ggml/ggml-cpu/arch
 )
 # Suppress warnings and errors in vendored code
-target_compile_options(ggml PRIVATE -w -Wno-error)
+target_compile_options(ggml PRIVATE -w -Wno-error -Wno-all -Wno-extra)
 set_target_properties(ggml PROPERTIES
     C_EXTENSIONS ON
     CXX_EXTENSIONS ON
