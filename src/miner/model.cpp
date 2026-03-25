@@ -328,16 +328,16 @@ ggml_tensor* GGMLModel::build_forward(ggml_context* ctx,
         normed = ggml_mul(ctx, normed, L.norm1_w);
 
         // Gate = silu(normed @ Wz^T + bz)
-        ggml_tensor* gate = ggml_mul_mat(ctx, L.gru_wz, normed);
-        gate = ggml_add(ctx, gate, L.gru_bz);
-        gate = ggml_silu(ctx, gate);
+        ggml_tensor* gru_gate = ggml_mul_mat(ctx, L.gru_wz, normed);
+        gru_gate = ggml_add(ctx, gru_gate, L.gru_bz);
+        gru_gate = ggml_silu(ctx, gru_gate);
 
         // Value = normed @ Wh^T + bh
-        ggml_tensor* val = ggml_mul_mat(ctx, L.gru_wh, normed);
-        val = ggml_add(ctx, val, L.gru_bh);
+        ggml_tensor* gru_val = ggml_mul_mat(ctx, L.gru_wh, normed);
+        gru_val = ggml_add(ctx, gru_val, L.gru_bh);
 
-        // Output = gate * value (element-wise gating)
-        ggml_tensor* gated_out = ggml_mul(ctx, gate, val);
+        // Output = gate * value
+        ggml_tensor* gated_out = ggml_mul(ctx, gru_gate, gru_val);
 
         // Residual
         x = ggml_add(ctx, x, gated_out);
