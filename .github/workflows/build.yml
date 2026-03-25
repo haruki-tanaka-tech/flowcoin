@@ -1,0 +1,60 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        compiler: [gcc, clang]
+        build_type: [Release, Debug]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ clang python3
+
+      - name: Configure
+        run: |
+          mkdir build && cd build
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          else
+            cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          fi
+
+      - name: Build
+        run: cd build && make -j$(nproc)
+
+      - name: Run unit tests
+        run: cd build && ./flowcoin_tests
+
+      - name: Run benchmarks (quick)
+        if: matrix.build_type == 'Release'
+        run: cd build && ./flowcoin_bench --iters 10
+
+  build-macos:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cd build && make -j$(sysctl -n hw.ncpu)
+      - name: Test
+        run: cd build && ./flowcoin_tests
+
+  lint:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        run: sudo apt-get update && sudo apt-get install -y python3
+      - name: Run lint checks
+        run: bash ci/lint.sh
