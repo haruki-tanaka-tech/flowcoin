@@ -1075,6 +1075,11 @@ void NetManager::resolve_dns_seeds() {
             addr.port = consensus::MAINNET_PORT;
 
             addrman_.add(addr, now);
+
+            // Immediately try connecting if we need outbound peers
+            if (outbound_count() < static_cast<size_t>(consensus::MAX_OUTBOUND_PEERS)) {
+                connect_to(addr);
+            }
         }
     }
 }
