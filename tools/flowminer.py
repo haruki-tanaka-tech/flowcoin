@@ -1123,7 +1123,7 @@ def mine(args: argparse.Namespace) -> None:
                 if training_int < target:
                     # Candidate found. Compute sparse delta for block.
                     delta_hash, sparse_bytes, nonzero = compute_full_delta(
-                        model, consensus, sparse_threshold=1e-3)
+                        model, consensus, sparse_threshold=0.01)
                     elapsed = time.time() - cycle_start
                     blocks_found += 1
 
