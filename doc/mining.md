@@ -1,7 +1,28 @@
 # FlowCoin Mining Guide
 
-This guide covers everything you need to know to mine FlowCoin using the
-Proof-of-Useful-Training (PoUT) consensus mechanism.
+## Quick Start
+
+```bash
+# Build miner (CPU only)
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc) flowcoin-miner
+
+# Build with CUDA (NVIDIA GPUs)
+cmake .. -DCMAKE_BUILD_TYPE=Release -DFLOWCOIN_USE_CUDA=ON
+make -j$(nproc) flowcoin-miner
+
+# Build with Vulkan (AMD, Intel, any GPU)
+cmake .. -DCMAKE_BUILD_TYPE=Release -DFLOWCOIN_USE_VULKAN=ON
+make -j$(nproc) flowcoin-miner
+
+# Place training data
+mkdir -p ~/.flowcoin/training
+cp *.txt ~/.flowcoin/training/
+
+# Run miner (auto-detects GPU)
+./flowcoin-miner
+```
 
 ## Overview
 
@@ -11,10 +32,26 @@ a neural network (ResonanceNet V5) on real data. The training results --
 weight updates (deltas) -- are submitted as proof of work, and the network
 collectively builds a progressively more capable AI model.
 
+The miner is a standalone native C++ binary. No Python, no PyTorch, no
+external ML frameworks. It connects to a running `flowcoind` via JSON-RPC.
+
 Each block includes:
 - A compressed delta (model weight update from training)
 - A validation loss (measured by evaluating the updated model)
 - A training hash that must be below the difficulty target
+
+## GPU Support
+
+| Backend | GPUs | Build Flag |
+|---------|------|------------|
+| CUDA | NVIDIA (GTX/RTX/Tesla) | `-DFLOWCOIN_USE_CUDA=ON` |
+| Vulkan | AMD, Intel, NVIDIA | `-DFLOWCOIN_USE_VULKAN=ON` |
+| Metal | Apple (M1/M2/M3/M4) | Auto-enabled on macOS |
+| OpenCL | AMD, Intel, ARM, any | `-DFLOWCOIN_USE_OPENCL=ON` |
+| CPU | Any | Always available (default) |
+
+The miner auto-detects the best available backend. Use `--backend cpu` to
+force CPU-only operation.
 
 ## Hardware Requirements
 
@@ -22,11 +59,11 @@ Each block includes:
 
 | Component | Requirement |
 |---|---|
-| GPU | NVIDIA GPU with 4GB+ VRAM (GTX 1060 or better) |
 | CPU | 4 cores |
 | RAM | 8 GB |
 | Storage | 20 GB SSD |
 | Network | Stable internet connection |
+| GPU | Optional (CPU-only works) |
 
 ### Recommended (competitive mainnet mining)
 
@@ -37,20 +74,6 @@ Each block includes:
 | RAM | 32 GB |
 | Storage | 100 GB NVMe SSD |
 | Network | Low-latency broadband |
-
-### GPU Compatibility
-
-The miner uses ggml and supports multiple backends:
-
-| GPU Family | Support | Notes |
-|---|---|---|
-| NVIDIA (CUDA) | Full | Recommended. Best performance. |
-| AMD (Vulkan) | Experimental | Via ggml Vulkan backend. |
-| Apple Silicon (Metal) | Experimental | Via ggml Metal backend. |
-| CPU-only | Yes | Default. Slower but always works. |
-
-Build with `-DGGML_USE_CUDA=ON`, `-DGGML_USE_VULKAN=ON`, or
-`-DGGML_USE_METAL=ON` to enable GPU backends.
 
 ## Software Setup
 
@@ -135,8 +158,10 @@ The miner will:
 | `--rpcport <port>` | `9334` | Node RPC port |
 | `--rpcuser <user>` | from config | RPC username |
 | `--rpcpassword <pw>` | from config | RPC password |
-| `--cpu` | auto-detect | Force CPU backend |
-| `--threads <n>` | auto | Number of CPU threads |
+| `--backend <name>` | `auto` | Compute backend (auto/cpu/cuda/vulkan/metal/opencl) |
+| `--cpu` | | Force CPU backend |
+| `--lr <float>` | `0.001` | Learning rate |
+| `--seq-len <int>` | `256` | Sequence length |
 | `--help` | | Show help message |
 
 ### Examples
@@ -148,8 +173,8 @@ flowcoin-miner
 # Custom RPC credentials
 flowcoin-miner --rpcuser flowcoin --rpcpassword pass123
 
-# Force CPU with 8 threads
-flowcoin-miner --cpu --threads 8
+# Force CPU backend
+flowcoin-miner --cpu
 
 # Custom data directory
 flowcoin-miner --datadir /mnt/data/flowcoin
@@ -161,25 +186,35 @@ The miner provides real-time feedback at every step:
 
 ```
   FlowCoin Miner v1.0.0
-  ggml backend | ResonanceNet V5
+  Native C++ | ResonanceNet V5
 
-  Loaded 12 files from /home/user/.flowcoin/training
-  Training data: 156000000 bytes (12 files)
-  Dataset hash:  a3f17b2c4e891234
-  Node: 127.0.0.1:9334 (height 42)
-  Backend: CPU (build with GGML_USE_CUDA for GPU)
+[1/5] Loading miner identity...
+  Generated new miner key: a3f17b2c4e891234...
+[2/5] Loading training data...
+  Loaded 12 files, 156000000 bytes (148.8 MB)
+  Dataset hash: a3f17b2c4e891234
+[3/5] Initializing compute backend...
+  Backend: CPU
+  Device: AMD Ryzen 9 7950X 16-Core Processor
+[4/5] Connecting to node at 127.0.0.1:9334...
+  Connected. Chain height: 42
+[5/5] Initializing ResonanceNet V5 model...
+  Model: d=554, L=9, ff=1108, slots=1196
+  Parameters: 8.2M (32920768 bytes)
 
-  Mining block 43 (d=554 L=9 slots=1196)
-  Model: 8234567 parameters (31.4 MB)
-  Using genesis model weights
-  block 43 | step    100 | loss 4.8321 | best 4.6142 | 85 st/s | checks 1
-  block 43 | step    200 | loss 4.6142 | best 4.2105 | 82 st/s | checks 2
+  Ready to mine.
 
-  *** BLOCK FOUND at step 350! ***
-  Hash: 00001a3f7b2c4e89
-  Loss: 3.4521
+  Mining started. Press Ctrl+C to stop.
 
-  Block submitted successfully at height 43
+  [00:01:23] step=100  loss=4.8321  best=4.6142  grad=1.23e-03  speed=85.2 st/s  lz=3  blocks=0
+
+  ╔══════════════════════════════════════════════╗
+  ║              BLOCK FOUND!                    ║
+  ╠══════════════════════════════════════════════╣
+  ║  Height:   43                                ║
+  ║  Loss:     3.452100                          ║
+  ║  Hash:     00001a3f7b2c4e89...               ║
+  ╚══════════════════════════════════════════════╝
 ```
 
 ## Understanding Training Metrics
@@ -207,8 +242,8 @@ zero chance of meeting the target.
 
 The miner uses Simultaneous Perturbation Stochastic Approximation (SPSA)
 for gradient estimation. This method requires only 2 forward passes per
-training step (no backward pass needed), making it efficient with any
-ggml model:
+training step (no backward pass needed), making it efficient for any
+compute backend:
 
 1. Generate random direction d (Rademacher +/-1 for each parameter)
 2. Compute loss at weights + c*d (forward pass 1)
@@ -312,7 +347,7 @@ Inference remains O(1) because only top_k=2 slots are active per token.
 
 ### Timing your submissions
 
-- The miner checks for new blocks every 500 training steps
+- The miner checks for new blocks every 5 seconds
 - If a new block arrives from another miner, training restarts
   immediately with the updated model state
 - Submitting stale blocks (wrong prev_hash) wastes training effort
@@ -358,9 +393,9 @@ the data files.
 
 ### Slow training speed
 
-- Build with CUDA support: `cmake .. -DGGML_USE_CUDA=ON`
-- Use `--threads` to set CPU thread count
-- Monitor GPU utilization with `nvidia-smi`
+- Build with CUDA support: `cmake .. -DFLOWCOIN_USE_CUDA=ON`
+- Check GPU utilization with `nvidia-smi`
+- Ensure training dataset is on fast storage (SSD/NVMe)
 
 ## Monitoring
 
@@ -406,5 +441,5 @@ training and reward sharing.
 - Keep your `wallet.dat` backed up and encrypted
 - Use unique RPC credentials (not the defaults)
 - Do not expose the RPC port to the public internet
-- The miner generates a new keypair for each mined block automatically
+- The miner generates a new keypair for each session automatically
 - Monitor for unusual difficulty adjustments that might indicate an attack
