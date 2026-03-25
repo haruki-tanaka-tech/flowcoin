@@ -38,7 +38,8 @@ const std::vector<SeedNode> MAINNET_SEEDS = {
     // ── Static IP fallback ───────────────────────────────────
     // Used when DNS resolution fails (firewall, censorship, etc.)
     // These are stable nodes operated by the core team.
-    {"125.185.70.218",           9333},   // Korea — genesis seed node
+    {"125.185.70.218",                          9333},   // IPv4 fallback
+    {"2406:5900:2:d47:264b:feff:fe87:591d",     9333},   // IPv6 fallback
 };
 
 // ---------------------------------------------------------------------------
