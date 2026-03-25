@@ -5,6 +5,7 @@
 #include "mining/submitblock.h"
 #include "chain/chainstate.h"
 #include "consensus/params.h"
+#include "consensus/reward.h"
 #include "crypto/sign.h"
 #include "hash/keccak.h"
 #include "logging.h"

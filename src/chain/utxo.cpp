@@ -512,4 +512,37 @@ UTXOSet::UTXOCursor UTXOSet::get_cursor() const {
     return UTXOCursor(*this);
 }
 
+// ---------------------------------------------------------------------------
+// compact — run SQLite VACUUM to reclaim space
+// ---------------------------------------------------------------------------
+
+void UTXOSet::compact() {
+    if (!db_) return;
+    char* errmsg = nullptr;
+    sqlite3_exec(db_, "PRAGMA incremental_vacuum;", nullptr, nullptr, &errmsg);
+    if (errmsg) sqlite3_free(errmsg);
+}
+
+// ---------------------------------------------------------------------------
+// for_each — iterate all UTXOs via cursor
+// ---------------------------------------------------------------------------
+
+void UTXOSet::for_each(std::function<void(const uint256&, uint32_t, const UTXOEntry&)> fn) const {
+    UTXOCursor cursor = get_cursor();
+    uint256 txid;
+    uint32_t vout;
+    UTXOEntry entry;
+    while (cursor.next(txid, vout, entry)) {
+        fn(txid, vout, entry);
+    }
+}
+
+std::vector<std::pair<std::pair<uint256, uint32_t>, UTXOEntry>> UTXOSet::get_all() const {
+    std::vector<std::pair<std::pair<uint256, uint32_t>, UTXOEntry>> result;
+    for_each([&](const uint256& txid, uint32_t vout, const UTXOEntry& entry) {
+        result.push_back({{txid, vout}, entry});
+    });
+    return result;
+}
+
 } // namespace flow

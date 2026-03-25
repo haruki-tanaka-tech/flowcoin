@@ -54,6 +54,9 @@ public:
     // Get the highest indexed block height
     uint64_t get_best_height() const;
 
+    // Compact the database (SQLite incremental vacuum).
+    void compact();
+
 private:
     sqlite3* db_ = nullptr;
 

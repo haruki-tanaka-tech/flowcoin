@@ -3,6 +3,8 @@
 
 #include "mining/submitblock.h"
 #include "chain/chainstate.h"
+#include "mempool/mempool.h"
+#include "net/net.h"
 #include "consensus/params.h"
 #include "consensus/validation.h"
 #include "hash/keccak.h"

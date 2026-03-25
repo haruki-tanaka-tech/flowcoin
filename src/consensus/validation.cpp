@@ -976,18 +976,8 @@ static TxValidationResult validate_tx_against_utxo(
 }
 
 // ===========================================================================
-// ConnectResult — return type for connect_block_transactions
+// ConnectResult — defined in validation.h
 // ===========================================================================
-
-struct ConnectResult {
-    bool success;
-    std::string error;
-    Amount total_fees;
-    std::vector<std::pair<uint256, uint32_t>> spent_utxos;
-    std::vector<std::pair<uint256, uint32_t>> created_utxos;
-    int total_sigops;
-    size_t total_block_weight;
-};
 
 // ===========================================================================
 // connect_block_transactions — validate all txs and compute UTXO changes

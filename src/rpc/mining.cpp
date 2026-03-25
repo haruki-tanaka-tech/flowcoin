@@ -96,7 +96,7 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         j["mutable"] = mutable_fields;
 
         // Block weight limit
-        j["weightlimit"] = consensus::MAX_BLOCK_WEIGHT;
+        j["weightlimit"] = MAX_BLOCK_WEIGHT;
         j["sigoplimit"]  = consensus::MAX_BLOCK_SIGOPS;
 
         // Minimum timestamp

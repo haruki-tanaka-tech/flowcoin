@@ -70,7 +70,7 @@ VerificationResult ChainVerifier::verify(
     result.level = level;
     result.success = true;
 
-    uint64_t chain_height = chain_.get_height();
+    uint64_t chain_height = chain_.height();
 
     // Determine range to check
     if (num_blocks == 0 || num_blocks > chain_height + 1) {
@@ -166,7 +166,7 @@ VerificationResult ChainVerifier::verify(
 // ============================================================================
 
 bool ChainVerifier::verify_block_index(VerificationResult& result) {
-    uint64_t height = chain_.get_height();
+    uint64_t height = chain_.height();
 
     // Verify the chain is continuous from genesis to tip
     for (uint64_t h = 0; h <= height; ++h) {
@@ -309,7 +309,8 @@ bool ChainVerifier::verify_reconnect(uint64_t height, const CBlock& block,
                                       VerificationResult& result) {
     // Full block validation
     consensus::ValidationState state;
-    consensus::check_block(block, state, nullptr);
+    consensus::BlockContext ctx;
+    consensus::check_block(block, ctx, state);
 
     if (state.is_invalid()) {
         result.error_height = height;

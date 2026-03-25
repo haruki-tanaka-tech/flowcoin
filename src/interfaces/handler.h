@@ -8,6 +8,7 @@
 #ifndef FLOWCOIN_INTERFACES_HANDLER_H
 #define FLOWCOIN_INTERFACES_HANDLER_H
 
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <memory>

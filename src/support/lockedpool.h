@@ -22,6 +22,7 @@
 #include <cstring>
 #include <mutex>
 #include <map>
+#include <stdexcept>
 #include <vector>
 
 namespace flow {

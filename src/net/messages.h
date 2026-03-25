@@ -166,6 +166,70 @@ private:
                      uint8_t code, const std::string& reason,
                      const uint256& hash = uint256());
 
+    // Block announcement strategies
+    void announce_block_headers(Peer& peer, const CBlock& block);
+    void announce_compact_block(Peer& peer, const CBlock& block);
+    void announce_full_block(Peer& peer, const CBlock& block);
+    void relay_block_smart(const CBlock& block);
+
+    // Orphan block management
+    void add_orphan_block(const CBlock& block, uint64_t from_peer);
+    bool has_orphan_block(const uint256& hash) const;
+    void process_orphan_blocks(const uint256& prev_hash);
+    void limit_orphan_blocks(size_t max_orphans);
+
+    // Headers batch sync
+    void request_headers_batch(Peer& peer, const uint256& from_hash);
+    void process_headers_batch(Peer& peer, const std::vector<CBlockHeader>& headers);
+
+    // Transaction broadcast tracking
+    struct BroadcastState {
+        uint256 txid;
+        int peers_relayed_to = 0;
+        int64_t first_relay_time = 0;
+        int relay_attempts = 0;
+        bool confirmed = false;
+    };
+    std::map<uint256, BroadcastState> broadcast_states_;
+
+    void track_tx_broadcast(const uint256& txid);
+    BroadcastState get_broadcast_state(const uint256& txid) const;
+    void rebroadcast_wallet_txs(const std::vector<CTransaction>& wallet_txs);
+
+    // Peer timeout management
+    void check_peer_timeouts();
+
+    // Local address advertisement
+    void send_local_addr(Peer& peer, const CNetAddr& local_addr);
+
+    // Block download scheduling
+    void schedule_block_downloads();
+    Peer* select_download_peer(const std::vector<Peer*>& peers,
+                               const uint256& block_hash);
+
+    // Transaction relay policy
+    bool should_relay_tx(const Peer& peer, const CTransaction& tx) const;
+    void batch_relay_txs(const std::vector<uint256>& txids);
+
+    // Block locator construction
+    std::vector<uint256> build_block_locator() const;
+
+    // Protocol negotiation messages
+    void send_sendcmpct(Peer& peer, bool high_bandwidth);
+    void send_sendheaders(Peer& peer);
+    void send_feefilter(Peer& peer, Amount fee_rate);
+
+    // Orphan block storage
+    struct OrphanBlock {
+        CBlock block;
+        uint256 hash;
+        uint256 prev_hash;
+        uint64_t peer_id;
+        int64_t received_at;
+    };
+    std::map<uint256, OrphanBlock> orphan_blocks_;
+    std::map<uint256, std::vector<uint256>> orphans_by_prev_;
+
 public:
     // Periodic maintenance (called from NetManager tick)
     void on_tick();

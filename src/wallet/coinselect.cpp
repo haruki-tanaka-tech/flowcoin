@@ -570,8 +570,10 @@ CoinSelection auto_select(const std::vector<CoinToSpend>& available,
     return sf_result;
 }
 
+} // namespace coinselect (close before waste analysis functions)
+
 // ---------------------------------------------------------------------------
-// Waste analysis
+// Waste analysis (in flow namespace, not coinselect)
 // ---------------------------------------------------------------------------
 
 WasteAnalysis calculate_waste(const CoinSelection& selection,
@@ -600,6 +602,7 @@ WasteAnalysis calculate_waste(const CoinSelection& selection,
 
 CoinSelection select_min_waste(const std::vector<CoinToSpend>& available,
                                 Amount target, Amount fee_per_input) {
+    using namespace coinselect;
     // Run all algorithms and pick the one with minimum waste
     struct Candidate {
         CoinSelection selection;
@@ -657,5 +660,4 @@ CoinSelection select_min_waste(const std::vector<CoinToSpend>& available,
     return best;
 }
 
-} // namespace coinselect
 } // namespace flow

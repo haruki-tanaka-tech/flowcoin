@@ -100,6 +100,18 @@ struct Blob {
     bool operator>=(const Blob& other) const {
         return other <= *this;
     }
+
+    /** Return a hex string representation. */
+    std::string to_hex() const {
+        static const char hex_chars[] = "0123456789abcdef";
+        std::string result;
+        result.reserve(N * 2);
+        for (size_t i = 0; i < N; ++i) {
+            result.push_back(hex_chars[(m_data[i] >> 4) & 0xF]);
+            result.push_back(hex_chars[m_data[i] & 0xF]);
+        }
+        return result;
+    }
 };
 
 // ---------------------------------------------------------------------------

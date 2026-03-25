@@ -27,6 +27,8 @@
 
 namespace flow {
 
+class Mempool;
+
 class ChainState {
 public:
     /// Construct a ChainState rooted at the given data directory.
@@ -139,6 +141,28 @@ public:
     CBlockIndex* tip() const { return tree_.best_tip(); }
     uint64_t height() const { return tip() ? tip()->height : 0; }
 
+    /// Access the mempool (may be nullptr if not set).
+    Mempool* mempool() { return mempool_; }
+    const Mempool* mempool() const { return mempool_; }
+    void set_mempool(Mempool* mp) { mempool_ = mp; }
+
+    /// Check if a UTXO exists for a given transaction ID (any output).
+    bool has_utxo_for_tx(const uint256& txid) const;
+
+    /// Convenience aliases used by kernel code.
+    uint64_t get_height() const { return height(); }
+    uint256 get_tip_hash() const { return tip() ? tip()->hash : uint256(); }
+    bool get_header(uint64_t h, CBlockHeader& hdr) const;
+    bool get_utxo(const uint256& txid, uint32_t vout, UTXOEntry& entry) const {
+        return utxo_.get(txid, vout, entry);
+    }
+    uint32_t get_next_nbits() const;
+    bool read_block(uint64_t h, CBlock& block) const { return get_block_at_height(h, block); }
+    bool accept_genesis();
+    bool load();
+    bool has_undo_data(uint64_t h) const;
+    bool can_disconnect(uint64_t h) const;
+
     /// Get the data directory path.
     const std::string& datadir() const { return datadir_; }
 
@@ -173,6 +197,7 @@ private:
     uint64_t    prune_target_height_ = 0;
     uint64_t    blocks_since_flush_ = 0;
     uint256     assume_valid_hash_;  // null = disabled
+    Mempool*    mempool_ = nullptr;
     mutable std::mutex cs_main_;  // Main lock for chain state access
 
     /// Create the genesis block with the hardcoded parameters.

@@ -346,25 +346,29 @@ struct NodeContext {
 
     /// Comprehensive health status including memory, disk, network, chain.
     struct NodeHealthInfo {
-        size_t rss_bytes;
-        size_t peak_rss_bytes;
-        size_t utxo_cache_bytes;
-        size_t mempool_bytes_used;
-        size_t model_bytes;
-        size_t blocks_disk_bytes;
-        size_t available_disk_bytes;
-        int outbound_peers;
-        int inbound_peers;
-        int64_t bytes_sent_total;
-        int64_t bytes_recv_total;
-        double avg_ping_ms;
-        uint64_t chain_height_val;
-        double sync_progress;
-        int64_t time_since_last_block;
-        size_t model_params;
-        float last_val_loss;
+        size_t rss_bytes = 0;
+        size_t peak_rss_bytes = 0;
+        size_t utxo_cache_bytes = 0;
+        size_t mempool_bytes = 0;
+        size_t model_bytes = 0;
+        size_t blocks_disk_bytes = 0;
+        size_t chainstate_disk_bytes = 0;
+        size_t model_disk_bytes = 0;
+        size_t available_disk_bytes = 0;
+        int outbound_peers = 0;
+        int inbound_peers = 0;
+        int64_t bytes_sent = 0;
+        int64_t bytes_received = 0;
+        double avg_ping_ms = 0.0;
+        uint64_t height = 0;
+        uint64_t headers_height = 0;
+        double sync_progress = 0.0;
+        int64_t time_since_last_block = 0;
+        size_t model_params = 0;
+        float last_val_loss = 0.0f;
+        uint256 model_hash;
         std::vector<std::string> warnings;
-        bool is_healthy;
+        bool is_healthy = false;
     };
 
     /// Get comprehensive health information.
@@ -407,15 +411,15 @@ struct NodeContext {
         int outbound;
         int inbound;
         size_t mempool_txs;
-        size_t mempool_bytes_used;
+        size_t mempool_bytes;
         int64_t uptime_seconds;
         bool ibd;
         double sync_progress;
         size_t model_params;
         float model_loss;
-        int64_t rss_mb_val;
-        int64_t disk_free_mb_val;
-        std::string datadir_str;
+        int64_t rss_mb;
+        int64_t disk_free_mb;
+        std::string datadir;
         uint16_t p2p_port;
         uint16_t rpc_port;
     };

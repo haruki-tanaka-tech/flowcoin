@@ -2,7 +2,11 @@
 // Distributed under the MIT software license.
 
 #include "wallet/walletdb.h"
+#include "util/random.h"
+#include "util/time.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -12,6 +16,8 @@
 #include "sqlite3.h"
 
 namespace flow {
+
+static constexpr int CURRENT_SCHEMA_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Helpers

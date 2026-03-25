@@ -6,7 +6,10 @@
 #include "../hash/keccak.h"
 #include "../hash/merkle.h"
 #include "../util/strencodings.h"
+#include "../util/arith_uint256.h"
 #include "../consensus/params.h"
+#include "../consensus/difficulty.h"
+#include "../chain/blockindex.h"
 
 #include <algorithm>
 #include <cmath>

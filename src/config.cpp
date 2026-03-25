@@ -12,6 +12,7 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <sys/stat.h>
 
 namespace flow {
 

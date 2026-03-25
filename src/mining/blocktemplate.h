@@ -17,6 +17,7 @@
 #include "primitives/block.h"
 #include "primitives/transaction.h"
 #include "util/types.h"
+#include "json/json.hpp"
 
 #include <map>
 #include <memory>
@@ -220,6 +221,106 @@ private:
     /// Estimate the fee rate at a given percentile of the mempool.
     double estimate_fee_rate_percentile(const Mempool* mempool,
                                          double percentile) const;
+
+    // --- CPFP-aware ancestor packages ---
+
+    struct AncestorPackage {
+        std::vector<uint256> txids;
+        size_t total_size = 0;
+        size_t total_weight = 0;
+        Amount total_fees = 0;
+        int depth = 0;
+        double effective_fee_rate = 0.0;
+    };
+
+    std::vector<AncestorPackage> build_ancestor_packages(const Mempool& mempool);
+    void sort_by_ancestor_package_fee_rate(std::vector<AncestorPackage>& packages);
+
+    // --- Fee sniping protection ---
+
+    void apply_fee_snipe_protection(CTransaction& coinbase, uint64_t height);
+
+    // --- Block budget tracking ---
+
+    struct BlockBudget {
+        size_t current_weight = 0;
+        size_t max_weight = MAX_BLOCK_WEIGHT;
+        int current_sigops = 0;
+        int max_sigops = consensus::MAX_BLOCK_SIGOPS;
+
+        bool can_add(size_t tx_weight, int tx_sigops) const;
+        void add(size_t tx_weight, int tx_sigops);
+        size_t remaining_weight() const;
+        double fill_percentage() const;
+    };
+
+    // --- Template statistics ---
+
+    struct TemplateStats {
+        int tx_count = 0;
+        size_t total_size = 0;
+        size_t total_weight = 0;
+        Amount total_fees = 0;
+        Amount coinbase_value = 0;
+        double min_fee_rate = 0.0;
+        double max_fee_rate = 0.0;
+        double avg_fee_rate = 0.0;
+        int packages_count = 0;
+        int64_t assembly_time_ms = 0;
+        double fill_percentage = 0.0;
+
+        std::string format() const;
+    };
+
+    TemplateStats get_template_stats(const BlockTemplate& tmpl) const;
+
+    // --- Template variants ---
+
+    struct TemplateVariant {
+        BlockTemplate tmpl;
+        std::string label;
+        double estimated_fees_per_byte;
+        Amount min_fee_rate;
+        TemplateStats stats;
+    };
+
+    std::vector<TemplateVariant> generate_template_variants(
+        const std::string& coinbase_address, int num_variants = 3);
+
+    // --- Priority transactions ---
+
+    void add_priority_tx(const uint256& txid);
+    void remove_priority_tx(const uint256& txid);
+    void clear_priority_txs();
+    bool is_priority_tx(const uint256& txid) const;
+    std::set<uint256> priority_txs_;
+
+    // --- Template freshness ---
+
+    bool should_refresh_template(const BlockTemplate& tmpl, int64_t now) const;
+
+    // --- Template serialization to JSON ---
+
+    nlohmann::json template_to_json(const BlockTemplate& tmpl) const;
+
+    // --- Coinbase extra data ---
+
+    void set_coinbase_extra_data(const std::vector<uint8_t>& data);
+    void set_coinbase_extra_text(const std::string& text);
+    std::vector<uint8_t> coinbase_extra_data_;
+
+    CTransaction build_coinbase_with_extra(uint64_t height, Amount reward,
+                                            const std::string& address);
+
+    // --- Conflict detection ---
+
+    std::vector<uint256> find_conflicts(const BlockTemplate& tmpl,
+                                         const CTransaction& tx) const;
+
+    // --- Subsidy schedule ---
+
+    std::vector<std::pair<uint64_t, int64_t>> get_subsidy_schedule(
+        uint64_t from_height, uint64_t to_height, uint64_t step = 210000) const;
 };
 
 // ---------------------------------------------------------------------------

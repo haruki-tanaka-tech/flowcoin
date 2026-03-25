@@ -688,31 +688,22 @@ void BlockStore::release_lock() {
 }
 
 // ---------------------------------------------------------------------------
-// BlockFileInfo — metadata about a single blk file
+// BlockStore::FileInfo is defined in blockstore.h
 // ---------------------------------------------------------------------------
-
-struct BlockFileInfo {
-    int file_num;
-    size_t size;
-    size_t max_size;
-    uint64_t height_lo;
-    uint64_t height_hi;
-    int block_count;
-};
 
 // ---------------------------------------------------------------------------
 // get_file_info — enumerate block files with metadata
 // ---------------------------------------------------------------------------
 
-std::vector<BlockFileInfo> BlockStore::get_file_info() const {
-    std::vector<BlockFileInfo> infos;
+std::vector<BlockStore::FileInfo> BlockStore::get_file_info() const {
+    std::vector<FileInfo> infos;
 
     for (int i = 0; i <= current_file_ + 1; ++i) {
         std::string path = get_block_path(i);
         size_t fsize = get_file_size(path);
         if (fsize == 0 && i > current_file_) break;
 
-        BlockFileInfo info;
+        FileInfo info;
         info.file_num = i;
         info.size = fsize;
         info.max_size = MAX_FILE_SIZE;

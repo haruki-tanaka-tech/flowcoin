@@ -152,8 +152,6 @@ WasteAnalysis calculate_waste(const CoinSelection& selection,
 CoinSelection select_min_waste(const std::vector<CoinToSpend>& available,
                                 Amount target, Amount fee_per_input = 1000);
 
-} // namespace coinselect
-
 // Backward-compatible interface
 CoinSelection select_coins(const std::vector<CoinToSpend>& available,
                             Amount target, Amount fee_per_input = 1000);

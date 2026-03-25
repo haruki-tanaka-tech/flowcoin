@@ -52,7 +52,7 @@ TxValidationResult validate_transaction(
         const auto& input = tx.vin[i];
 
         // Check for duplicate inputs (double-spend within same tx)
-        auto outpoint = std::make_pair(input.prev_txid, input.prev_vout);
+        auto outpoint = std::make_pair(input.prevout.txid, input.prevout.index);
         for (const auto& prev : spent_outpoints) {
             if (prev.first == outpoint.first && prev.second == outpoint.second) {
                 result.error = "bad-txns-inputs-duplicate";
@@ -63,7 +63,7 @@ TxValidationResult validate_transaction(
 
         // Look up the UTXO
         UTXOEntry entry;
-        if (!utxo.get(input.prev_txid, input.prev_vout, entry)) {
+        if (!utxo.get(input.prevout.txid, input.prevout.index, entry)) {
             result.error = "bad-txns-inputs-missingorspent";
             result.debug_message = "Input " + std::to_string(i) + " not found in UTXO set";
             return result;
@@ -103,19 +103,19 @@ TxValidationResult validate_transaction(
     for (size_t i = 0; i < tx.vout.size(); ++i) {
         const auto& output = tx.vout[i];
 
-        if (output.value < 0) {
+        if (output.amount < 0) {
             result.error = "bad-txns-vout-negative";
             return result;
         }
-        if (output.value > consensus::MAX_SUPPLY) {
+        if (output.amount > consensus::MAX_SUPPLY) {
             result.error = "bad-txns-vout-toolarge";
             return result;
         }
-        if (total_out + output.value < total_out) {
+        if (total_out + output.amount < total_out) {
             result.error = "bad-txns-txouttotal-toolarge";
             return result;
         }
-        total_out += output.value;
+        total_out += output.amount;
     }
 
     // Fee must be non-negative
@@ -133,13 +133,13 @@ TxValidationResult validate_transaction(
         const auto& input = tx.vin[i];
 
         UTXOEntry entry;
-        utxo.get(input.prev_txid, input.prev_vout, entry);
+        utxo.get(input.prevout.txid, input.prevout.index, entry);
 
         // Verify the signature over the transaction's signing hash
-        uint256 sighash = tx.get_sighash(static_cast<uint32_t>(i));
+        uint256 sighash = tx.signature_hash(static_cast<uint32_t>(i));
 
         // Check that the pubkey hashes to the expected pubkey_hash
-        uint256 computed_hash = hash::keccak256(input.pubkey.data(), input.pubkey.size());
+        uint256 computed_hash = keccak256(input.pubkey.data(), input.pubkey.size());
         if (std::memcmp(computed_hash.data(), entry.pubkey_hash.data(), 32) != 0) {
             result.error = "bad-txns-pubkey-hash-mismatch";
             result.debug_message = "Input " + std::to_string(i);
@@ -147,8 +147,8 @@ TxValidationResult validate_transaction(
         }
 
         // Verify Ed25519 signature
-        if (!crypto::ed25519_verify(input.pubkey.data(),
-                                     sighash.data(), sighash.size(),
+        if (!ed25519_verify(sighash.data(), sighash.size(),
+                                     input.pubkey.data(),
                                      input.signature.data())) {
             result.error = "bad-txns-signature-invalid";
             result.debug_message = "Input " + std::to_string(i);
@@ -179,7 +179,7 @@ TxValidationResult validate_coinbase(
 
     // Coinbase input must have null prevout
     const auto& input = tx.vin[0];
-    if (!input.prev_txid.is_null() || input.prev_vout != 0xFFFFFFFF) {
+    if (!input.prevout.txid.is_null() || input.prevout.index != 0xFFFFFFFF) {
         result.error = "bad-cb-missing-null-prevout";
         return result;
     }
@@ -190,24 +190,31 @@ TxValidationResult validate_coinbase(
         return result;
     }
 
-    // Coinbase script size limits (2..100 bytes, matching Bitcoin)
-    if (input.script_sig.size() < 2 || input.script_sig.size() > 100) {
-        result.error = "bad-cb-length";
-        return result;
+    // Coinbase identity: pubkey must not be all zeros
+    // (In FlowCoin, coinbase uses pubkey field for miner identity)
+    {
+        bool all_zero = true;
+        for (size_t j = 0; j < input.pubkey.size(); ++j) {
+            if (input.pubkey[j] != 0) { all_zero = false; break; }
+        }
+        if (all_zero) {
+            result.error = "bad-cb-no-pubkey";
+            return result;
+        }
     }
 
     // Sum of outputs must not exceed max_value
     Amount total_out = 0;
     for (const auto& output : tx.vout) {
-        if (output.value < 0) {
+        if (output.amount < 0) {
             result.error = "bad-cb-vout-negative";
             return result;
         }
-        if (total_out + output.value < total_out) {
+        if (total_out + output.amount < total_out) {
             result.error = "bad-cb-txouttotal-toolarge";
             return result;
         }
-        total_out += output.value;
+        total_out += output.amount;
     }
 
     if (total_out > max_value) {
@@ -271,7 +278,7 @@ uint32_t compute_next_work(uint32_t prev_nbits,
         return consensus::INITIAL_NBITS;
     }
 
-    return target.get_compact();
+    return target.GetCompact();
 }
 
 arith_uint256 get_pow_limit() {
@@ -296,7 +303,7 @@ uint256 compute_training_hash(const uint256& delta_hash,
     uint8_t combined[64];
     std::memcpy(combined, delta_hash.data(), 32);
     std::memcpy(combined + 32, dataset_hash.data(), 32);
-    return hash::keccak256(combined, 64);
+    return keccak256(combined, 64);
 }
 
 bool verify_block_signature(const CBlockHeader& header) {
@@ -307,10 +314,10 @@ bool verify_block_signature(const CBlockHeader& header) {
     }
 
     // Verify Ed25519 signature
-    return crypto::ed25519_verify(
-        header.miner_pubkey.data(),
+    return ed25519_verify(
         header_bytes.data(),
         BLOCK_HEADER_UNSIGNED_SIZE,
+        header.miner_pubkey.data(),
         header.miner_sig.data());
 }
 
@@ -319,7 +326,7 @@ bool verify_block_signature(const CBlockHeader& header) {
 // ============================================================================
 
 consensus::ModelDimensions get_model_dims(uint64_t height) {
-    return consensus::compute_model_dimensions(height);
+    return consensus::compute_growth(height);
 }
 
 size_t compute_param_count(const consensus::ModelDimensions& dims) {

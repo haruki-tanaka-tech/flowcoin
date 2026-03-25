@@ -8,6 +8,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <set>
 #include <fstream>
 
 namespace flow {

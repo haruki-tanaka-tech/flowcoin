@@ -4,6 +4,9 @@
 #include "mining/blocktemplate.h"
 #include "chain/chainstate.h"
 #include "chain/blockindex.h"
+#include "mempool/mempool.h"
+#include "util/serialize.h"
+#include "crypto/sign.h"
 #include "consensus/difficulty.h"
 #include "util/arith_uint256.h"
 #include "consensus/growth.h"
@@ -15,6 +18,8 @@
 #include "util/random.h"
 #include "util/strencodings.h"
 #include "util/time.h"
+
+#include "json/json.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -537,8 +542,8 @@ CBlock BlockAssembler::assemble_full_block(
     // Step 3: Set training proof fields
     block.val_loss = val_loss;
 
-    // Step 4: Set delta hash from compressed delta
-    block.delta_hash = keccak256(compressed_delta.data(), compressed_delta.size());
+    // Step 4: Set delta from compressed delta
+    uint256 delta_hash = keccak256(compressed_delta.data(), compressed_delta.size());
     block.delta_length = static_cast<uint32_t>(compressed_delta.size());
     block.delta_payload = compressed_delta;
     block.delta_offset = 0;
@@ -556,7 +561,7 @@ CBlock BlockAssembler::assemble_full_block(
     // Step 6: Compute training hash
     // training_hash = Keccak256(delta_hash || dataset_hash)
     std::vector<uint8_t> combined(64);
-    std::memcpy(combined.data(), block.delta_hash.data(), 32);
+    std::memcpy(combined.data(), delta_hash.data(), 32);
     std::memcpy(combined.data() + 32, block.dataset_hash.data(), 32);
     block.training_hash = keccak256(combined.data(), combined.size());
 
@@ -1348,19 +1353,19 @@ std::vector<BlockAssembler::TemplateVariant> BlockAssembler::generate_template_v
 // ===========================================================================
 
 void BlockAssembler::add_priority_tx(const uint256& txid) {
-    priority_txids_.insert(txid);
+    priority_txs_.insert(txid);
 }
 
 void BlockAssembler::remove_priority_tx(const uint256& txid) {
-    priority_txids_.erase(txid);
+    priority_txs_.erase(txid);
 }
 
 void BlockAssembler::clear_priority_txs() {
-    priority_txids_.clear();
+    priority_txs_.clear();
 }
 
 bool BlockAssembler::is_priority_tx(const uint256& txid) const {
-    return priority_txids_.count(txid) > 0;
+    return priority_txs_.count(txid) > 0;
 }
 
 // ===========================================================================

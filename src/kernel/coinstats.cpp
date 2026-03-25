@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <numeric>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -135,7 +136,7 @@ uint256 compute_utxo_hash(const UTXOSet& utxo) {
         preimage.push_back(entry.is_coinbase ? 1 : 0);
 
         // Hash the entry
-        entry_hashes.push_back(hash::keccak256(preimage.data(), preimage.size()));
+        entry_hashes.push_back(keccak256(preimage.data(), preimage.size()));
     }
 
     // Sort hashes for deterministic ordering
@@ -144,7 +145,7 @@ uint256 compute_utxo_hash(const UTXOSet& utxo) {
     // Compute final hash over all sorted entry hashes
     if (entry_hashes.empty()) {
         // Empty UTXO set: hash of nothing
-        return hash::keccak256(nullptr, 0);
+        return keccak256(nullptr, 0);
     }
 
     std::vector<uint8_t> combined;
@@ -153,7 +154,7 @@ uint256 compute_utxo_hash(const UTXOSet& utxo) {
         combined.insert(combined.end(), h.begin(), h.end());
     }
 
-    return hash::keccak256(combined.data(), combined.size());
+    return keccak256(combined.data(), combined.size());
 }
 
 // ============================================================================

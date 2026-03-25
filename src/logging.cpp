@@ -259,6 +259,10 @@ void log_set_timestamps(bool enable) {
     g_print_timestamps = enable;
 }
 
+// Forward declarations for helpers used below
+static void ring_push(const std::string& formatted, const LogEntry& entry);
+static void update_stats(LogLevel level);
+
 // ============================================================================
 // Core write functions
 // ============================================================================

@@ -73,6 +73,9 @@ public:
     // Get all connected peers (snapshot)
     std::vector<Peer*> get_peers() const;
 
+    // Alias for get_peers()
+    std::vector<Peer*> connected_peers() const;
+
     // Number of connected peers
     size_t peer_count() const;
 
@@ -157,6 +160,10 @@ public:
     };
 
     BandwidthStats get_bandwidth_stats() const;
+
+    // Maintenance
+    void clean_expired_bans() { banman_.sweep(); }
+    void save_peers(const std::string& path);
     void set_max_upload_rate(int64_t bytes_per_second);
     bool can_send(size_t bytes) const;
 
