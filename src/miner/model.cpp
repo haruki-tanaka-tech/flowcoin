@@ -320,35 +320,27 @@ ggml_tensor* GGMLModel::build_forward(ggml_context* ctx,
     for (int l = 0; l < n_layers_; l++) {
         auto& L = layers_[l];
 
-        // ── Sub-layer 1: RMSNorm -> MinGRU -> +residual ──
+        // ── Sub-layer 1: RMSNorm -> Gated Linear Unit -> +residual ──
+        // (MinGRU gate uses sigmoid which has no ggml backward.
+        //  Replace with SiLU-gated projection — same parameter count, has backward.)
 
-        // RMSNorm
         ggml_tensor* normed = ggml_rms_norm(ctx, x, 1e-6f);
         normed = ggml_mul(ctx, normed, L.norm1_w);
 
-        // MinGRU (parallel approximation):
-        //   z = sigmoid(normed @ Wz^T + bz)
-        //   h_tilde = normed @ Wh^T + bh
-        //   out = z * h_tilde
-        //
-        // ggml_mul_mat(A, B) computes B @ A^T when A is [ne0, ne1] and B is [ne0, ne2]
-        // Result shape: [ne1, ne2]
-        // Our normed is [D, S], gru_wz is [D, D]
-        // ggml_mul_mat(gru_wz, normed) = normed @ gru_wz^T -> [D, S]
-        ggml_tensor* z = ggml_mul_mat(ctx, L.gru_wz, normed);
-        z = ggml_add(ctx, z, L.gru_bz);  // broadcast bias [D] over [D, S]
-        z = ggml_sigmoid(ctx, z);
+        // Gate = silu(normed @ Wz^T + bz)
+        ggml_tensor* gate = ggml_mul_mat(ctx, L.gru_wz, normed);
+        gate = ggml_add(ctx, gate, L.gru_bz);
+        gate = ggml_silu(ctx, gate);
 
-        ggml_tensor* h_tilde = ggml_mul_mat(ctx, L.gru_wh, normed);
-        h_tilde = ggml_add(ctx, h_tilde, L.gru_bh);
+        // Value = normed @ Wh^T + bh
+        ggml_tensor* val = ggml_mul_mat(ctx, L.gru_wh, normed);
+        val = ggml_add(ctx, val, L.gru_bh);
 
-        // Simplified GRU output: z * h_tilde
-        // This loses the recurrent property but the matmuls are the expensive part
-        // and gradients flow correctly
-        ggml_tensor* gru_out = ggml_mul(ctx, z, h_tilde);
+        // Output = gate * value (element-wise gating)
+        ggml_tensor* gated_out = ggml_mul(ctx, gate, val);
 
         // Residual
-        x = ggml_add(ctx, x, gru_out);
+        x = ggml_add(ctx, x, gated_out);
 
         // ── Sub-layer 2: RMSNorm -> SwiGLU FFN -> +residual ──
 
