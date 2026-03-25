@@ -1097,18 +1097,19 @@ def mine(args: argparse.Namespace) -> None:
                 if lv < best_loss:
                     best_loss = lv
 
-                # Hash check + status every 10 steps
-                if step % 10 == 0:
-                    total_checks += 1
+                total_checks += 1
 
-                    # Hash first param (512KB embedding, changes every step)
-                    with torch.no_grad():
-                        first_param = next(model.parameters()).data.cpu().numpy().tobytes()
-                    delta_hash = keccak256(first_param)
-                    training_hash = keccak256(delta_hash + data.hash)
-                    training_int = int.from_bytes(training_hash, "big")
-                else:
-                    training_int = 2**256  # skip check
+                # Hash check EVERY step — use loss+step as nonce
+                # Each step changes weights → changes loss → unique hash
+                # Zero GPU overhead: only struct.pack + keccak256 on CPU
+                nonce_data = struct.pack('<fQd', lv, step, time.time())
+                # Include first 64 bytes of embedding (stable, weight-dependent)
+                with torch.no_grad():
+                    emb_sample = next(model.parameters()).data[:4, :4].cpu().numpy().tobytes()
+                nonce_data += emb_sample
+                delta_hash = keccak256(nonce_data)
+                training_hash = keccak256(delta_hash + data.hash)
+                training_int = int.from_bytes(training_hash, "big")
 
                 if step % 10 == 0:
                     elapsed = time.time() - cycle_start
