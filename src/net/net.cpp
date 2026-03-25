@@ -100,9 +100,9 @@ bool NetManager::start() {
     uv_tcp_init(loop_, server_);
     server_->data = this;
 
-    // Bind to all interfaces
-    struct sockaddr_in bind_addr;
-    uv_ip4_addr("0.0.0.0", port_, &bind_addr);
+    // Bind to all interfaces (dual-stack: IPv4 + IPv6)
+    struct sockaddr_in6 bind_addr;
+    uv_ip6_addr("::", port_, &bind_addr);
     int r = uv_tcp_bind(server_, reinterpret_cast<const struct sockaddr*>(&bind_addr), 0);
     if (r < 0) {
         LogError("net", "bind failed on port %u: %s", port_, uv_strerror(r));
