@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include "logging.h"
 
 namespace flow {
 
@@ -64,7 +65,7 @@ static bool ensure_dir(const std::string& path) {
 
 bool ModelState::init() {
     if (!ensure_dir(model_dir())) {
-        fprintf(stderr, "ModelState: failed to create model directory: %s\n",
+        LogError("model", "failed to create model directory: %s",
                 model_dir().c_str());
         return false;
     }
@@ -85,7 +86,7 @@ bool ModelState::init() {
                 fclose(hf);
             }
 
-            fprintf(stderr, "ModelState: loaded model at height %lu (%zu params)\n",
+            LogInfo("model", "loaded model at height %lu (%zu params)",
                     static_cast<unsigned long>(last_applied_height_),
                     engine_.param_count());
 
@@ -94,13 +95,13 @@ bool ModelState::init() {
             return true;
         }
 
-        fprintf(stderr, "ModelState: failed to load current model, "
-                "falling back to genesis\n");
+        LogError("model", "failed to load current model, "
+                "falling back to genesis");
     }
 
     // No saved state — initialize from genesis
     if (!engine_.init_genesis()) {
-        fprintf(stderr, "ModelState: genesis initialization failed\n");
+        LogError("model", "genesis initialization failed");
         return false;
     }
 
@@ -108,13 +109,13 @@ bool ModelState::init() {
 
     // Save initial state
     if (!save()) {
-        fprintf(stderr, "ModelState: warning: failed to save initial state\n");
+        LogError("model", "warning: failed to save initial state");
     }
 
     // Register as global eval engine instance
     consensus::EvalEngine::set_instance(&engine_);
 
-    fprintf(stderr, "ModelState: initialized from genesis (%zu params)\n",
+    LogInfo("model", "initialized from genesis (%zu params)",
             engine_.param_count());
     return true;
 }
@@ -139,14 +140,14 @@ bool ModelState::process_block(const CBlock& block, uint64_t height) {
         expected_dims.n_slots  != current_dims.n_slots;
 
     if (needs_expansion) {
-        fprintf(stderr, "ModelState: expanding model at height %lu "
-                "(d=%u->%u, L=%u->%u)\n",
+        LogInfo("model", "expanding model at height %lu "
+                "(d=%u->%u, L=%u->%u)",
                 static_cast<unsigned long>(height),
                 current_dims.d_model, expected_dims.d_model,
                 current_dims.n_layers, expected_dims.n_layers);
 
         if (!engine_.expand_model(expected_dims)) {
-            fprintf(stderr, "ModelState: model expansion failed at height %lu\n",
+            LogError("model", "model expansion failed at height %lu",
                     static_cast<unsigned long>(height));
             return false;
         }
@@ -155,7 +156,7 @@ bool ModelState::process_block(const CBlock& block, uint64_t height) {
     // Apply the block's delta payload
     if (!block.delta_payload.empty()) {
         if (!engine_.apply_block_delta(block.delta_payload)) {
-            fprintf(stderr, "ModelState: failed to apply delta at height %lu\n",
+            LogError("model", "failed to apply delta at height %lu",
                     static_cast<unsigned long>(height));
             return false;
         }
@@ -166,8 +167,8 @@ bool ModelState::process_block(const CBlock& block, uint64_t height) {
     // Save checkpoint at regular intervals
     if (height > 0 && (height % consensus::CHECKPOINT_INTERVAL) == 0) {
         if (!save_checkpoint(height)) {
-            fprintf(stderr, "ModelState: warning: checkpoint save failed "
-                    "at height %lu\n", static_cast<unsigned long>(height));
+            LogError("model", "warning: checkpoint save failed "
+                    "at height %lu", static_cast<unsigned long>(height));
             // Non-fatal — we can continue without the checkpoint
         }
     }
@@ -175,8 +176,8 @@ bool ModelState::process_block(const CBlock& block, uint64_t height) {
     // Save current state periodically (every 100 blocks)
     if (height > 0 && (height % 100) == 0) {
         if (!save()) {
-            fprintf(stderr, "ModelState: warning: periodic save failed "
-                    "at height %lu\n", static_cast<unsigned long>(height));
+            LogError("model", "warning: periodic save failed "
+                    "at height %lu", static_cast<unsigned long>(height));
         }
     }
 
@@ -189,12 +190,12 @@ bool ModelState::process_block(const CBlock& block, uint64_t height) {
 
 bool ModelState::undo_block() {
     if (last_applied_height_ == 0) {
-        fprintf(stderr, "ModelState: cannot undo past genesis\n");
+        LogError("model", "cannot undo past genesis");
         return false;
     }
 
     if (!engine_.undo_last_delta()) {
-        fprintf(stderr, "ModelState: undo_last_delta failed at height %lu\n",
+        LogError("model", "undo_last_delta failed at height %lu",
                 static_cast<unsigned long>(last_applied_height_));
         return false;
     }
@@ -244,7 +245,7 @@ bool ModelState::save_checkpoint(uint64_t height) const {
         return false;
     }
 
-    fprintf(stderr, "ModelState: checkpoint saved at height %lu -> %s\n",
+    LogInfo("model", "checkpoint saved at height %lu -> %s",
             static_cast<unsigned long>(height), path.c_str());
     return true;
 }
@@ -252,7 +253,7 @@ bool ModelState::save_checkpoint(uint64_t height) const {
 bool ModelState::load_nearest_checkpoint(uint64_t target_height) {
     std::vector<uint64_t> checkpoints = list_checkpoints();
     if (checkpoints.empty()) {
-        fprintf(stderr, "ModelState: no checkpoints available\n");
+        LogInfo("model", "no checkpoints available");
         return false;
     }
 
@@ -268,20 +269,20 @@ bool ModelState::load_nearest_checkpoint(uint64_t target_height) {
     }
 
     if (!found) {
-        fprintf(stderr, "ModelState: no checkpoint found at or below height %lu\n",
+        LogInfo("model", "no checkpoint found at or below height %lu",
                 static_cast<unsigned long>(target_height));
         return false;
     }
 
     std::string path = checkpoint_path(best_height);
     if (!engine_.load_checkpoint(path)) {
-        fprintf(stderr, "ModelState: failed to load checkpoint at height %lu\n",
+        LogError("model", "failed to load checkpoint at height %lu",
                 static_cast<unsigned long>(best_height));
         return false;
     }
 
     last_applied_height_ = best_height;
-    fprintf(stderr, "ModelState: loaded checkpoint at height %lu\n",
+    LogInfo("model", "loaded checkpoint at height %lu",
             static_cast<unsigned long>(best_height));
     return true;
 }

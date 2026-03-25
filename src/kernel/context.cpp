@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include "logging.h"
 
 namespace flow::kernel {
 
@@ -47,7 +48,7 @@ bool Kernel::init() {
     if (!config_.datadir.empty()) {
         std::filesystem::create_directories(config_.datadir, ec);
         if (ec) {
-            std::fprintf(stderr, "Kernel: failed to create data directory %s: %s\n",
+            LogError("init", "failed to create data directory %s: %s",
                          config_.datadir.c_str(), ec.message().c_str());
             return false;
         }
@@ -60,7 +61,7 @@ bool Kernel::init() {
     try {
         chain_ = std::make_unique<ChainState>(chain_dir);
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "Kernel: failed to open chain state: %s\n", e.what());
+        LogError("init", "failed to open chain state: %s", e.what());
         return false;
     }
 
@@ -72,16 +73,16 @@ bool Kernel::init() {
         std::string checkpoint_path = chain_dir + "/model_checkpoint.bin";
         if (std::filesystem::exists(checkpoint_path, ec)) {
             if (!eval_->load_checkpoint(checkpoint_path)) {
-                std::fprintf(stderr, "Kernel: failed to load model checkpoint, "
-                             "will replay from genesis\n");
+                LogError("init", "failed to load model checkpoint, "
+                             "will replay from genesis");
                 if (!eval_->init_genesis()) {
-                    std::fprintf(stderr, "Kernel: failed to init genesis model\n");
+                    LogError("init", "failed to init genesis model");
                     return false;
                 }
             }
         } else {
             if (!eval_->init_genesis()) {
-                std::fprintf(stderr, "Kernel: failed to init genesis model\n");
+                LogError("init", "failed to init genesis model");
                 return false;
             }
         }
@@ -90,7 +91,7 @@ bool Kernel::init() {
     // Load chain or create genesis
     if (!load_chain()) {
         if (!init_genesis()) {
-            std::fprintf(stderr, "Kernel: failed to initialize genesis block\n");
+            LogError("init", "failed to initialize genesis block");
             return false;
         }
     }
@@ -126,7 +127,7 @@ bool Kernel::init_genesis() {
     uint256 genesis_hash = genesis.get_hash();
     const auto& chain_params = params();
     if (genesis_hash != chain_params.genesis_hash) {
-        std::fprintf(stderr, "Kernel: genesis hash mismatch\n");
+        LogError("init", "genesis hash mismatch");
         return false;
     }
 

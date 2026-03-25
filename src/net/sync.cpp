@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include "logging.h"
 
 namespace flow {
 
@@ -57,8 +58,8 @@ void SyncManager::start_sync(Peer& peer) {
         return;
     }
 
-    fprintf(stderr, "SyncManager: starting IBD from height %lu to %lu "
-            "with peer %lu\n",
+    LogInfo("net", "starting IBD from height %lu to %lu "
+            "with peer %lu",
             static_cast<unsigned long>(our_height),
             static_cast<unsigned long>(their_height),
             static_cast<unsigned long>(peer.id()));
@@ -132,8 +133,8 @@ void SyncManager::on_headers(Peer& peer,
 
     if (headers.empty()) {
         // No more headers — transition to block download phase
-        fprintf(stderr, "SyncManager: header sync complete "
-                "(%lu headers in tree)\n",
+        LogInfo("net", "header sync complete "
+                "(%lu headers in tree)",
                 static_cast<unsigned long>(chain_.block_tree().size()));
 
         CBlockIndex* our_tip = chain_.tip();
@@ -152,8 +153,8 @@ void SyncManager::on_headers(Peer& peer,
         inflight_.clear();
         download_buffer_.clear();
 
-        fprintf(stderr, "SyncManager: switching to block download, "
-                "range [%lu, %lu]\n",
+        LogInfo("net", "switching to block download, "
+                "range [%lu, %lu]",
                 static_cast<unsigned long>(next_apply_height_),
                 static_cast<unsigned long>(blocks_download_target_));
 
@@ -174,11 +175,11 @@ void SyncManager::on_headers(Peer& peer,
             if (!assume_valid_hash_.is_null() && idx->hash == assume_valid_hash_) {
                 assume_valid_found_ = true;
                 assume_valid_height_ = idx->height;
-                fprintf(stderr, "SyncManager: found assume-valid block at height %lu\n",
+                LogInfo("net", "found assume-valid block at height %lu",
                         static_cast<unsigned long>(assume_valid_height_));
             }
         } else {
-            fprintf(stderr, "SyncManager: header validation failed from peer %lu: %s\n",
+            LogError("net", "header validation failed from peer %lu: %s",
                     static_cast<unsigned long>(peer.id()),
                     vstate.to_string().c_str());
             peer.add_misbehavior(20);
@@ -192,8 +193,8 @@ void SyncManager::on_headers(Peer& peer,
         }
     }
 
-    fprintf(stderr, "SyncManager: accepted %d/%zu headers "
-            "(best: %lu / target: %lu)\n",
+    LogInfo("net", "accepted %d/%zu headers "
+            "(best: %lu / target: %lu)",
             accepted, headers.size(),
             static_cast<unsigned long>(headers_received_),
             static_cast<unsigned long>(header_sync_target_));
@@ -226,8 +227,8 @@ void SyncManager::on_headers(Peer& peer,
             inflight_.clear();
             download_buffer_.clear();
 
-            fprintf(stderr, "SyncManager: header sync complete, "
-                    "downloading blocks [%lu, %lu]\n",
+            LogInfo("net", "header sync complete, "
+                    "downloading blocks [%lu, %lu]",
                     static_cast<unsigned long>(next_apply_height_),
                     static_cast<unsigned long>(blocks_download_target_));
 
@@ -336,8 +337,8 @@ void SyncManager::fill_download_window() {
     }
 
     if (requests_made > 0) {
-        fprintf(stderr, "SyncManager: requested %d blocks "
-                "(inflight: %zu, buffered: %zu, next_apply: %lu)\n",
+        LogInfo("net", "requested %d blocks "
+                "(inflight: %zu, buffered: %zu, next_apply: %lu)",
                 requests_made, inflight_.size(), download_buffer_.size(),
                 static_cast<unsigned long>(next_apply_height_));
     }
@@ -371,8 +372,8 @@ void SyncManager::apply_buffered_blocks() {
         accepted = chain_.accept_block(block, vstate);
 
         if (!accepted) {
-            fprintf(stderr, "SyncManager: block validation failed at "
-                    "height %lu: %s\n",
+            LogError("net", "block validation failed at "
+                    "height %lu: %s",
                     static_cast<unsigned long>(next_apply_height_),
                     vstate.to_string().c_str());
 
@@ -503,8 +504,8 @@ void SyncManager::check_timeouts() {
 
         BlockRequest& req = it->second;
 
-        fprintf(stderr, "SyncManager: block request timed out at "
-                "height %lu (peer %lu, %ld seconds)\n",
+        LogWarn("net", "block request timed out at "
+                "height %lu (peer %lu, %ld seconds)",
                 static_cast<unsigned long>(height),
                 static_cast<unsigned long>(req.peer_id),
                 static_cast<long>(now - req.request_time));
@@ -529,8 +530,8 @@ void SyncManager::check_timeouts() {
             req.request_time = now;
             send_getdata_block(*new_peer, req.hash);
 
-            fprintf(stderr, "SyncManager: re-requested block at height %lu "
-                    "from peer %lu\n",
+            LogInfo("net", "re-requested block at height %lu "
+                    "from peer %lu",
                     static_cast<unsigned long>(height),
                     static_cast<unsigned long>(new_peer->id()));
         } else {
@@ -563,8 +564,8 @@ void SyncManager::tick() {
         }
 
         if (!peer_alive) {
-            fprintf(stderr, "SyncManager: header sync peer disconnected, "
-                    "finding new peer\n");
+            LogInfo("net", "header sync peer disconnected, "
+                    "finding new peer");
 
             Peer* new_peer = nullptr;
             uint64_t best_height = chain_.height();
@@ -584,13 +585,13 @@ void SyncManager::tick() {
                 header_sync_target_ = new_peer->start_height();
                 std::vector<uint256> locator = build_locator();
                 send_getheaders(*new_peer, locator);
-                fprintf(stderr, "SyncManager: switched header sync to peer %lu "
-                        "(target height %lu)\n",
+                LogInfo("net", "switched header sync to peer %lu "
+                        "(target height %lu)",
                         static_cast<unsigned long>(new_peer->id()),
                         static_cast<unsigned long>(header_sync_target_));
             } else {
-                fprintf(stderr, "SyncManager: no suitable peers for header sync, "
-                        "aborting\n");
+                LogFatal("net", "no suitable peers for header sync, "
+                        "aborting");
                 state_ = State::IDLE;
             }
         }
@@ -627,17 +628,20 @@ void SyncManager::finish_sync() {
 
     int64_t elapsed = GetTime() - sync_start_time_;
 
-    fprintf(stderr, "SyncManager: IBD complete, chain height %lu "
-            "(%lu blocks in %ld seconds",
-            static_cast<unsigned long>(chain_.height()),
-            static_cast<unsigned long>(blocks_applied_),
-            static_cast<long>(elapsed));
-
     if (elapsed > 0 && blocks_applied_ > 0) {
         double bps = static_cast<double>(blocks_applied_) / static_cast<double>(elapsed);
-        fprintf(stderr, ", %.1f blocks/sec", bps);
+        LogInfo("net", "IBD complete, chain height %lu "
+                "(%lu blocks in %ld seconds, %.1f blocks/sec)",
+                static_cast<unsigned long>(chain_.height()),
+                static_cast<unsigned long>(blocks_applied_),
+                static_cast<long>(elapsed), bps);
+    } else {
+        LogInfo("net", "IBD complete, chain height %lu "
+                "(%lu blocks in %ld seconds)",
+                static_cast<unsigned long>(chain_.height()),
+                static_cast<unsigned long>(blocks_applied_),
+                static_cast<long>(elapsed));
     }
-    fprintf(stderr, ")\n");
 
     inflight_.clear();
     download_buffer_.clear();
@@ -766,7 +770,7 @@ bool SyncManager::has_stale_tip() const {
 }
 
 void SyncManager::handle_stale_tip() {
-    fprintf(stderr, "SyncManager: stale tip detected (no progress for %ld seconds)\n",
+    LogWarn("net", "stale tip detected (no progress for %ld seconds)",
             static_cast<long>(GetTime() - last_tip_change_time_));
 
     // Try to find a different peer with a higher chain
@@ -786,8 +790,8 @@ void SyncManager::handle_stale_tip() {
     }
 
     if (best_peer) {
-        fprintf(stderr, "SyncManager: switching to peer %lu (height %lu) "
-                "for stale tip recovery\n",
+        LogWarn("net", "switching to peer %lu (height %lu) "
+                "for stale tip recovery",
                 static_cast<unsigned long>(best_peer->id()),
                 static_cast<unsigned long>(best_peer->start_height()));
 
@@ -829,7 +833,7 @@ void SyncManager::reset_sync() {
     header_requests_.clear();
     blocks_applied_ = 0;
 
-    fprintf(stderr, "SyncManager: sync reset\n");
+    LogInfo("net", "sync reset");
 }
 
 // ============================================================================
@@ -886,8 +890,8 @@ void SyncManager::log_progress() {
                static_cast<double>(blocks_download_target_)) * 100.0;
     }
 
-    fprintf(stderr, "SyncManager: block %lu / %lu (%.1f%%) "
-            "%.1f blk/s, ETA %ld min, inflight: %zu, buffered: %zu\n",
+    LogInfo("net", "block %lu / %lu (%.1f%%) "
+            "%.1f blk/s, ETA %ld min, inflight: %zu, buffered: %zu",
             static_cast<unsigned long>(next_apply_height_ > 0 ? next_apply_height_ - 1 : 0),
             static_cast<unsigned long>(blocks_download_target_),
             pct,

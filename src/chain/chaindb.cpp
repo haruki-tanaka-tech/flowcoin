@@ -12,6 +12,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <sys/stat.h>
+#include "logging.h"
 
 namespace flow {
 
@@ -423,7 +424,7 @@ void ChainDB::begin_batch() {
     char* errmsg = nullptr;
     sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, &errmsg);
     if (errmsg) {
-        fprintf(stderr, "ChainDB: begin_batch failed: %s\n", errmsg);
+        LogError("db", "begin_batch failed: %s", errmsg);
         sqlite3_free(errmsg);
     }
 }
@@ -432,7 +433,7 @@ void ChainDB::commit_batch() {
     char* errmsg = nullptr;
     sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
     if (errmsg) {
-        fprintf(stderr, "ChainDB: commit_batch failed: %s\n", errmsg);
+        LogError("db", "commit_batch failed: %s", errmsg);
         sqlite3_free(errmsg);
     }
 }
@@ -441,7 +442,7 @@ void ChainDB::rollback_batch() {
     char* errmsg = nullptr;
     sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &errmsg);
     if (errmsg) {
-        fprintf(stderr, "ChainDB: rollback_batch failed: %s\n", errmsg);
+        LogError("db", "rollback_batch failed: %s", errmsg);
         sqlite3_free(errmsg);
     }
 }

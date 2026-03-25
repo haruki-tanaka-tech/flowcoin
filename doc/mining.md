@@ -40,33 +40,26 @@ Each block includes:
 
 ### GPU Compatibility
 
-The miner uses PyTorch and supports any GPU that PyTorch supports:
+The miner uses ggml and supports multiple backends:
 
 | GPU Family | Support | Notes |
 |---|---|---|
 | NVIDIA (CUDA) | Full | Recommended. Best performance. |
-| AMD (ROCm) | Partial | Requires PyTorch ROCm build. |
-| Apple Silicon (MPS) | Experimental | Slower than CUDA. |
-| CPU-only | Yes | Very slow. For testing only. |
+| AMD (Vulkan) | Experimental | Via ggml Vulkan backend. |
+| Apple Silicon (Metal) | Experimental | Via ggml Metal backend. |
+| CPU-only | Yes | Default. Slower but always works. |
 
-To check GPU availability:
-```python
-import torch
-print(torch.cuda.is_available())
-print(torch.cuda.get_device_name(0))
-```
+Build with `-DGGML_USE_CUDA=ON`, `-DGGML_USE_VULKAN=ON`, or
+`-DGGML_USE_METAL=ON` to enable GPU backends.
 
 ## Software Setup
 
-### 1. Install Python dependencies
+### 1. Build the miner
 
 ```bash
-pip install torch zstandard pycryptodome
-```
-
-For CUDA-specific PyTorch installation:
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu121
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make flowcoin-miner -j$(nproc)
 ```
 
 ### 2. Start the FlowCoin node
@@ -77,15 +70,28 @@ pip install torch --index-url https://download.pytorch.org/whl/cu121
 
 Wait for the node to sync to the tip of the chain before mining.
 
-### 3. Get a mining address
+### 3. Prepare training data
+
+Place `.txt` or `.bin` files in the training directory:
 
 ```bash
-./flowcoin-cli getnewaddress
+mkdir -p ~/.flowcoin/training
+cp *.txt ~/.flowcoin/training/
 ```
 
-Save the returned address. Coinbase rewards will be sent here.
-A new address is automatically generated for each mined block to improve
-privacy and UTXO management.
+The miner reads all files from `<datadir>/training/` automatically.
+No path argument is needed.
+
+### 4. Configure RPC credentials
+
+Add credentials to `~/.flowcoin/flowcoin.conf`:
+
+```
+rpcuser=your_username
+rpcpassword=your_password
+```
+
+The miner reads this file automatically.
 
 ## Dataset Preparation
 
@@ -95,20 +101,8 @@ in a format compatible with the ResonanceNet V5 byte-level tokenizer.
 ### Supported formats
 
 - Raw text files (`.txt`)
-- Concatenated text files in a directory
-- Pre-tokenized binary files (byte sequences)
-
-### Preparing a dataset
-
-1. Collect text data (books, code, articles, etc.)
-2. Place all `.txt` files in a single directory
-3. The miner will read all files, concatenate them, and use byte-level
-   tokenization (each byte is a token, vocabulary size = 256)
-
-```bash
-mkdir ~/training-data
-cp *.txt ~/training-data/
-```
+- Pre-tokenized binary files (`.bin`)
+- Any binary data (each byte is a token, vocabulary size = 256)
 
 ### Dataset size recommendations
 
@@ -121,49 +115,71 @@ Larger datasets produce lower validation loss and more competitive blocks.
 
 ## Running the Miner
 
-### Basic usage
+### Basic usage (zero arguments required)
 
 ```bash
-python3 tools/flowminer.py \
-    --dataset ~/training-data/ \
-    --node http://127.0.0.1:9334 \
-    --rpcuser your_username \
-    --rpcpassword your_password
+flowcoin-miner
 ```
+
+The miner will:
+1. Read RPC credentials from `~/.flowcoin/flowcoin.conf`
+2. Load training data from `~/.flowcoin/training/`
+3. Connect to flowcoind at `127.0.0.1:9334`
+4. Begin training and mining
 
 ### Command-line options
 
 | Option | Default | Description |
 |---|---|---|
-| `--dataset` | required | Path to training data directory |
-| `--node` | `http://127.0.0.1:9334` | RPC endpoint of the node |
-| `--rpcuser` | flowcoin | RPC username |
-| `--rpcpassword` | flowcoin | RPC password |
-| `--device` | cuda (if available) | Training device (cuda/cpu/mps) |
-| `--batch-size` | 64 | Training batch size |
-| `--lr` | 0.0003 | Learning rate |
-| `--steps` | 0 (auto) | Training steps per block (0=auto) |
+| `--datadir <path>` | `~/.flowcoin` | Data directory |
+| `--rpcport <port>` | `9334` | Node RPC port |
+| `--rpcuser <user>` | from config | RPC username |
+| `--rpcpassword <pw>` | from config | RPC password |
+| `--cpu` | auto-detect | Force CPU backend |
+| `--threads <n>` | auto | Number of CPU threads |
+| `--help` | | Show help message |
+
+### Examples
+
+```bash
+# Default -- reads config and data from ~/.flowcoin
+flowcoin-miner
+
+# Custom RPC credentials
+flowcoin-miner --rpcuser flowcoin --rpcpassword pass123
+
+# Force CPU with 8 threads
+flowcoin-miner --cpu --threads 8
+
+# Custom data directory
+flowcoin-miner --datadir /mnt/data/flowcoin
+```
 
 ### Miner output
 
 The miner provides real-time feedback at every step:
 
 ```
-[2026-03-21 12:00:00] Requesting block template (height 42)...
-[2026-03-21 12:00:00] Target: 00ffff...  Difficulty: 1.000
-[2026-03-21 12:00:00] Architecture: d_model=512 n_layers=8 d_ff=1024
-[2026-03-21 12:00:00] Min training steps: 1168
-[2026-03-21 12:00:01] Loading dataset from ~/training-data/ (156 MB)
-[2026-03-21 12:00:02] Step    100/2000  loss=4.8321  lr=0.000300
-[2026-03-21 12:00:03] Step    200/2000  loss=4.6142  lr=0.000300
-...
-[2026-03-21 12:00:15] Step   2000/2000  loss=3.2105  lr=0.000300
-[2026-03-21 12:00:15] Validation loss: 3.4521
-[2026-03-21 12:00:16] Computing delta (1,234,567 non-zero / 8,000,000 total)
-[2026-03-21 12:00:16] Delta compressed: 4.2 MB -> 1.1 MB (74% reduction)
-[2026-03-21 12:00:16] Block hash: a3f1...7b2c
-[2026-03-21 12:00:16] Hash meets target! Submitting block...
-[2026-03-21 12:00:17] Block accepted at height 42! Reward: 50.00000000 FLOW
+  FlowCoin Miner v1.0.0
+  ggml backend | ResonanceNet V5
+
+  Loaded 12 files from /home/user/.flowcoin/training
+  Training data: 156000000 bytes (12 files)
+  Dataset hash:  a3f17b2c4e891234
+  Node: 127.0.0.1:9334 (height 42)
+  Backend: CPU (build with GGML_USE_CUDA for GPU)
+
+  Mining block 43 (d=554 L=9 slots=1196)
+  Model: 8234567 parameters (31.4 MB)
+  Using genesis model weights
+  block 43 | step    100 | loss 4.8321 | best 4.6142 | 85 st/s | checks 1
+  block 43 | step    200 | loss 4.6142 | best 4.2105 | 82 st/s | checks 2
+
+  *** BLOCK FOUND at step 350! ***
+  Hash: 00001a3f7b2c4e89
+  Loss: 3.4521
+
+  Block submitted successfully at height 43
 ```
 
 ## Understanding Training Metrics
@@ -186,6 +202,22 @@ mining, just like Bitcoin has no "min nonce attempts". Each training step
 changes the weight delta, which changes the training hash, producing a
 new lottery ticket. An empty delta yields a single fixed hash with almost
 zero chance of meeting the target.
+
+### SPSA Training
+
+The miner uses Simultaneous Perturbation Stochastic Approximation (SPSA)
+for gradient estimation. This method requires only 2 forward passes per
+training step (no backward pass needed), making it efficient with any
+ggml model:
+
+1. Generate random direction d (Rademacher +/-1 for each parameter)
+2. Compute loss at weights + c*d (forward pass 1)
+3. Compute loss at weights - c*d (forward pass 2)
+4. Gradient estimate: (loss_plus - loss_minus) / (2*c) * d
+5. Update: weights -= lr * gradient
+
+This gives approximately 50-100 training steps per second on modern
+hardware for the genesis model size.
 
 ### Stagnation counter
 
@@ -268,10 +300,9 @@ Inference remains O(1) because only top_k=2 slots are active per token.
 
 ### Choosing a learning rate
 
-- Start with `0.0003` (the default)
+- Start with `0.001` (the default)
 - Lower rates (0.0001) are safer but slower to converge
-- Higher rates (0.001) converge faster but risk overshooting
-- The maximum allowed learning rate is 0.0001 (consensus rule)
+- Higher rates (0.01) converge faster but risk overshooting
 
 ### Dataset quality matters
 
@@ -281,15 +312,14 @@ Inference remains O(1) because only top_k=2 slots are active per token.
 
 ### Timing your submissions
 
-- Request a fresh block template frequently (the tip may change)
-- If you detect a new block from another miner, restart training
+- The miner checks for new blocks every 500 training steps
+- If a new block arrives from another miner, training restarts
   immediately with the updated model state
 - Submitting stale blocks (wrong prev_hash) wastes training effort
 
 ### Hardware optimization
 
-- Use the largest batch size that fits in GPU VRAM
-- Enable mixed-precision training (FP16) for 2x speedup on supported GPUs
+- Build with GPU support for faster training (CUDA recommended)
 - Use NVMe storage for fast dataset loading
 - Keep the node and miner on the same machine to minimize RPC latency
 
@@ -298,7 +328,8 @@ Inference remains O(1) because only top_k=2 slots are active per token.
 ### "Block rejected: high-hash"
 
 The training hash did not meet the difficulty target. This is normal --
-keep mining. The miner will automatically retry with different nonces.
+keep mining. The miner will automatically retry with different training
+states.
 
 ### "Block rejected: bad-growth"
 
@@ -306,40 +337,30 @@ The model dimensions do not match the expected architecture for this
 block height. Ensure your miner is using the latest block template and
 the correct growth schedule.
 
-### "Block rejected: insufficient-training"
-
-The block did not include enough training steps. Increase the `--steps`
-parameter or let the auto-tuning choose the right count.
-
 ### "Block rejected: loss-regression"
 
 The validation loss increased by more than the allowed factor (2x) relative
 to the parent block. The model update may be destructive. Try using a
 lower learning rate.
 
-### "CUDA out of memory"
+### No training data found
 
-Reduce `--batch-size` or use a GPU with more VRAM. During Phase 2 with
-maximum dimensions, the model requires approximately 500 MB of VRAM at
-batch size 64.
+Ensure you have placed `.txt` or `.bin` files in `~/.flowcoin/training/`.
+The miner creates the directory if it does not exist, but you must supply
+the data files.
 
-### Miner produces no output
+### Cannot connect to flowcoind
 
-Ensure `--dataset` points to a directory containing readable `.txt` files.
-The miner loads the entire dataset into memory before training begins.
+- Verify `flowcoind` is running
+- Check RPC credentials in `~/.flowcoin/flowcoin.conf`
+- Ensure the node has synced past IBD (initial block download)
+- Check `debug.log` for error messages
 
 ### Slow training speed
 
-- Verify PyTorch is using the GPU: `torch.cuda.is_available()` should be True
-- Check that CUDA drivers are up to date
-- Use `nvidia-smi` to monitor GPU utilization during mining
-
-### Node not responding
-
-- Verify `flowcoind` is running
-- Check RPC credentials match between miner and node
-- Ensure the node has synced past IBD (initial block download)
-- Check `debug.log` for error messages
+- Build with CUDA support: `cmake .. -DGGML_USE_CUDA=ON`
+- Use `--threads` to set CPU thread count
+- Monitor GPU utilization with `nvidia-smi`
 
 ## Monitoring
 
@@ -364,7 +385,6 @@ flowcoin-cli getbalance
 Each block header exposes these training metrics:
 
 - `val_loss` -- achieved validation loss
-- (train_steps removed from consensus -- informational only in miner)
 - `stagnation` -- consecutive non-improving blocks
 - `d_model`, `n_layers` -- current model architecture
 - `delta_length` -- compressed delta payload size
@@ -386,5 +406,5 @@ training and reward sharing.
 - Keep your `wallet.dat` backed up and encrypted
 - Use unique RPC credentials (not the defaults)
 - Do not expose the RPC port to the public internet
-- Generate a new address for each mining session for privacy
+- The miner generates a new keypair for each mined block automatically
 - Monitor for unusual difficulty adjustments that might indicate an attack

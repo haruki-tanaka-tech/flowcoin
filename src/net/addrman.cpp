@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include "logging.h"
 
 namespace flow {
 
@@ -642,8 +643,8 @@ void AddrMan::cleanup() {
     }
 
     if (!to_remove.empty()) {
-        fprintf(stderr, "addrman: cleaned up %zu stale entries, "
-                "%zu remaining (new: %d, tried: %d)\n",
+        LogWarn("net", "cleaned up %zu stale entries, "
+                "%zu remaining (new: %d, tried: %d)",
                 to_remove.size(), map_info_.size(), new_count_, tried_count_);
     }
 }
@@ -808,7 +809,7 @@ bool AddrMan::deserialize(const uint8_t* data, size_t len) {
         }
     }
 
-    fprintf(stderr, "addrman: loaded %u entries (new: %d, tried: %d)\n",
+    LogInfo("net", "loaded %u entries (new: %d, tried: %d)",
             entry_count, new_count_, tried_count_);
     return true;
 }
@@ -822,18 +823,18 @@ bool AddrMan::save_to_file(const std::string& path) const {
 
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file.is_open()) {
-        fprintf(stderr, "addrman: failed to open %s for writing\n", path.c_str());
+        LogError("net", "failed to open %s for writing", path.c_str());
         return false;
     }
 
     file.write(reinterpret_cast<const char*>(data.data()),
                static_cast<std::streamsize>(data.size()));
     if (!file.good()) {
-        fprintf(stderr, "addrman: write error to %s\n", path.c_str());
+        LogError("net", "write error to %s", path.c_str());
         return false;
     }
 
-    fprintf(stderr, "addrman: saved %zu entries to %s (%zu bytes)\n",
+    LogInfo("net", "saved %zu entries to %s (%zu bytes)",
             map_info_.size(), path.c_str(), data.size());
     return true;
 }
@@ -846,7 +847,7 @@ bool AddrMan::load_from_file(const std::string& path) {
 
     auto file_size = file.tellg();
     if (file_size <= 0 || file_size > 10 * 1024 * 1024) {
-        fprintf(stderr, "addrman: file %s has invalid size\n", path.c_str());
+        LogError("net", "file %s has invalid size", path.c_str());
         return false;
     }
 
@@ -856,7 +857,7 @@ bool AddrMan::load_from_file(const std::string& path) {
               static_cast<std::streamsize>(file_size));
 
     if (!file.good()) {
-        fprintf(stderr, "addrman: read error from %s\n", path.c_str());
+        LogError("net", "read error from %s", path.c_str());
         return false;
     }
 

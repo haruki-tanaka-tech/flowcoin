@@ -13,6 +13,7 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "logging.h"
 
 namespace flow {
 
@@ -298,7 +299,7 @@ BlockPos BlockStore::write_block(const CBlock& block) {
     std::string path = get_block_path(current_file_);
     FILE* f = std::fopen(path.c_str(), "ab");
     if (!f) {
-        fprintf(stderr, "BlockStore: failed to open %s for writing: %s\n",
+        LogError("chain", "failed to open %s for writing: %s",
                 path.c_str(), std::strerror(errno));
         return BlockPos{};  // null pos indicates failure
     }
@@ -352,7 +353,7 @@ bool BlockStore::read_block(const BlockPos& pos, CBlock& block) const {
     std::string path = get_block_path(pos.file_num);
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) {
-        fprintf(stderr, "BlockStore: failed to open %s for reading: %s\n",
+        LogError("chain", "failed to open %s for reading: %s",
                 path.c_str(), std::strerror(errno));
         return false;
     }
@@ -376,7 +377,7 @@ bool BlockStore::read_block(const BlockPos& pos, CBlock& block) const {
                    |  static_cast<uint32_t>(magic_bytes[3]);
 
     if (magic != consensus::MAINNET_MAGIC) {
-        fprintf(stderr, "BlockStore: bad magic 0x%08x at file %d offset %u\n",
+        LogError("chain", "bad magic 0x%08x at file %d offset %u",
                 magic, pos.file_num, pos.offset);
         std::fclose(f);
         return false;
@@ -396,7 +397,7 @@ bool BlockStore::read_block(const BlockPos& pos, CBlock& block) const {
 
     // Sanity check: block size should not exceed MAX_BLOCK_SIZE
     if (block_size > consensus::MAX_BLOCK_SIZE) {
-        fprintf(stderr, "BlockStore: block size %u exceeds max at file %d offset %u\n",
+        LogError("chain", "block size %u exceeds max at file %d offset %u",
                 block_size, pos.file_num, pos.offset);
         std::fclose(f);
         return false;
@@ -493,7 +494,7 @@ bool BlockStore::write_undo(uint64_t height, const std::vector<uint8_t>& undo_da
     std::string path = get_undo_path_for_height(height);
     FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) {
-        fprintf(stderr, "BlockStore: failed to open %s for writing: %s\n",
+        LogError("chain", "failed to open %s for writing: %s",
                 path.c_str(), std::strerror(errno));
         return false;
     }
@@ -658,14 +659,14 @@ bool BlockStore::acquire_lock() {
     std::string lock_path = get_lock_path();
     lock_fd_ = ::open(lock_path.c_str(), O_CREAT | O_RDWR, 0644);
     if (lock_fd_ < 0) {
-        fprintf(stderr, "BlockStore: failed to open lock file %s: %s\n",
+        LogError("chain", "failed to open lock file %s: %s",
                 lock_path.c_str(), std::strerror(errno));
         return false;
     }
 
     if (::flock(lock_fd_, LOCK_EX | LOCK_NB) != 0) {
-        fprintf(stderr, "BlockStore: failed to acquire lock on %s: %s\n"
-                "Another FlowCoin instance may be using this data directory.\n",
+        LogError("chain", "failed to acquire lock on %s: %s\n"
+                "Another FlowCoin instance may be using this data directory.",
                 lock_path.c_str(), std::strerror(errno));
         ::close(lock_fd_);
         lock_fd_ = -1;
@@ -893,7 +894,7 @@ size_t BlockStore::prune_files_below(uint64_t min_height) {
     // Step 1: Delete per-height undo files below min_height
     int undo_deleted = prune_files(min_height);
     if (undo_deleted > 0) {
-        fprintf(stderr, "BlockStore: pruned %d undo files below height %lu\n",
+        LogInfo("chain", "pruned %d undo files below height %lu",
                 undo_deleted, static_cast<unsigned long>(min_height));
     }
 
@@ -913,7 +914,7 @@ size_t BlockStore::prune_files_below(uint64_t min_height) {
             size_t blk_size = get_file_size(blk_path);
             if (::unlink(blk_path.c_str()) == 0) {
                 bytes_freed += blk_size;
-                fprintf(stderr, "BlockStore: pruned %s (heights %lu-%lu, %zu bytes)\n",
+                LogInfo("chain", "pruned %s (heights %lu-%lu, %zu bytes)",
                         blk_path.c_str(),
                         static_cast<unsigned long>(info.height_lo),
                         static_cast<unsigned long>(info.height_hi),
@@ -1034,7 +1035,7 @@ bool BlockStore::verify_block_file(int file_num) const {
                        |  static_cast<uint32_t>(magic_bytes[3]);
 
         if (magic != consensus::MAINNET_MAGIC) {
-            fprintf(stderr, "BlockStore: verify: bad magic 0x%08x at file %d offset %zu\n",
+            LogError("chain", "verify: bad magic 0x%08x at file %d offset %zu",
                     magic, file_num, pos);
             std::fclose(f);
             return false;
@@ -1053,7 +1054,7 @@ bool BlockStore::verify_block_file(int file_num) const {
                             | (static_cast<uint32_t>(size_bytes[3]) << 24);
 
         if (block_size > consensus::MAX_BLOCK_SIZE) {
-            fprintf(stderr, "BlockStore: verify: block size %u exceeds max at file %d offset %zu\n",
+            LogError("chain", "verify: block size %u exceeds max at file %d offset %zu",
                     block_size, file_num, pos);
             std::fclose(f);
             return false;
@@ -1061,8 +1062,8 @@ bool BlockStore::verify_block_file(int file_num) const {
 
         // Verify we can read the full block
         if (pos + 8 + block_size > file_size) {
-            fprintf(stderr, "BlockStore: verify: truncated block at file %d offset %zu "
-                    "(need %u bytes, file has %zu remaining)\n",
+            LogError("chain", "verify: truncated block at file %d offset %zu "
+                    "(need %u bytes, file has %zu remaining)",
                     file_num, pos, block_size,
                     file_size - pos - 8);
             std::fclose(f);
@@ -1078,7 +1079,7 @@ bool BlockStore::verify_block_file(int file_num) const {
 
         CBlock test_block;
         if (!deserialize_block(block_data.data(), block_data.size(), test_block)) {
-            fprintf(stderr, "BlockStore: verify: deserialization failed at file %d offset %zu\n",
+            LogError("chain", "verify: deserialization failed at file %d offset %zu",
                     file_num, pos);
             std::fclose(f);
             return false;
@@ -1090,7 +1091,7 @@ bool BlockStore::verify_block_file(int file_num) const {
 
     std::fclose(f);
 
-    fprintf(stderr, "BlockStore: verify: file %d OK (%d blocks, %zu bytes)\n",
+    LogInfo("chain", "verify: file %d OK (%d blocks, %zu bytes)",
             file_num, block_count, file_size);
 
     return true;
