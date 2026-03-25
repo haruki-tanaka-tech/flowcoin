@@ -329,8 +329,11 @@ RPCClient::BlockTemplate RPCClient::get_block_template() {
 
     tmpl.height       = static_cast<uint64_t>(json_get_int(result, "height"));
     tmpl.prev_hash    = json_get_string(result, "previousblockhash");
-    tmpl.nbits        = static_cast<uint32_t>(json_get_int(result, "bits"));
+    tmpl.nbits        = static_cast<uint32_t>(json_get_int(result, "nbits"));
     tmpl.prev_val_loss = static_cast<float>(json_get_double(result, "prev_val_loss"));
+
+    // Model dimensions are inside "model" sub-object
+    // Simple approach: search for keys that appear after "model"
     tmpl.d_model      = static_cast<int>(json_get_int(result, "d_model"));
     tmpl.n_layers     = static_cast<int>(json_get_int(result, "n_layers"));
     tmpl.d_ff         = static_cast<int>(json_get_int(result, "d_ff"));
