@@ -22,10 +22,10 @@
 // 13     growth fields      == compute_growth(height)    bad-growth
 // 14     miner_sig          Ed25519Verify(pubkey, header[0..243])   bad-signature
 // 15     val_loss           == ForwardEval(model+delta, val_data)   bad-eval-loss
-// 16     train_steps        >= compute_min_steps(height)            insufficient-training
+// (removed: train_steps check -- difficulty alone regulates mining)
 //
 // check_header() validates checks 1-11, 13-14 (no block body needed).
-// check_block() validates all 16 checks plus coinbase, merkle root, and
+// check_block() validates all 15 checks plus coinbase, merkle root, and
 // transaction signatures.
 
 #ifndef FLOWCOIN_CONSENSUS_VALIDATION_H
@@ -132,9 +132,6 @@ struct BlockContext {
     // Current network-adjusted time
     int64_t     adjusted_time = 0;
 
-    // Expected minimum training steps for the child height
-    uint32_t    min_train_steps = 0;
-
     // Expected difficulty bits for the child block (from get_next_work_required)
     uint32_t    expected_nbits = 0;
 
@@ -164,7 +161,7 @@ using EvalFunction = float(*)(const std::vector<uint8_t>& delta_payload,
 /** Validate a block header against its parent context.
  *
  *  Implements checks 1-11 and 13-14. Skips checks requiring the block body
- *  (12, 15, 16). For the genesis block (ctx.is_genesis), chain-relative
+ *  (12, 15). For the genesis block (ctx.is_genesis), chain-relative
  *  checks (1-5, 8-9, 11) are skipped.
  *
  *  @param header  The block header to validate.

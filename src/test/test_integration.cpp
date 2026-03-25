@@ -135,7 +135,7 @@ static CBlock make_block(uint64_t height, const uint256& prev_hash,
     block.n_heads = dims.n_heads;
     block.gru_dim = dims.gru_dim;
     block.n_slots = dims.n_slots;
-    block.train_steps = compute_min_steps(height) + 1000;
+    block.reserved_field = 0;
     block.stagnation = 0;
     block.nonce = 0;
 
@@ -477,10 +477,8 @@ void test_integration() {
         ctx.expected_nbits = INITIAL_NBITS;
         ctx.is_genesis = false;
         ctx.expected_dims = compute_growth(1);
-        ctx.min_train_steps = compute_min_steps(1);
 
         assert(ctx.expected_dims.d_model == GENESIS_D_MODEL);
-        assert(ctx.min_train_steps > 0);
     }
 
     // -----------------------------------------------------------------------
@@ -801,7 +799,7 @@ void test_integration() {
         hdr.n_heads = dims.n_heads;
         hdr.gru_dim = dims.gru_dim;
         hdr.n_slots = dims.n_slots;
-        hdr.train_steps = 5000;
+        hdr.reserved_field = 0;
         hdr.stagnation = 3;
         hdr.nonce = 99;
         hdr.version = 1;

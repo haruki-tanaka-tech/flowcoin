@@ -40,7 +40,6 @@ struct StratumJob {
     uint64_t height;                   //!< Block height
     uint32_t nbits;                    //!< Difficulty target
     int64_t timestamp;                 //!< Block timestamp
-    uint32_t min_train_steps;          //!< Minimum training steps
     std::string coinbase1_hex;         //!< Coinbase prefix (hex)
     std::string coinbase2_hex;         //!< Coinbase suffix (hex)
     std::vector<std::string> merkle_branches; //!< Merkle branch hashes (hex)
@@ -68,7 +67,7 @@ struct StratumShare {
     std::string job_id;                //!< Job this share is for
     uint32_t nonce;                    //!< Mining nonce
     float val_loss;                    //!< Validation loss achieved
-    uint32_t train_steps;              //!< Training steps performed
+    uint32_t train_steps;              //!< Training steps performed (informational)
     std::string delta_hash_hex;        //!< Hash of the delta payload (hex)
     std::string dataset_hash_hex;      //!< Hash of the evaluation dataset (hex)
     std::string training_hash_hex;     //!< Combined training hash (hex)

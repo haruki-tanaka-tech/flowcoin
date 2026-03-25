@@ -62,7 +62,6 @@ struct CBlockIndex {
     // PoUT (Proof-of-Useful-Training)
     float       val_loss = 0.0f;
     float       prev_val_loss = 0.0f;
-    uint32_t    train_steps = 0;
 
     // Difficulty
     uint32_t    nbits = 0;

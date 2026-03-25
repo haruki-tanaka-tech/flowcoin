@@ -44,7 +44,7 @@ data followed by a 64-byte Ed25519 signature.
 | 168    | 4    | n_heads          | uint32_le | Number of attention heads              |
 | 172    | 4    | gru_dim          | uint32_le | MinGRU hidden dimension                |
 | 176    | 4    | n_slots          | uint32_le | Number of slot memory entries           |
-| 180    | 4    | train_steps      | uint32_le | Training steps performed               |
+| 180    | 4    | reserved         | uint32_le | Reserved (must be zero)                |
 | 184    | 4    | stagnation       | uint32_le | Consecutive non-improving blocks       |
 | 188    | 4    | delta_offset     | uint32_le | Byte offset into delta payload         |
 | 192    | 4    | delta_length     | uint32_le | Byte length of compressed delta        |
@@ -101,7 +101,7 @@ Every block must pass all 16 validation checks to be accepted:
     - If `parent.val_loss >= parent.prev_val_loss`: `block.stagnation == parent.stagnation + 1`
     - Otherwise: `block.stagnation == 0`
 
-12. **Minimum training steps**: `block.train_steps >= compute_min_steps(height)`.
+12. *(removed)* -- difficulty alone regulates mining; no minimum training steps.
 
 13. **Merkle root**: `block.merkle_root == compute_merkle_root(block.vtx)`.
 
@@ -687,7 +687,7 @@ gru_dim:       512
 n_slots:       1024
 val_loss:      100.0
 prev_val_loss: 100.0
-train_steps:   0
+reserved:      0
 stagnation:    0
 nonce:         [computed at launch]
 ```

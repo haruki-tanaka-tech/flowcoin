@@ -292,13 +292,7 @@ public:
         return uint256();
     }
 
-    uint32_t get_train_steps() override {
-        if (ctx_ && ctx_->chain) {
-            auto* tip = ctx_->chain->tip();
-            if (tip) return tip->train_steps;
-        }
-        return 0;
-    }
+    // get_train_steps removed: not a consensus field
 
     // ---- Fee estimation ----------------------------------------------------
 

@@ -154,7 +154,7 @@ static CBlock build_block(uint64_t height, const uint256& prev_hash,
     block.n_heads = dims.n_heads;
     block.gru_dim = dims.gru_dim;
     block.n_slots = dims.n_slots;
-    block.train_steps = compute_min_steps(height) + 1000;
+    block.reserved_field = 0;
     block.stagnation = 0;
     block.nonce = 0;
     block.vtx = txs;
@@ -708,7 +708,6 @@ void test_block_connection() {
         BlockContext ctx;
         ctx.is_genesis = true;
         ctx.expected_dims = compute_growth(0);
-        ctx.min_train_steps = compute_min_steps(0);
         ctx.expected_nbits = INITIAL_NBITS;
 
         ValidationState state;

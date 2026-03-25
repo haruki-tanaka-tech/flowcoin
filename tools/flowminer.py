@@ -124,16 +124,7 @@ def compute_growth(height: int) -> dict:
     }
 
 
-def compute_min_steps(height: int) -> int:
-    """Compute minimum training steps for a block at given height.
-
-    More params -> each step more valuable -> lower min.
-    Floor at 500 steps.
-    """
-    if height <= 500:
-        return 1000
-    ratio = math.sqrt(500.0 / height)
-    return max(500, int(1000.0 * ratio))
+# compute_min_steps removed: difficulty alone regulates mining
 
 
 # ════════════════════════════════════════════════════════════════
@@ -840,7 +831,6 @@ def serialize_block_header(
     n_heads: int,
     gru_dim: int,
     n_slots: int,
-    train_steps: int,
     stagnation: int,
     delta_offset: int,
     delta_length: int,
@@ -875,7 +865,7 @@ def serialize_block_header(
     parts.append(struct.pack("<I", n_heads))         # 4 bytes
     parts.append(struct.pack("<I", gru_dim))         # 4 bytes
     parts.append(struct.pack("<I", n_slots))         # 4 bytes
-    parts.append(struct.pack("<I", train_steps))     # 4 bytes
+    parts.append(struct.pack("<I", 0))                # 4 bytes (reserved)
     parts.append(struct.pack("<I", stagnation))      # 4 bytes
     parts.append(struct.pack("<I", delta_offset))    # 4 bytes
     parts.append(struct.pack("<I", delta_length))    # 4 bytes
@@ -1128,9 +1118,7 @@ class BlockTemplate:
         self.dataset_hash = bytes.fromhex(
             data.get("dataset_hash", "00" * 32)
         )
-        self.min_train_steps = data.get(
-            "min_train_steps", compute_min_steps(self.height)
-        )
+        # min_train_steps removed: difficulty alone regulates mining
 
     def dims(self) -> dict:
         """Return model dimensions as a dict."""
@@ -1202,7 +1190,6 @@ def submit_block(
     compressed_delta: bytes,
     sparse_count: int,
     sparse_threshold: float,
-    train_steps: int,
     val_loss: float,
 ) -> bool:
     """Submit a mined block to the node.
@@ -1216,7 +1203,6 @@ def submit_block(
         compressed_delta: Zstd-compressed delta.
         sparse_count: Number of non-zero elements.
         sparse_threshold: Sparsification threshold used.
-        train_steps: Total training steps performed.
         val_loss: Achieved validation loss.
 
     Returns:
@@ -1231,7 +1217,6 @@ def submit_block(
             "delta_length": len(compressed_delta),
             "sparse_count": sparse_count,
             "sparse_threshold": sparse_threshold,
-            "train_steps": train_steps,
             "val_loss": val_loss,
             "prev_val_loss": template.prev_val_loss,
         }])
@@ -1297,7 +1282,7 @@ def mining_loop(args):
             print(f"  Model: d={template.d_model} L={template.n_layers} "
                   f"ff={template.d_ff} slots={template.n_slots}")
             print(f"  Target: {template.target_hex[:16]}...")
-            print(f"  Min steps: {template.min_train_steps}")
+            # min_steps removed: difficulty alone regulates mining
             print(f"  Prev val_loss: {template.prev_val_loss:.4f}")
             print()
 
@@ -1320,13 +1305,13 @@ def mining_loop(args):
             )
 
             # Learning rate warmup + cosine decay schedule
-            warmup_steps = min(200, template.min_train_steps // 5)
+            warmup_steps = min(200, args.max_steps // 5)
 
             def lr_schedule(step: int) -> float:
                 if step < warmup_steps:
                     return (step + 1) / warmup_steps
                 progress = (step - warmup_steps) / max(
-                    template.min_train_steps - warmup_steps, 1
+                    args.max_steps - warmup_steps, 1
                 )
                 return 0.5 * (1.0 + math.cos(math.pi * min(progress, 1.0)))
 
@@ -1367,8 +1352,7 @@ def mining_loop(args):
                 stats.display(step, current_loss, template.height)
 
                 # ── Step 5: Check hash every N steps ──
-                if (step % args.steps_per_check == 0
-                        and step >= template.min_train_steps):
+                if step % args.steps_per_check == 0 and step > 0:
                     stats.record_hash_check()
 
                     # Compute model delta
@@ -1620,7 +1604,7 @@ def info_mode(args):
     print(f"  vocab:     {dims['vocab']}")
     print(f"  seq_len:   {dims['seq_len']}")
     print(f"  Parameters: {model.param_count():,}")
-    print(f"  Min steps: {compute_min_steps(height)}")
+    # min_steps display removed (not a consensus rule)
     print()
 
     # Per-layer breakdown

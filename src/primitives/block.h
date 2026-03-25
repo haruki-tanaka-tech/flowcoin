@@ -23,7 +23,7 @@
 //   Bytes 168-171: n_heads          (4 bytes, LE)
 //   Bytes 172-175: gru_dim          (4 bytes, LE)
 //   Bytes 176-179: n_slots          (4 bytes, LE)
-//   Bytes 180-183: train_steps      (4 bytes, LE)
+//   Bytes 180-183: reserved         (4 bytes, zero)
 //   Bytes 184-187: stagnation       (4 bytes, LE)
 //   Bytes 188-191: delta_offset     (4 bytes, LE)
 //   Bytes 192-195: delta_length     (4 bytes, LE)
@@ -94,7 +94,7 @@ struct CBlockHeader {
     uint32_t n_slots;
 
     // --- Training metadata ---
-    uint32_t train_steps;        //!< Number of training steps performed
+    uint32_t reserved_field;     //!< Reserved (must be zero, preserves 308-byte layout)
     uint32_t stagnation;         //!< Consecutive blocks without val_loss improvement
 
     // --- Delta reference ---
@@ -114,7 +114,7 @@ struct CBlockHeader {
         height(0), timestamp(0), nbits(0),
         val_loss(0.0f), prev_val_loss(0.0f),
         d_model(0), n_layers(0), d_ff(0), n_heads(0), gru_dim(0), n_slots(0),
-        train_steps(0), stagnation(0),
+        reserved_field(0), stagnation(0),
         delta_offset(0), delta_length(0), sparse_count(0), sparse_threshold(0.0f),
         nonce(0), version(1),
         miner_pubkey{}, miner_sig{} {}

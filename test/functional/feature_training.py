@@ -293,38 +293,8 @@ class FeatureTrainingTest(FlowCoinTestFramework):
         self.log.info("  Growth schedule consistent across %d heights", len(test_heights))
 
     def test_training_steps(self, node):
-        """Test minimum training steps at various heights."""
-        self.log.info("Testing training steps requirements...")
-
-        test_cases = [
-            # (height, expected_min_steps)
-            (0, 1000),
-            (100, 1400),
-            (250, 2000),
-            (499, 2996),
-            (500, 3000),
-            (2000, 6000),
-        ]
-
-        for height, expected_steps in test_cases:
-            computed = compute_min_training_steps(height)
-            assert_equal(
-                computed, expected_steps,
-                f"Min steps at height {height}"
-            )
-
-            # Verify via RPC if available
-            try:
-                schedule = node.getgrowthschedule(height)
-                if "min_training_steps" in schedule:
-                    assert_equal(
-                        schedule["min_training_steps"], expected_steps,
-                        f"RPC min_steps at height {height}"
-                    )
-            except Exception:
-                pass
-
-        self.log.info("  Training steps verified for %d heights", len(test_cases))
+        """Min training steps removed -- difficulty alone regulates mining."""
+        self.log.info("Training steps test skipped (min_steps removed from consensus)")
 
     def test_continuous_transitions(self, node):
         """Test that dimensions change at every block during growth phase."""

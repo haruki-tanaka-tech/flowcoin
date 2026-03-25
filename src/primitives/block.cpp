@@ -108,7 +108,7 @@ std::vector<uint8_t> CBlockHeader::get_unsigned_data() const {
     append_u32(buf, n_slots);                        // 176-179
 
     // Training metadata (2 * 4 = 8 bytes)
-    append_u32(buf, train_steps);                    // 180-183
+    append_u32(buf, reserved_field);                 // 180-183 (reserved)
     append_u32(buf, stagnation);                     // 184-187
 
     // Delta reference (4 * 4 = 16 bytes)
@@ -189,7 +189,7 @@ bool CBlockHeader::deserialize(const uint8_t* data, size_t len) {
     n_heads          = read_u32_le(data + 168);
     gru_dim          = read_u32_le(data + 172);
     n_slots          = read_u32_le(data + 176);
-    train_steps      = read_u32_le(data + 180);
+    reserved_field   = read_u32_le(data + 180);
     stagnation       = read_u32_le(data + 184);
     delta_offset     = read_u32_le(data + 188);
     delta_length     = read_u32_le(data + 192);

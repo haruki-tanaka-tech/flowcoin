@@ -7,7 +7,7 @@
 //   1. Fetch a block template from the assembler
 //   2. Load the current model state
 //   3. Load a training dataset shard
-//   4. Train the model for at least min_train_steps steps
+//   4. Train the model (more steps = more delta change = new hash)
 //   5. Evaluate validation loss
 //   6. Compute the weight delta (before - after training)
 //   7. Sparsify and compress the delta

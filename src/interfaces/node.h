@@ -149,9 +149,6 @@ public:
     /// Get the hash of the current model state.
     virtual uint256 get_model_hash() = 0;
 
-    /// Get the training steps performed by the last block.
-    virtual uint32_t get_train_steps() = 0;
-
     // ---- Fee estimation ----------------------------------------------------
 
     /// Estimate the fee rate (sat/kB) for confirmation within target blocks.

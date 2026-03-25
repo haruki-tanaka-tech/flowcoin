@@ -144,7 +144,7 @@ CBlock ChainState::create_genesis_block() const {
     // PoUT fields: genesis has max loss (untrained model)
     genesis.val_loss        = MAX_VAL_LOSS;
     genesis.prev_val_loss   = MAX_VAL_LOSS;
-    genesis.train_steps     = 0;
+    genesis.reserved_field  = 0;
     genesis.stagnation      = 0;
 
     // Model architecture: genesis dimensions
@@ -921,7 +921,7 @@ bool ChainState::rebuild_tree_from_db() {
         hdr.nbits           = loaded_idx.nbits;
         hdr.val_loss        = loaded_idx.val_loss;
         hdr.prev_val_loss   = loaded_idx.prev_val_loss;
-        hdr.train_steps     = loaded_idx.train_steps;
+        hdr.reserved_field  = 0;
         hdr.d_model         = loaded_idx.d_model;
         hdr.n_layers        = loaded_idx.n_layers;
         hdr.d_ff            = loaded_idx.d_ff;

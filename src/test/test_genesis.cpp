@@ -38,7 +38,7 @@ static CBlockHeader make_genesis_header() {
     hdr.n_heads = dims.n_heads;
     hdr.gru_dim = dims.gru_dim;
     hdr.n_slots = dims.n_slots;
-    hdr.train_steps = 5000;
+    hdr.reserved_field = 0;
     hdr.version = 1;
     hdr.stagnation = 0;
     hdr.nonce = 0;
@@ -143,7 +143,7 @@ void test_genesis() {
         BlockContext ctx;
         ctx.is_genesis = true;
         ctx.expected_dims = compute_growth(0);
-        ctx.min_train_steps = compute_min_steps(0);
+
         ctx.expected_nbits = INITIAL_NBITS;
 
         ValidationState state;
@@ -169,7 +169,7 @@ void test_genesis() {
         BlockContext ctx;
         ctx.is_genesis = true;
         ctx.expected_dims = compute_growth(0);
-        ctx.min_train_steps = compute_min_steps(0);
+
         ctx.expected_nbits = INITIAL_NBITS;
 
         ValidationState state;
@@ -195,7 +195,7 @@ void test_genesis() {
         BlockContext ctx;
         ctx.is_genesis = true;
         ctx.expected_dims = compute_growth(0);
-        ctx.min_train_steps = compute_min_steps(0);
+
         ctx.expected_nbits = INITIAL_NBITS;
 
         ValidationState state;
@@ -220,7 +220,7 @@ void test_genesis() {
         BlockContext ctx;
         ctx.is_genesis = true;
         ctx.expected_dims = compute_growth(0);
-        ctx.min_train_steps = compute_min_steps(0);
+
         ctx.expected_nbits = INITIAL_NBITS;
 
         ValidationState state;
@@ -240,7 +240,7 @@ void test_genesis() {
         BlockContext ctx;
         ctx.is_genesis = true;
         ctx.expected_dims = compute_growth(0);
-        ctx.min_train_steps = compute_min_steps(0);
+
         ctx.expected_nbits = INITIAL_NBITS;
 
         ValidationState state;

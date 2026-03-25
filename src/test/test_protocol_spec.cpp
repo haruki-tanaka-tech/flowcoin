@@ -332,7 +332,7 @@ void test_protocol_spec() {
         assert(MAX_LOSS_INCREASE == 2.0f);
         assert(MAX_DELTA_SIZE == 100'000'000);
         assert(MIN_DELTA_SIZE == 1);
-        assert(MIN_TRAIN_STEPS_BASE == 1000);
+        // MIN_TRAIN_STEPS_BASE removed (difficulty regulates mining)
     }
 
     // -----------------------------------------------------------------------

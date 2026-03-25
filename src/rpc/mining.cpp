@@ -64,7 +64,7 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         dims["seq_len"]     = tmpl.dims.seq_len;
         j["model"]          = dims;
 
-        j["min_train_steps"] = tmpl.min_train_steps;
+        // min_train_steps removed: difficulty alone regulates mining
 
         // Coinbase transaction info
         j["coinbase_value"] = tmpl.coinbase_tx.get_value_out();
@@ -190,7 +190,7 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         j["n_slots"]  = dims.n_slots;
         j["n_heads"]  = dims.n_heads;
 
-        j["min_train_steps"] = consensus::compute_min_steps(next_height);
+        // min_train_steps removed: difficulty alone regulates mining
         j["chain"]   = "main";
 
         // Growth phase
@@ -463,7 +463,7 @@ void register_mining_mempool_rpcs(RpcServer& server, ChainState& chain,
             j["prev_val_loss"] = tip->val_loss;
         }
 
-        j["min_train_steps"] = tmpl.min_train_steps;
+        // min_train_steps removed: difficulty alone regulates mining
 
         return j;
     });
@@ -485,7 +485,7 @@ void register_mining_mempool_rpcs(RpcServer& server, ChainState& chain,
         j["nbits"]           = tip->nbits;
         j["prev_val_loss"]   = tip->val_loss;
         j["reward"]          = consensus::compute_block_reward(next_height);
-        j["min_train_steps"] = consensus::compute_min_steps(next_height);
+        // min_train_steps removed: difficulty alone regulates mining
         j["mempool_txs"]     = mempool.size();
         j["mempool_bytes"]   = mempool.total_bytes();
 

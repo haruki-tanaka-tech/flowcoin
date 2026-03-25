@@ -100,26 +100,7 @@ void test_growth() {
     // After dimension freeze, d_model/n_layers are same but slots differ
     assert(dimensions_changed(1000, 1001)); // slots still change
 
-    // ── compute_min_steps ────────────────────────────────────────
-    // At genesis: 1000
-    assert(compute_min_steps(0) == 1000);
-    // At h=500: still 1000 (threshold is > 500)
-    assert(compute_min_steps(500) == 1000);
-    // At h=501: starts decreasing
-    assert(compute_min_steps(501) < 1000);
-    // At h=2000: 1000 * sqrt(500/2000) = 1000 * 0.5 = 500
-    assert(compute_min_steps(2000) == 500);
-    // Floor at 500: even at very high heights
-    assert(compute_min_steps(100000) == 500);
-    assert(compute_min_steps(1000000) == 500);
-
-    // Monotonically non-increasing after h=500
-    uint32_t prev = compute_min_steps(500);
-    for (uint64_t h = 501; h <= 5000; h += 50) {
-        uint32_t cur = compute_min_steps(h);
-        assert(cur <= prev);
-        prev = cur;
-    }
+    // ── compute_min_steps removed (difficulty alone regulates mining) ──
 
     // ── compute_param_count grows with height ────────────────────
     size_t p0 = compute_param_count(d0);

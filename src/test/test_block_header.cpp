@@ -32,7 +32,7 @@ void test_block_header() {
     hdr.n_slots = 1024;
     hdr.n_heads = 8;
     hdr.gru_dim = 512;
-    hdr.train_steps = 5000;
+    hdr.reserved_field = 0;
 
     auto data2 = hdr.get_unsigned_data();
     assert(data2.size() == 244);

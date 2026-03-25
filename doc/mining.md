@@ -181,18 +181,11 @@ Key rules:
 
 ### Training steps
 
-Each block must include at least `compute_min_steps(height)` training
-iterations:
-
-| Height Range | Min Steps | Formula |
-|---|---|---|
-| 0-500 | 1,000 | constant |
-| 501 | 999 | `1000 * sqrt(500 / height)` |
-| 2,000 | 500 | `1000 * sqrt(500 / height)` (floor) |
-| 100,000+ | 500 | floor at 500 |
-
-More params per step means each step is more valuable, so the minimum
-decreases as the model grows. Floor at 500 ensures meaningful training.
+There is no minimum training step requirement. Difficulty itself regulates
+mining, just like Bitcoin has no "min nonce attempts". Each training step
+changes the weight delta, which changes the training hash, producing a
+new lottery ticket. An empty delta yields a single fixed hash with almost
+zero chance of meeting the target.
 
 ### Stagnation counter
 
@@ -371,7 +364,7 @@ flowcoin-cli getbalance
 Each block header exposes these training metrics:
 
 - `val_loss` -- achieved validation loss
-- `train_steps` -- training iterations performed
+- (train_steps removed from consensus -- informational only in miner)
 - `stagnation` -- consecutive non-improving blocks
 - `d_model`, `n_layers` -- current model architecture
 - `delta_length` -- compressed delta payload size

@@ -237,12 +237,6 @@ ShareResult StratumServer::validate_share(const StratumShare& share,
         return result;
     }
 
-    // Validate training steps meet minimum requirement
-    if (share.train_steps < current_job_.min_train_steps) {
-        result.reject_reason = "insufficient-training";
-        return result;
-    }
-
     // Validate the training hash is non-empty
     if (share.training_hash_hex.empty()) {
         result.reject_reason = "missing-training-hash";

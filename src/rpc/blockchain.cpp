@@ -53,7 +53,7 @@ static json block_index_to_header_json(const CBlockIndex* idx) {
     j["n_heads"]       = idx->n_heads;
     j["n_slots"]       = idx->n_slots;
     j["gru_dim"]       = idx->gru_dim;
-    j["train_steps"]   = idx->train_steps;
+    // train_steps removed from consensus
     j["stagnation"]    = idx->stagnation_count;
     j["merkle_root"]   = hash_to_hex(idx->merkle_root);
     j["miner_pubkey"]  = hex_encode(idx->miner_pubkey.data(), 32);

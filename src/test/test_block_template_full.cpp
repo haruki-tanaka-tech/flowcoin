@@ -70,7 +70,7 @@ static CBlock tmpl_genesis_block(const KeyPair& kp) {
     block.n_heads = dims.n_heads;
     block.gru_dim = dims.gru_dim;
     block.n_slots = dims.n_slots;
-    block.train_steps = 5000;
+    block.reserved_field = 0;
     block.stagnation = 0;
     block.nonce = 0;
 
@@ -477,16 +477,8 @@ void test_block_template_full() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 19: min_train_steps correct in template
+    // Test 19: (min_train_steps removed -- difficulty regulates mining)
     // -----------------------------------------------------------------------
-    {
-        for (uint64_t h : {0ULL, 50ULL, 100ULL, 250ULL, 500ULL, 1000ULL}) {
-            BlockTemplate tmpl;
-            tmpl.min_train_steps = compute_min_steps(h);
-            assert(tmpl.min_train_steps >= 500);   // floor at 500
-            assert(tmpl.min_train_steps <= 1000);  // max at genesis
-        }
-    }
 
     // -----------------------------------------------------------------------
     // Test 20: CBlock::make_coinbase produces valid coinbase

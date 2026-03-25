@@ -530,7 +530,7 @@ void register_util_rpcs(RpcServer& server, ChainState& chain,
         j["val_loss"]      = idx->val_loss;
         j["d_model"]       = idx->d_model;
         j["n_layers"]      = idx->n_layers;
-        j["train_steps"]   = idx->train_steps;
+        // train_steps removed from consensus
         j["delta_size"]    = block.delta_payload.size();
 
         return j;

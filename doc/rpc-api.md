@@ -121,7 +121,7 @@ Returns detailed information about a block.
 - `val_loss` -- validation loss achieved
 - `prev_val_loss` -- parent validation loss
 - `d_model`, `n_layers`, `d_ff`, `n_heads`, `n_slots`, `gru_dim` -- model architecture
-- `train_steps` -- training steps performed
+
 - `stagnation` -- consecutive non-improving blocks
 - `merkle_root` -- transaction merkle root
 - `miner_pubkey` -- miner's Ed25519 public key
@@ -519,7 +519,7 @@ Returns a block template for mining.
 - `nbits` -- compact difficulty target
 - `target` -- full 256-bit target (hex)
 - `coinbase_value` -- block reward in atomic units
-- `min_train_steps` -- minimum training steps required
+- (min_train_steps removed from consensus)
 - `dims` -- model architecture dimensions:
   - `d_model`, `n_layers`, `d_ff`, `n_heads`, `gru_dim`, `n_slots`, `vocab`, `seq_len`
 - `timestamp` -- suggested timestamp
@@ -628,7 +628,7 @@ Returns information about the current model training state.
 - `val_loss` -- current validation loss
 - `prev_val_loss` -- previous validation loss
 - `d_model`, `n_layers`, `d_ff`, `n_heads`, `n_slots`, `gru_dim` -- model dims
-- `train_steps` -- training steps in latest block
+- (train_steps removed from consensus)
 - `stagnation` -- consecutive non-improving blocks
 - `phase` -- growth phase description
 - `param_count` -- estimated total model parameters

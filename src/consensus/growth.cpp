@@ -43,24 +43,6 @@ ModelDimensions compute_growth(uint64_t height) {
 }
 
 // ---------------------------------------------------------------------------
-// compute_min_steps
-// ---------------------------------------------------------------------------
-
-uint32_t compute_min_steps(uint64_t height) {
-    // More params -> each step more valuable -> lower min
-    // But floor at 500 steps (must do meaningful training)
-    // At genesis: 1000 steps
-    // At height 1000: ~500 steps (bigger model, each step counts more)
-    uint32_t base = 1000;
-    if (height > 500) {
-        // Diminishing: 1000 * sqrt(500/height)
-        double ratio = std::sqrt(500.0 / static_cast<double>(height));
-        base = std::max(500u, static_cast<uint32_t>(1000.0 * ratio));
-    }
-    return base;
-}
-
-// ---------------------------------------------------------------------------
 // compute_param_count
 // ---------------------------------------------------------------------------
 

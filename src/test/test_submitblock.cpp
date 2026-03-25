@@ -44,7 +44,7 @@ static std::vector<uint8_t> serialize_header(const CBlockHeader& hdr) {
     w.write_u32_le(hdr.n_heads);
     w.write_u32_le(hdr.gru_dim);
     w.write_u32_le(hdr.n_slots);
-    w.write_u32_le(hdr.train_steps);
+    w.write_u32_le(hdr.reserved_field);
     w.write_u32_le(hdr.stagnation);
     w.write_u32_le(hdr.delta_offset);
     w.write_u32_le(hdr.delta_length);
@@ -75,7 +75,7 @@ static CBlockHeader make_signed_header() {
     hdr.n_heads = dims.n_heads;
     hdr.gru_dim = dims.gru_dim;
     hdr.n_slots = dims.n_slots;
-    hdr.train_steps = 5000;
+    hdr.reserved_field = 0;
     hdr.version = 1;
     hdr.stagnation = 0;
     hdr.nonce = 0;
@@ -112,7 +112,7 @@ void test_submitblock() {
         assert(block.n_heads == hdr.n_heads);
         assert(block.gru_dim == hdr.gru_dim);
         assert(block.n_slots == hdr.n_slots);
-        assert(block.train_steps == hdr.train_steps);
+        assert(block.reserved_field == hdr.reserved_field);
         assert(block.version == hdr.version);
         assert(block.nonce == hdr.nonce);
     }
@@ -231,7 +231,7 @@ void test_submitblock() {
         CBlockHeader hdr = make_signed_header();
         hdr.height = 42;
         hdr.nonce = 12345;
-        hdr.train_steps = 9999;
+        hdr.reserved_field = 0;
 
         // Re-sign after changes
         auto kp = generate_keypair();
@@ -247,7 +247,7 @@ void test_submitblock() {
         assert(ok);
         assert(block.height == 42);
         assert(block.nonce == 12345);
-        assert(block.train_steps == 9999);
+        assert(block.reserved_field == 0);
     }
 
     // -----------------------------------------------------------------------
