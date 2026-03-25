@@ -412,12 +412,14 @@ float GGMLModel::train_step(const uint8_t* input, const uint8_t* target,
                              int seq_len, float lr) {
     // Allocate compute context (separate from weight context)
     // Estimate: each ggml op creates a tensor, we have ~20 ops per layer + overhead
-    const size_t est_tensors = 256 + static_cast<size_t>(n_layers_) * 64;
+    // Backward pass roughly doubles memory needs (grad tensors + intermediate)
+    const size_t est_tensors = 512 + static_cast<size_t>(n_layers_) * 128;
     const size_t compute_mem = est_tensors * ggml_tensor_overhead()
                              + ggml_graph_overhead_custom(16384, true)
-                             + static_cast<size_t>(seq_len) * vocab_ * sizeof(float) * 2  // logits + targets
-                             + static_cast<size_t>(seq_len) * d_model_ * sizeof(float) * n_layers_ * 20
-                             + 64 * 1024 * 1024;  // extra headroom
+                             + static_cast<size_t>(seq_len) * vocab_ * sizeof(float) * 4  // logits + targets + grads
+                             + static_cast<size_t>(seq_len) * d_model_ * sizeof(float) * n_layers_ * 40
+                             + param_count() * sizeof(float) * 2  // grad accumulators
+                             + 256 * 1024 * 1024;  // extra headroom
 
     struct ggml_init_params cparams = {
         /*.mem_size   =*/ compute_mem,
