@@ -849,7 +849,7 @@ static void causal_conv_backward(const float* x, const LayerWeights& L,
     // Recompute conv_sum from forward
     std::vector<float> conv_sum(total, 0.0f);
 
-    auto depthwise_causal_and_grad = [&](const Tensor& kernel, Tensor& d_kernel, int ksize) {
+    auto depthwise_causal_and_grad = [&](const Tensor& kernel, Tensor& /*d_kernel*/, int ksize) {
         for (int t = 0; t < seq_len; t++) {
             for (int d = 0; d < D; d++) {
                 float val = 0.0f;

@@ -17,10 +17,10 @@ set(CMAKE_C_EXTENSIONS OFF)
 # NOTE: -ffast-math is intentionally omitted — it breaks IEEE 754 determinism
 # which is required for consensus evaluation across heterogeneous hardware.
 add_compile_options(
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Werror=return-type
+    $<$<COMPILE_LANGUAGE:C,CXX>:-Wall>
+    $<$<COMPILE_LANGUAGE:C,CXX>:-Wextra>
+    $<$<COMPILE_LANGUAGE:C,CXX>:-Wpedantic>
+    $<$<COMPILE_LANGUAGE:C,CXX>:-Werror=return-type>
 )
 
 # =============================================================================
@@ -31,8 +31,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Reproducible builds: strip file prefix map for deterministic debug info
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
     add_compile_options(
-        "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
-        "-fmacro-prefix-map=${CMAKE_SOURCE_DIR}=."
+        $<$<COMPILE_LANGUAGE:C,CXX>:-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.>
+        $<$<COMPILE_LANGUAGE:C,CXX>:-fmacro-prefix-map=${CMAKE_SOURCE_DIR}=.>
     )
 endif()
 
