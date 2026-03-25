@@ -19,7 +19,7 @@
 // 10     training_hash      < target from nbits                     high-hash
 // 11     nbits              == get_next_work_required(...)           bad-diffbits
 // 12     dataset_hash       == computed dataset hash                 bad-dataset-hash
-// 13     growth fields      == compute_growth(height, improving)    bad-growth
+// 13     growth fields      == compute_growth(height)    bad-growth
 // 14     miner_sig          Ed25519Verify(pubkey, header[0..243])   bad-signature
 // 15     val_loss           == ForwardEval(model+delta, val_data)   bad-eval-loss
 // 16     train_steps        >= compute_min_steps(height)            insufficient-training

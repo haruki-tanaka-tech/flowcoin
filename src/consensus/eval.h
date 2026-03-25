@@ -70,7 +70,7 @@ public:
     // Requires stored delta from delta_history_
     bool undo_last_delta();
 
-    // Expand model dimensions (at plateau transitions)
+    // Expand model dimensions (continuous growth)
     bool expand_model(const ModelDimensions& new_dims);
 
     // ═══ Evaluation (consensus-critical) ═══

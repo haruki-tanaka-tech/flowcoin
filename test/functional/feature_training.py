@@ -6,9 +6,9 @@
 Tests cover:
     - gettraininginfo returns correct model dimensions.
     - getmodelhash is deterministic per block.
-    - getgrowthschedule returns correct dims at each plateau.
-    - getgrowthschedule at plateau boundaries.
-    - getgrowthschedule in Phase 2 (frozen architecture).
+    - getgrowthschedule returns correct dims (continuous growth).
+    - getgrowthschedule at dimension freeze boundary.
+    - getgrowthschedule after freeze (frozen architecture).
     - getvalidationdata format and fields.
     - Model dimensions in mined blocks.
     - Growth schedule consistency across nodes.
@@ -32,8 +32,7 @@ from test_framework.util import (
     assert_true,
     compute_min_training_steps,
     get_model_dims_for_height,
-    GROWTH_SCHEDULE,
-    DIM_GROWTH_END,
+    DIM_FREEZE_HEIGHT,
     wait_until,
 )
 
@@ -56,14 +55,14 @@ class FeatureTrainingTest(FlowCoinTestFramework):
 
         self.test_gettraininginfo(node)
         self.test_getmodelhash(node)
-        self.test_getgrowthschedule_plateaus(node)
+        self.test_getgrowthschedule_continuous(node)
         self.test_getgrowthschedule_boundaries(node)
-        self.test_getgrowthschedule_phase2(node)
+        self.test_getgrowthschedule_frozen(node)
         self.test_getvalidationdata(node)
         self.test_model_dims_in_blocks(node)
         self.test_growth_consistency(node, node1)
         self.test_training_steps(node)
-        self.test_plateau_transitions(node)
+        self.test_continuous_transitions(node)
         self.test_improvement_flag(node)
         self.test_delta_fields(node)
 
@@ -102,7 +101,7 @@ class FeatureTrainingTest(FlowCoinTestFramework):
                 found += 1
                 self.log.info("    %s = %s", field, info[field])
 
-        # d_ff should be 2x d_model at plateau 0
+        # d_ff should be 2x d_model
         if "d_ff" in info:
             expected_dff = expected.get("d_ff", expected["d_model"] * 2)
             assert_equal(info["d_ff"], expected_dff)
@@ -143,91 +142,66 @@ class FeatureTrainingTest(FlowCoinTestFramework):
 
         self.log.info("  getmodelhash verified")
 
-    def test_getgrowthschedule_plateaus(self, node):
-        """Test getgrowthschedule returns correct dims at each plateau."""
-        self.log.info("Testing getgrowthschedule plateaus...")
+    def test_getgrowthschedule_continuous(self, node):
+        """Test getgrowthschedule returns correct dims with continuous growth."""
+        self.log.info("Testing getgrowthschedule continuous growth...")
 
-        for start, end, d_model, n_layers, d_ff, n_heads in GROWTH_SCHEDULE:
-            # Test at start of plateau
-            schedule = node.getgrowthschedule(start)
+        test_heights = [
+            (0, 512, 8),
+            (100, 612, 11),
+            (256, 768, 16),
+            (512, 1024, 24),
+            (1000, 1024, 24),
+        ]
+
+        for height, expected_d, expected_l in test_heights:
+            schedule = node.getgrowthschedule(height)
             assert_equal(
-                schedule["d_model"], d_model,
-                f"d_model at plateau start {start}"
+                schedule["d_model"], expected_d,
+                f"d_model at height {height}"
             )
             assert_equal(
-                schedule["n_layers"], n_layers,
-                f"n_layers at plateau start {start}"
+                schedule["n_layers"], expected_l,
+                f"n_layers at height {height}"
             )
-
-            # Test at middle of plateau
-            mid = (start + end) // 2
-            schedule_mid = node.getgrowthschedule(mid)
-            assert_equal(schedule_mid["d_model"], d_model)
-            assert_equal(schedule_mid["n_layers"], n_layers)
-
-            # Test at end of plateau
-            schedule_end = node.getgrowthschedule(end)
-            assert_equal(schedule_end["d_model"], d_model)
-            assert_equal(schedule_end["n_layers"], n_layers)
 
             self.log.info(
-                "  Plateau [%d-%d]: d=%d, L=%d, dff=%d, heads=%d",
-                start, end, d_model, n_layers, d_ff, n_heads
+                "  Height %d: d=%d, L=%d", height, expected_d, expected_l
             )
 
-            # d_ff and n_heads if available
-            if "d_ff" in schedule:
-                assert_equal(schedule["d_ff"], d_ff)
-            if "n_heads" in schedule:
-                assert_equal(schedule["n_heads"], n_heads)
-
-        self.log.info("  All 5 plateaus verified")
+        self.log.info("  Continuous growth verified")
 
     def test_getgrowthschedule_boundaries(self, node):
-        """Test getgrowthschedule at plateau transition boundaries."""
+        """Test getgrowthschedule at dimension freeze boundary."""
         self.log.info("Testing growth schedule boundaries...")
 
-        # Boundary between plateau 0 and 1 (height 99 -> 100)
-        dims_99 = node.getgrowthschedule(99)
-        dims_100 = node.getgrowthschedule(100)
-        assert_equal(dims_99["d_model"], 512)
-        assert_equal(dims_100["d_model"], 640)
-        assert_not_equal(dims_99["d_model"], dims_100["d_model"])
+        # Consecutive blocks should have different d_model during growth
+        dims_0 = node.getgrowthschedule(0)
+        dims_1 = node.getgrowthschedule(1)
+        assert_equal(dims_0["d_model"], 512)
+        assert_equal(dims_1["d_model"], 513)
+        assert_not_equal(dims_0["d_model"], dims_1["d_model"])
 
-        # Boundary between plateau 1 and 2 (height 199 -> 200)
-        dims_199 = node.getgrowthschedule(199)
-        dims_200 = node.getgrowthschedule(200)
-        assert_equal(dims_199["d_model"], 640)
-        assert_equal(dims_200["d_model"], 768)
+        # At dimension freeze boundary (511 -> 512)
+        dims_511 = node.getgrowthschedule(511)
+        dims_512 = node.getgrowthschedule(512)
+        assert_equal(dims_511["d_model"], 1023)
+        assert_equal(dims_512["d_model"], 1024)
 
-        # Boundary between plateau 2 and 3 (height 299 -> 300)
-        dims_299 = node.getgrowthschedule(299)
-        dims_300 = node.getgrowthschedule(300)
-        assert_equal(dims_299["d_model"], 768)
-        assert_equal(dims_300["d_model"], 896)
+        # After freeze, d_model stays 1024
+        dims_513 = node.getgrowthschedule(513)
+        assert_equal(dims_513["d_model"], 1024)
 
-        # Boundary between plateau 3 and 4 (height 399 -> 400)
-        dims_399 = node.getgrowthschedule(399)
-        dims_400 = node.getgrowthschedule(400)
-        assert_equal(dims_399["d_model"], 896)
-        assert_equal(dims_400["d_model"], 1024)
+        self.log.info("  Boundary transitions verified")
 
-        # Boundary between Phase 1 and Phase 2 (height 499 -> 500)
-        dims_499 = node.getgrowthschedule(499)
-        dims_500 = node.getgrowthschedule(500)
-        assert_equal(dims_499["d_model"], 1024)
-        assert_equal(dims_500["d_model"], 1024)  # Frozen
+    def test_getgrowthschedule_frozen(self, node):
+        """Test getgrowthschedule after dimension freeze."""
+        self.log.info("Testing frozen architecture after height 512...")
 
-        self.log.info("  All boundary transitions verified")
+        # After DIM_FREEZE_HEIGHT, all should have d=1024, L=24
+        frozen_heights = [512, 600, 1000, 5000, 10000, 50000, 100000]
 
-    def test_getgrowthschedule_phase2(self, node):
-        """Test getgrowthschedule in Phase 2 (frozen architecture)."""
-        self.log.info("Testing Phase 2 frozen architecture...")
-
-        # Phase 2 heights: all should have d=1024, L=24
-        phase2_heights = [500, 600, 1000, 5000, 10000, 50000, 100000]
-
-        for height in phase2_heights:
+        for height in frozen_heights:
             dims = node.getgrowthschedule(height)
             assert_equal(
                 dims["d_model"], 1024,
@@ -238,7 +212,7 @@ class FeatureTrainingTest(FlowCoinTestFramework):
                 f"n_layers should be 24 at height {height}"
             )
 
-        self.log.info("  Phase 2 architecture frozen at d=1024, L=24")
+        self.log.info("  Architecture frozen at d=1024, L=24 after h=512")
 
     def test_getvalidationdata(self, node):
         """Test getvalidationdata format and fields."""
@@ -352,37 +326,25 @@ class FeatureTrainingTest(FlowCoinTestFramework):
 
         self.log.info("  Training steps verified for %d heights", len(test_cases))
 
-    def test_plateau_transitions(self, node):
-        """Test that dimensions change exactly at plateau boundaries."""
-        self.log.info("Testing plateau transitions...")
+    def test_continuous_transitions(self, node):
+        """Test that dimensions change at every block during growth phase."""
+        self.log.info("Testing continuous growth transitions...")
 
-        # Within a plateau, dims should be constant
-        for start, end, d_model, n_layers, d_ff, n_heads in GROWTH_SCHEDULE:
-            if end - start < 3:
-                continue
-            dims_a = node.getgrowthschedule(start)
-            dims_b = node.getgrowthschedule(start + 1)
-            dims_c = node.getgrowthschedule(end - 1)
-            dims_d = node.getgrowthschedule(end)
-
-            # All within plateau should match
-            assert_equal(dims_a["d_model"], dims_b["d_model"])
-            assert_equal(dims_b["d_model"], dims_c["d_model"])
-            assert_equal(dims_c["d_model"], dims_d["d_model"])
-            assert_equal(dims_a["n_layers"], dims_d["n_layers"])
-
-        # Across plateaus, dims should change
-        for i in range(len(GROWTH_SCHEDULE) - 1):
-            end_height = GROWTH_SCHEDULE[i][1]
-            start_next = GROWTH_SCHEDULE[i + 1][0]
-            dims_end = node.getgrowthschedule(end_height)
-            dims_next = node.getgrowthschedule(start_next)
+        # During growth phase, every consecutive block has different d_model
+        for h in [0, 50, 100, 200, 400, 510]:
+            dims_a = node.getgrowthschedule(h)
+            dims_b = node.getgrowthschedule(h + 1)
             assert_not_equal(
-                dims_end["d_model"], dims_next["d_model"],
-                f"d_model should change at boundary {end_height}->{start_next}"
+                dims_a["d_model"], dims_b["d_model"],
+                f"d_model should change between {h} and {h+1}"
             )
 
-        self.log.info("  Plateau transitions verified")
+        # After freeze, d_model stays constant
+        dims_512 = node.getgrowthschedule(512)
+        dims_513 = node.getgrowthschedule(513)
+        assert_equal(dims_512["d_model"], dims_513["d_model"])
+
+        self.log.info("  Continuous transitions verified")
 
     def test_improvement_flag(self, node):
         """Test improvement flag tracking in blocks."""
@@ -499,7 +461,7 @@ class FeatureTrainingTest(FlowCoinTestFramework):
 
         for height in extreme_heights:
             dims = node.getgrowthschedule(height)
-            # Phase 2: all should be frozen
+            # After freeze: dims should be at max
             assert_equal(
                 dims["d_model"], 1024,
                 f"d_model should be 1024 at height {height}"
@@ -551,7 +513,7 @@ class FeatureTrainingTest(FlowCoinTestFramework):
 
         assert_equal(height_after, height_before + 5)
 
-        # If height changed plateaus, dims should change
+        # Dims should match expected for the new height
         expected_before = get_model_dims_for_height(height_before)
         expected_after = get_model_dims_for_height(height_after)
 

@@ -116,8 +116,7 @@ void BlockAssembler::fill_header(CBlockHeader& hdr, uint64_t next_height) {
     }
 
     // Model dimensions at next height
-    uint32_t improving_blocks = tip ? tip->improving_blocks : 0;
-    consensus::ModelDimensions dims = consensus::compute_growth(next_height, improving_blocks);
+    consensus::ModelDimensions dims = consensus::compute_growth(next_height);
 
     hdr.d_model  = dims.d_model;
     hdr.n_layers = dims.n_layers;
@@ -448,7 +447,7 @@ BlockTemplate BlockAssembler::create_template(const std::string& coinbase_addres
 
     // Model dimensions
     uint32_t improving_blocks = tip ? tip->improving_blocks : 0;
-    tmpl.dims = consensus::compute_growth(next_height, improving_blocks);
+    tmpl.dims = consensus::compute_growth(next_height);
     tmpl.min_train_steps = consensus::compute_min_steps(next_height);
 
     // Decode target
@@ -486,7 +485,7 @@ BlockTemplate BlockAssembler::create_template(const std::array<uint8_t, 32>& coi
     fill_header(tmpl.header, next_height);
 
     uint32_t improving_blocks = tip ? tip->improving_blocks : 0;
-    tmpl.dims = consensus::compute_growth(next_height, improving_blocks);
+    tmpl.dims = consensus::compute_growth(next_height);
     tmpl.min_train_steps = consensus::compute_min_steps(next_height);
 
     arith_uint256 target_arith;

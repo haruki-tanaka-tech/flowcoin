@@ -112,10 +112,10 @@ cp *.txt ~/training-data/
 
 ### Dataset size recommendations
 
-| Chain Phase | Minimum Dataset | Recommended |
+| Chain Height | Minimum Dataset | Recommended |
 |---|---|---|
-| Phase 1 (blocks 0-499) | 10 MB | 100 MB+ |
-| Phase 2 (blocks 500+) | 100 MB | 1 GB+ |
+| 0-511 (dimension growth) | 10 MB | 100 MB+ |
+| 512+ (slot growth) | 100 MB | 1 GB+ |
 
 Larger datasets produce lower validation loss and more competitive blocks.
 
@@ -186,15 +186,13 @@ iterations:
 
 | Height Range | Min Steps | Formula |
 |---|---|---|
-| 0 | 1,000 | `1000 + 4 * height` |
-| 100 | 1,400 | `1000 + 4 * height` |
-| 499 | 2,996 | `1000 + 4 * height` |
-| 500 | 3,000 | `3000 * sqrt(height / 500)` |
-| 2,000 | 6,000 | `3000 * sqrt(height / 500)` |
-| 8,000 | 12,000 | `3000 * sqrt(height / 500)` |
+| 0-500 | 1,000 | constant |
+| 501 | 999 | `1000 * sqrt(500 / height)` |
+| 2,000 | 500 | `1000 * sqrt(500 / height)` (floor) |
+| 100,000+ | 500 | floor at 500 |
 
-More training steps generally produce lower validation loss and a better
-chance of meeting the difficulty target.
+More params per step means each step is more valuable, so the minimum
+decreases as the model grows. Floor at 500 ensures meaningful training.
 
 ### Stagnation counter
 
@@ -239,29 +237,39 @@ If slower, difficulty decreases.
 Initial difficulty is very easy (nbits = 0x1f00ffff, approximately 2^226
 target), allowing early miners to find blocks with minimal hardware.
 
-## Model Growth Phases
+## Model Growth
 
-### Phase 1: Staircase Growth (blocks 0-499)
+The model grows CONTINUOUSLY -- every block adds parameters. There are no
+phases, no plateaus, and no cap on slots.
 
-The model architecture grows through 5 plateaus of 100 blocks each:
+### Dimension Growth (blocks 0-511)
 
-| Plateau | Blocks | d_model | n_layers | d_ff | n_heads |
-|---|---|---|---|---|---|
-| 0 | 0--99 | 512 | 8 | 1,024 | 8 |
-| 1 | 100--199 | 640 | 12 | 1,280 | 10 |
-| 2 | 200--299 | 768 | 16 | 1,536 | 12 |
-| 3 | 300--399 | 896 | 20 | 1,792 | 14 |
-| 4 | 400--499 | 1,024 | 24 | 2,048 | 16 |
+Dimensions grow linearly with height:
 
-At each plateau transition, the existing model weights are expanded via
-zero-padding and copying. Miners must use the correct architecture for
-their block height.
+| Height | d_model | n_layers | d_ff  | n_heads | n_slots |
+|--------|---------|----------|-------|---------|---------|
+| 0      | 512     | 8        | 1,024 | 8       | 1,024   |
+| 100    | 612     | 11       | 1,224 | 9       | 1,424   |
+| 256    | 768     | 16       | 1,536 | 12      | 2,048   |
+| 512    | 1,024   | 24       | 2,048 | 16      | 3,072   |
 
-### Phase 2: Frozen Architecture (blocks 500+)
+At each block, existing model weights are expanded via zero-padding and
+copying. Miners must use the correct architecture for their block height.
 
-After block 499, the core architecture is frozen at maximum dimensions.
-Only the slot memory (`n_slots`) continues to grow, increasing by 4 slots
-for each block that improves validation loss, up to a maximum of 65,536.
+### Frozen Dimensions, Infinite Slot Growth (blocks 512+)
+
+After block 511, the core architecture dimensions are frozen at their
+maximum (d=1024, L=24). Only slots continue to grow -- by 4 per block,
+with NO cap:
+
+| Height    | n_slots   | ~Total Params |
+|-----------|-----------|---------------|
+| 1,000     | 5,024     | growing       |
+| 10,000    | 41,024    | ~3B           |
+| 100,000   | 401,024   | ~30B          |
+| 1,000,000 | 4,001,024 | ~300B         |
+
+Inference remains O(1) because only top_k=2 slots are active per token.
 
 ## Mining Strategy Tips
 

@@ -187,8 +187,8 @@ This separates factual knowledge storage from sequence processing:
 - Slot memory stores specific facts, entities, and relationships
 - Growing n_slots allows knowledge accumulation without model restructuring
 
-During Phase 2 of the growth schedule, only n_slots increases, allowing the
-network to accumulate more knowledge while maintaining a stable core architecture.
+Slots grow every block with no cap, allowing the network to accumulate
+unlimited knowledge. After dimensions freeze (at block 512), only slots grow.
 
 ### 3.4 Multi-Scale Convolution: Local Patterns
 
@@ -292,31 +292,31 @@ threshold for `training_hash < target`.
 
 ## 5. Model Growth Schedule
 
-### 5.1 Phase 1: Dimension Growth
+### 5.1 Continuous Growth
 
-During the first ~500,000 blocks, model dimensions increase at predefined
-plateaus triggered by cumulative improving blocks (blocks where val_loss decreased
-compared to the parent):
+Every block grows the model. There are no phases, no plateaus, and no cap on slots.
 
-- Plateau 0: 64-dim, 2 layers (at genesis)
-- Plateau 1: 128-dim, 4 layers
-- Plateau 2: 256-dim, 6 layers
-- Plateau 3: 384-dim, 8 layers
-- Plateau 4: 512-dim, 12 layers (final)
+**Dimension Growth (blocks 0-511):**
+Dimensions grow linearly with block height:
+- d_model(h)  = 512 + h (capped at 1024)
+- n_layers(h) = 8 + h/32 (capped at 24)
+- d_ff(h) = 2 * d_model(h)
 
-Each transition preserves existing weights and initializes new parameters
+Each block transition preserves existing weights and initializes new parameters
 deterministically, ensuring all nodes maintain identical model states.
 
-### 5.2 Phase 2: Knowledge Growth
+### 5.2 Infinite Slot Growth
 
-After dimension growth plateaus, the slot memory count increases linearly:
+Slots grow at every block, with no upper bound:
 
 ```
-n_slots = base_slots + floor(improving_blocks / growth_interval)
+n_slots(h) = 1024 + h * 4
 ```
 
-This allows the model to accumulate unbounded factual knowledge while
-maintaining a fixed computational cost per training step.
+After block 512, dimensions are frozen at their maximum (d=1024, L=24),
+but slots continue growing forever. This allows the model to accumulate
+unbounded factual knowledge while inference remains O(1) (only top_k=2
+slots active per token).
 
 ### 5.3 Cumulative Learning
 
@@ -369,16 +369,16 @@ machine learning workloads.
 
 As model dimensions grow, GPU memory requirements increase:
 
-| Phase   | d_model | Parameters | Min GPU RAM | Target GPU    |
-|---------|---------|------------|-------------|---------------|
-| Phase 0 | 64      | ~160K      | 256 MB      | Any GPU       |
-| Phase 1 | 128     | ~1.2M      | 512 MB      | Entry GPU     |
-| Phase 2 | 256     | ~8M        | 2 GB        | GTX 1650      |
-| Phase 3 | 384     | ~25M       | 4 GB        | RTX 3060      |
-| Phase 4 | 512     | ~80M       | 8 GB        | RTX 3070      |
+| Block     | d_model | Parameters | Min GPU RAM | Target GPU    |
+|-----------|---------|------------|-------------|---------------|
+| 0         | 512     | ~13M       | 2 GB        | GTX 1060      |
+| 100       | 612     | ~35M       | 4 GB        | RTX 3060      |
+| 512       | 1024    | ~180M      | 8 GB        | RTX 3070      |
+| 10,000    | 1024    | ~3B        | 16 GB       | RTX 4090      |
+| 100,000   | 1024    | ~30B       | 48 GB       | A6000         |
 
 The gradual increase ensures that early mining is accessible to commodity
-hardware, while later phases reward investment in more capable equipment.
+hardware, while later blocks reward investment in more capable equipment.
 
 ## 7. Network Architecture
 
@@ -508,7 +508,7 @@ mining remains accessible during early adoption and scales with network growth.
 Future work includes exploring multi-model training (training multiple models
 simultaneously for diversity), cross-chain model sharing (allowing other
 blockchains to utilize the trained model), and advanced growth schedules that
-adapt to the model's learning curve rather than fixed plateau boundaries.
+adapt to the model's learning curve.
 
 ## References
 

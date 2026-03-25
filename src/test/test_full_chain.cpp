@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <string>
 #include <vector>
 
 using namespace flow;
@@ -144,7 +145,7 @@ static CBlock fc_block(uint64_t height, const uint256& prev,
         5.0f - static_cast<float>(height - 1) * 0.001f;
     if (block.prev_val_loss < 0.5f) block.prev_val_loss = 0.5f;
 
-    auto dims = compute_growth(height, 0);
+    auto dims = compute_growth(height);
     block.d_model = dims.d_model;
     block.n_layers = dims.n_layers;
     block.d_ff = dims.d_ff;
@@ -314,104 +315,92 @@ void test_full_chain() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 3: Chain with model hash changes at each block
+    // Test 3: Continuous growth — dimensions change every block
     // -----------------------------------------------------------------------
     {
-        // Model hash should change when architecture dimensions change
-        // at plateau transitions (every 100 blocks in Phase 1)
-
         // Heights 0 and 100 should have different dimensions
-        auto dims0 = compute_growth(0, 0);
-        auto dims100 = compute_growth(100, 0);
+        auto dims0 = compute_growth(0);
+        auto dims100 = compute_growth(100);
 
         assert(dims0.d_model != dims100.d_model);
         assert(dims0.n_layers != dims100.n_layers);
 
-        // Heights within same plateau should have same dimensions
-        auto dims50 = compute_growth(50, 0);
-        assert(dims0.d_model == dims50.d_model);
-        assert(dims0.n_layers == dims50.n_layers);
+        // Even consecutive blocks differ (continuous growth)
+        auto dims1 = compute_growth(1);
+        assert(dims0.d_model != dims1.d_model);  // 512 vs 513
+        assert(dims0.n_slots != dims1.n_slots);   // 1024 vs 1028
     }
 
     // -----------------------------------------------------------------------
-    // Test 4: Growth schedule verification through blocks
+    // Test 4: Growth schedule verification — continuous
     // -----------------------------------------------------------------------
     {
-        // Plateau 0 (blocks 0-99): d_model=512, n_layers=8
-        for (uint64_t h = 0; h < 100; h++) {
-            auto dims = compute_growth(h, 0);
-            assert(dims.d_model == 512);
-            assert(dims.n_layers == 8);
-            assert(dims.d_ff == 1024);
+        // Block 0: d_model=512, n_layers=8
+        auto dims0 = compute_growth(0);
+        assert(dims0.d_model == 512);
+        assert(dims0.n_layers == 8);
+        assert(dims0.d_ff == 1024);
+
+        // Block 100: d_model=612, n_layers=11
+        auto dims100 = compute_growth(100);
+        assert(dims100.d_model == 612);
+        assert(dims100.n_layers == 11);
+        assert(dims100.d_ff == 1224);
+
+        // Dimensions change every block during growth phase
+        assert(dimensions_changed(0, 1));
+        assert(dimensions_changed(100, 101));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 5: Continuous growth — dimensions grow linearly then freeze
+    // -----------------------------------------------------------------------
+    {
+        // d_model grows +1 per block
+        for (uint64_t h = 0; h < 512; h++) {
+            auto dims = compute_growth(h);
+            assert(dims.d_model == 512 + h);
         }
 
-        // Plateau 1 (blocks 100-199): d_model=640, n_layers=12
-        for (uint64_t h = 100; h < 200; h++) {
-            auto dims = compute_growth(h, 0);
-            assert(dims.d_model == 640);
-            assert(dims.n_layers == 12);
-            assert(dims.d_ff == 1280);
-        }
+        // After h=512, d_model is frozen at 1024
+        auto dims512 = compute_growth(512);
+        assert(dims512.d_model == 1024);
 
-        // Transition at block 100
-        assert(is_plateau_transition(100));
-        assert(dimensions_change_at(100));
-        assert(!dimensions_change_at(50));
-        assert(!dimensions_change_at(150));
+        auto dims1000 = compute_growth(1000);
+        assert(dims1000.d_model == 1024);
     }
 
     // -----------------------------------------------------------------------
-    // Test 5: Model expansion at plateau transitions
+    // Test 6: Frozen architecture after height 512
     // -----------------------------------------------------------------------
     {
-        // Check that plateau transitions happen at correct heights
-        assert(is_plateau_transition(0));    // genesis
-        assert(is_plateau_transition(100));  // plateau 1
-        assert(is_plateau_transition(200));  // plateau 2
-        assert(is_plateau_transition(300));  // plateau 3
-        assert(is_plateau_transition(400));  // plateau 4
-        assert(!is_plateau_transition(500)); // phase 2
-
-        // Get plateau indices
-        assert(get_plateau(0) == 0);
-        assert(get_plateau(99) == 0);
-        assert(get_plateau(100) == 1);
-        assert(get_plateau(499) == 4);
-        assert(get_plateau(500) == 4);  // capped at last plateau
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 6: Phase 2 frozen architecture
-    // -----------------------------------------------------------------------
-    {
-        auto dims500 = compute_growth(500, 0);
-        auto dims1000 = compute_growth(1000, 0);
-        auto dims5000 = compute_growth(5000, 0);
+        auto dims512 = compute_growth(512);
+        auto dims1000 = compute_growth(1000);
+        auto dims5000 = compute_growth(5000);
 
         // Architecture frozen at max dims
-        assert(dims500.d_model == MAX_D_MODEL);
-        assert(dims500.n_layers == MAX_N_LAYERS);
-        assert(dims500.d_ff == MAX_D_FF);
+        assert(dims512.d_model == MAX_D_MODEL);
+        assert(dims512.n_layers == MAX_N_LAYERS);
 
         assert(dims1000.d_model == MAX_D_MODEL);
         assert(dims5000.d_model == MAX_D_MODEL);
     }
 
     // -----------------------------------------------------------------------
-    // Test 7: Slot growth in Phase 2
+    // Test 7: Slot growth — every block, no cap
     // -----------------------------------------------------------------------
     {
-        auto dims0 = compute_growth(500, 0);
-        auto dims100 = compute_growth(500, 100);
-        auto dims1000 = compute_growth(500, 1000);
+        auto dims0 = compute_growth(0);
+        auto dims500 = compute_growth(500);
+        auto dims100k = compute_growth(100000);
 
         assert(dims0.n_slots == GENESIS_N_SLOTS);
-        assert(dims100.n_slots == GENESIS_N_SLOTS + 100 * SLOT_GROWTH_RATE);
-        assert(dims1000.n_slots == GENESIS_N_SLOTS + 1000 * SLOT_GROWTH_RATE);
+        assert(dims500.n_slots == GENESIS_N_SLOTS + 500 * SLOT_GROWTH_PER_BLOCK);
+        assert(dims100k.n_slots == GENESIS_N_SLOTS + 100000 * SLOT_GROWTH_PER_BLOCK);
 
-        // Capped at MAX_N_SLOTS
-        auto dims_max = compute_growth(500, 100000);
-        assert(dims_max.n_slots <= MAX_N_SLOTS);
+        // No cap — slots at 1M > slots at 100K
+        auto dims1M = compute_growth(1000000);
+        assert(dims1M.n_slots > dims100k.n_slots);
     }
 
     // -----------------------------------------------------------------------
@@ -593,13 +582,13 @@ void test_full_chain() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 18: Growth delta between plateaus
+    // Test 18: Growth rate is positive for any height
     // -----------------------------------------------------------------------
     {
-        auto delta = compute_growth_delta(0, 100);
-        assert(delta.d_model == 640 - 512);   // +128
-        assert(delta.n_layers == 12 - 8);     // +4
-        assert(delta.d_ff == 1280 - 1024);    // +256
+        for (uint64_t h : {0ULL, 1ULL, 100ULL, 512ULL, 1000ULL, 100000ULL}) {
+            size_t rate = compute_growth_rate(h);
+            assert(rate > 0);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -607,8 +596,8 @@ void test_full_chain() {
     // -----------------------------------------------------------------------
     {
         size_t prev = 0;
-        for (uint64_t h = 0; h < 500; h += 100) {
-            auto dims = compute_growth(h, 0);
+        for (uint64_t h = 0; h < 1000; h += 50) {
+            auto dims = compute_growth(h);
             size_t count = compute_param_count(dims);
             assert(count > prev);
             prev = count;
@@ -616,16 +605,16 @@ void test_full_chain() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 20: get_growth_phase_name returns correct strings
+    // Test 20: describe_growth returns meaningful strings
     // -----------------------------------------------------------------------
     {
-        const char* phase0 = get_growth_phase_name(0);
-        assert(phase0 != nullptr);
+        std::string desc0 = describe_growth(0);
+        assert(!desc0.empty());
 
-        const char* phase2 = get_growth_phase_name(500);
-        assert(phase2 != nullptr);
+        std::string desc1000 = describe_growth(1000);
+        assert(!desc1000.empty());
 
-        // Phase 1 and Phase 2 should be different descriptions
-        assert(std::string(phase0) != std::string(phase2));
+        // Descriptions for growing vs frozen should differ
+        assert(desc0 != desc1000);
     }
 }

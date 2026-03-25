@@ -22,11 +22,13 @@
 #include "util/arith_uint256.h"
 #include "util/types.h"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <string>
 #include <vector>
 
 using namespace flow;
@@ -126,7 +128,7 @@ static CBlock make_block(uint64_t height, const uint256& prev_hash,
     block.prev_val_loss = (height == 0) ? 0.0f : 5.0f - static_cast<float>(height - 1) * 0.001f;
     if (block.prev_val_loss < 0.5f) block.prev_val_loss = 0.5f;
 
-    auto dims = compute_growth(height, 0);
+    auto dims = compute_growth(height);
     block.d_model = dims.d_model;
     block.n_layers = dims.n_layers;
     block.d_ff = dims.d_ff;
@@ -419,16 +421,15 @@ void test_integration() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 10: Model dimensions at each plateau boundary
+    // Test 10: Model dimensions grow continuously
     // -----------------------------------------------------------------------
     {
-        for (uint64_t h = 0; h < DIM_GROWTH_END; h += GROWTH_PLATEAU_LEN) {
-            auto dims = compute_growth(h, 0);
-            uint32_t plateau = h / GROWTH_PLATEAU_LEN;
+        for (uint64_t h = 0; h <= DIM_FREEZE_HEIGHT; h += 64) {
+            auto dims = compute_growth(h);
 
-            uint32_t expected_d_model = GENESIS_D_MODEL + plateau * 128;
-            uint32_t expected_n_layers = GENESIS_N_LAYERS + plateau * 4;
-            uint32_t expected_d_ff = GENESIS_D_FF + plateau * 256;
+            uint32_t expected_d_model = std::min(512u + static_cast<uint32_t>(h), 1024u);
+            uint32_t expected_n_layers = std::min(8u + static_cast<uint32_t>(h / 32), 24u);
+            uint32_t expected_d_ff = 2 * expected_d_model;
 
             assert(dims.d_model == expected_d_model);
             assert(dims.n_layers == expected_n_layers);
@@ -475,7 +476,7 @@ void test_integration() {
         ctx.adjusted_time = GENESIS_TIMESTAMP + TARGET_BLOCK_TIME + 10;
         ctx.expected_nbits = INITIAL_NBITS;
         ctx.is_genesis = false;
-        ctx.expected_dims = compute_growth(1, 0);
+        ctx.expected_dims = compute_growth(1);
         ctx.min_train_steps = compute_min_steps(1);
 
         assert(ctx.expected_dims.d_model == GENESIS_D_MODEL);
@@ -761,11 +762,8 @@ void test_integration() {
         // MAX_PEERS = MAX_OUTBOUND + MAX_INBOUND
         assert(MAX_PEERS == MAX_OUTBOUND_PEERS + MAX_INBOUND_PEERS);
 
-        // DIM_GROWTH_END = GROWTH_PLATEAU_LEN * NUM_GROWTH_PLATEAUS
-        assert(DIM_GROWTH_END == GROWTH_PLATEAU_LEN * NUM_GROWTH_PLATEAUS);
-
         // Genesis dimensions match constants
-        auto g = compute_growth(0, 0);
+        auto g = compute_growth(0);
         assert(g.d_model == GENESIS_D_MODEL);
         assert(g.n_layers == GENESIS_N_LAYERS);
         assert(g.d_ff == GENESIS_D_FF);
@@ -775,11 +773,10 @@ void test_integration() {
         assert(g.vocab == GENESIS_VOCAB);
         assert(g.seq_len == GENESIS_SEQ_LEN);
 
-        // Max dimensions match constants
-        auto m = compute_growth(DIM_GROWTH_END, 0);
+        // Max dimensions match constants (at DIM_FREEZE_HEIGHT)
+        auto m = compute_growth(DIM_FREEZE_HEIGHT);
         assert(m.d_model == MAX_D_MODEL);
         assert(m.n_layers == MAX_N_LAYERS);
-        assert(m.d_ff == MAX_D_FF);
 
         // COIN constant matches types.h
         assert(static_cast<int64_t>(consensus::COIN) == flow::COIN);
@@ -790,7 +787,7 @@ void test_integration() {
     // -----------------------------------------------------------------------
     {
         auto kp = generate_keypair();
-        auto dims = compute_growth(42, 5);
+        auto dims = compute_growth(42);
 
         CBlockHeader hdr;
         hdr.height = 42;
@@ -860,62 +857,47 @@ void test_integration() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 28: Growth phase names
+    // Test 28: Growth description
     // -----------------------------------------------------------------------
     {
-        const char* name0 = get_growth_phase_name(0);
-        assert(name0 != nullptr);
-        assert(std::string(name0).find("Plateau") != std::string::npos ||
-               std::string(name0).find("Phase 1") != std::string::npos);
+        std::string desc0 = describe_growth(0);
+        assert(!desc0.empty());
+        assert(desc0.find("growing") != std::string::npos);
 
-        const char* name500 = get_growth_phase_name(500);
-        assert(name500 != nullptr);
-        assert(std::string(name500).find("Phase 2") != std::string::npos ||
-               std::string(name500).find("frozen") != std::string::npos);
+        std::string desc1000 = describe_growth(1000);
+        assert(!desc1000.empty());
+        assert(desc1000.find("frozen") != std::string::npos);
     }
 
     // -----------------------------------------------------------------------
-    // Test 29: Plateau transition detection
+    // Test 29: Continuous growth — dimensions change every early block
     // -----------------------------------------------------------------------
     {
-        assert(!is_plateau_transition(0));
-        assert(!is_plateau_transition(50));
-        assert(!is_plateau_transition(99));
-        assert(is_plateau_transition(100));
-        assert(is_plateau_transition(200));
-        assert(is_plateau_transition(300));
-        assert(is_plateau_transition(400));
-        assert(!is_plateau_transition(500));  // Phase 2, no plateau transitions
+        // Every block in the growth phase has different dimensions
+        assert(dimensions_changed(0, 1));
+        assert(dimensions_changed(1, 2));
+        assert(dimensions_changed(99, 100));
+        assert(dimensions_changed(100, 101));
     }
 
     // -----------------------------------------------------------------------
-    // Test 30: Dimensions change at plateau boundaries only
+    // Test 30: dimensions_changed after freeze — only slots differ
     // -----------------------------------------------------------------------
     {
-        assert(!dimensions_change_at(0));   // genesis, no prior height
-        assert(!dimensions_change_at(1));   // same plateau
-        assert(!dimensions_change_at(99));  // same plateau
-        assert(dimensions_change_at(100));  // plateau 0 -> 1
-        assert(!dimensions_change_at(101)); // same plateau
-        assert(dimensions_change_at(200));  // plateau 1 -> 2
-        assert(dimensions_change_at(300));  // plateau 2 -> 3
-        assert(dimensions_change_at(400));  // plateau 3 -> 4
-        assert(!dimensions_change_at(500)); // Phase 2, no change
+        // After DIM_FREEZE_HEIGHT, d_model/n_layers are same but slots differ
+        assert(dimensions_changed(1000, 1001));   // slots still change
+        assert(dimensions_changed(10000, 10001)); // slots still change
     }
 
     // -----------------------------------------------------------------------
-    // Test 31: Get plateau index
+    // Test 31: Growth rate positive for any height
     // -----------------------------------------------------------------------
     {
-        assert(get_plateau(0) == 0);
-        assert(get_plateau(50) == 0);
-        assert(get_plateau(99) == 0);
-        assert(get_plateau(100) == 1);
-        assert(get_plateau(199) == 1);
-        assert(get_plateau(200) == 2);
-        assert(get_plateau(400) == 4);
-        assert(get_plateau(500) == 4);   // clamped at max
-        assert(get_plateau(10000) == 4); // clamped at max
+        assert(compute_growth_rate(0) > 0);
+        assert(compute_growth_rate(100) > 0);
+        assert(compute_growth_rate(512) > 0);
+        assert(compute_growth_rate(10000) > 0);
+        assert(compute_growth_rate(100000) > 0);
     }
 
     // -----------------------------------------------------------------------
@@ -1011,30 +993,29 @@ void test_integration() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 38: Slot growth in Phase 2
+    // Test 38: Slot growth — every block, no cap
     // -----------------------------------------------------------------------
     {
-        // Phase 2 with 0 improving blocks: base slots
-        auto dims_0 = compute_growth(600, 0);
+        // Slots grow with height, no cap
+        auto dims_0 = compute_growth(0);
         assert(dims_0.n_slots == GENESIS_N_SLOTS);
 
-        // Phase 2 with some improving blocks: slots increase
-        auto dims_100 = compute_growth(600, 100);
-        assert(dims_100.n_slots == GENESIS_N_SLOTS + 100 * SLOT_GROWTH_RATE);
-        assert(dims_100.n_slots > dims_0.n_slots);
+        auto dims_600 = compute_growth(600);
+        assert(dims_600.n_slots == GENESIS_N_SLOTS + 600 * SLOT_GROWTH_PER_BLOCK);
+        assert(dims_600.n_slots > dims_0.n_slots);
 
-        // Slots capped at MAX_N_SLOTS
-        uint32_t max_improving = (MAX_N_SLOTS - GENESIS_N_SLOTS) / SLOT_GROWTH_RATE + 1;
-        auto dims_max = compute_growth(600, max_improving);
-        assert(dims_max.n_slots <= MAX_N_SLOTS);
+        // No cap — slots at 100K are huge
+        auto dims_100k = compute_growth(100000);
+        assert(dims_100k.n_slots == GENESIS_N_SLOTS + 100000 * SLOT_GROWTH_PER_BLOCK);
+        assert(dims_100k.n_slots > dims_600.n_slots);
     }
 
     // -----------------------------------------------------------------------
     // Test 39: Compute parameter count is positive and grows
     // -----------------------------------------------------------------------
     {
-        auto dims0 = compute_growth(0, 0);
-        auto dims4 = compute_growth(400, 0);
+        auto dims0 = compute_growth(0);
+        auto dims4 = compute_growth(400);
 
         size_t params0 = compute_param_count(dims0);
         size_t params4 = compute_param_count(dims4);

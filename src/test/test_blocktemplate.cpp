@@ -58,7 +58,7 @@ static CBlock make_genesis_block() {
     block.val_loss = 5.0f;
     block.prev_val_loss = 0.0f;
 
-    auto dims = compute_growth(0, 0);
+    auto dims = compute_growth(0);
     block.d_model = dims.d_model;
     block.n_layers = dims.n_layers;
     block.d_ff = dims.d_ff;
@@ -119,7 +119,7 @@ void test_blocktemplate() {
     // Test 3: Genesis block has correct model dimensions
     // -----------------------------------------------------------------------
     {
-        auto dims = compute_growth(0, 0);
+        auto dims = compute_growth(0);
         assert(dims.d_model == GENESIS_D_MODEL);     // 512
         assert(dims.n_layers == GENESIS_N_LAYERS);    // 8
         assert(dims.d_ff == GENESIS_D_FF);            // 1024
@@ -129,44 +129,37 @@ void test_blocktemplate() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 4: Model dimensions match growth schedule at various heights
+    // Test 4: Model dimensions match continuous growth schedule
     // -----------------------------------------------------------------------
     {
-        // Plateau 0 (0-99)
-        auto dims0 = compute_growth(50, 0);
+        // Block 0
+        auto dims0 = compute_growth(0);
         assert(dims0.d_model == 512);
         assert(dims0.n_layers == 8);
         assert(dims0.d_ff == 1024);
 
-        // Plateau 1 (100-199)
-        auto dims1 = compute_growth(150, 0);
-        assert(dims1.d_model == 640);
-        assert(dims1.n_layers == 12);
-        assert(dims1.d_ff == 1280);
+        // Block 50: continuous growth
+        auto dims50 = compute_growth(50);
+        assert(dims50.d_model == 562);    // 512 + 50
+        assert(dims50.n_layers == 9);     // 8 + 50/32 = 9
+        assert(dims50.d_ff == 1124);      // 2 * 562
 
-        // Plateau 2 (200-299)
-        auto dims2 = compute_growth(250, 0);
-        assert(dims2.d_model == 768);
-        assert(dims2.n_layers == 16);
-        assert(dims2.d_ff == 1536);
+        // Block 256: mid growth
+        auto dims256 = compute_growth(256);
+        assert(dims256.d_model == 768);   // 512 + 256
+        assert(dims256.n_layers == 16);   // 8 + 256/32 = 16
+        assert(dims256.d_ff == 1536);     // 2 * 768
 
-        // Plateau 3 (300-399)
-        auto dims3 = compute_growth(350, 0);
-        assert(dims3.d_model == 896);
-        assert(dims3.n_layers == 20);
-        assert(dims3.d_ff == 1792);
+        // Block 512: dimensions at max
+        auto dims512 = compute_growth(512);
+        assert(dims512.d_model == 1024);
+        assert(dims512.n_layers == 24);
+        assert(dims512.d_ff == 2048);
 
-        // Plateau 4 (400-499)
-        auto dims4 = compute_growth(450, 0);
-        assert(dims4.d_model == 1024);
-        assert(dims4.n_layers == 24);
-        assert(dims4.d_ff == 2048);
-
-        // Phase 2 (500+): frozen at max
-        auto dims5 = compute_growth(1000, 0);
-        assert(dims5.d_model == MAX_D_MODEL);
-        assert(dims5.n_layers == MAX_N_LAYERS);
-        assert(dims5.d_ff == MAX_D_FF);
+        // Block 1000: frozen at max, slots growing
+        auto dims1000 = compute_growth(1000);
+        assert(dims1000.d_model == MAX_D_MODEL);
+        assert(dims1000.n_layers == MAX_N_LAYERS);
     }
 
     // -----------------------------------------------------------------------
@@ -285,20 +278,19 @@ void test_blocktemplate() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 15: Minimum training steps increase with height
+    // Test 15: Minimum training steps decrease with height (floor at 500)
     // -----------------------------------------------------------------------
     {
         uint32_t steps_0 = compute_min_steps(0);
         uint32_t steps_100 = compute_min_steps(100);
-        uint32_t steps_499 = compute_min_steps(499);
         uint32_t steps_500 = compute_min_steps(500);
         uint32_t steps_2000 = compute_min_steps(2000);
 
         assert(steps_0 == MIN_TRAIN_STEPS_BASE);  // 1000
-        assert(steps_100 > steps_0);
-        assert(steps_499 > steps_100);
-        assert(steps_500 >= steps_499);
-        assert(steps_2000 > steps_500);
+        assert(steps_100 == 1000);  // constant up to h=500
+        assert(steps_500 == 1000);  // constant up to h=500
+        assert(steps_2000 < steps_500);  // decreasing after h=500
+        assert(steps_2000 >= 500);  // floor at 500
     }
 
     // -----------------------------------------------------------------------
@@ -499,13 +491,19 @@ void test_blocktemplate() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 28: Growth schedule timing — min steps monotonically increase
+    // Test 28: Min steps — constant then decreasing, floor at 500
     // -----------------------------------------------------------------------
     {
-        uint32_t prev_steps = 0;
-        for (uint64_t h = 0; h < 1000; h += 50) {
+        // Constant at 1000 for h <= 500
+        for (uint64_t h = 0; h <= 500; h += 50) {
+            assert(compute_min_steps(h) == 1000);
+        }
+        // Monotonically non-increasing after h=500
+        uint32_t prev_steps = compute_min_steps(500);
+        for (uint64_t h = 501; h < 5000; h += 50) {
             uint32_t steps = compute_min_steps(h);
-            assert(steps >= prev_steps);
+            assert(steps <= prev_steps);
+            assert(steps >= 500);  // floor
             prev_steps = steps;
         }
     }
@@ -545,12 +543,12 @@ void test_blocktemplate() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 32: estimate_param_count increases with plateaus
+    // Test 32: estimate_param_count increases with height
     // -----------------------------------------------------------------------
     {
         size_t prev_count = 0;
-        for (uint32_t p = 0; p < NUM_GROWTH_PLATEAUS; p++) {
-            auto dims = compute_growth(p * GROWTH_PLATEAU_LEN, 0);
+        for (uint64_t h = 0; h <= 512; h += 64) {
+            auto dims = compute_growth(h);
             size_t count = estimate_param_count(dims.d_model, dims.n_layers,
                                                  dims.d_ff, dims.n_slots);
             assert(count > prev_count);
@@ -566,8 +564,7 @@ void test_blocktemplate() {
         assert(is_valid_d_model(MAX_D_MODEL));
         assert(is_valid_d_model(640));
         assert(is_valid_d_model(768));
-        assert(is_valid_d_model(896));
-        assert(!is_valid_d_model(500));  // not multiple of 64
+        assert(is_valid_d_model(600));   // any value in range is valid now
         assert(!is_valid_d_model(100));  // below minimum
 
         assert(is_valid_n_layers(GENESIS_N_LAYERS));

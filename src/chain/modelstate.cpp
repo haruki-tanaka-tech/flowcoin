@@ -125,10 +125,10 @@ bool ModelState::init() {
 
 bool ModelState::process_block(const CBlock& block, uint64_t height) {
     // Check if model dimensions need to change at this height.
-    // At plateau transitions (every GROWTH_PLATEAU_LEN blocks during Phase 1),
-    // the model architecture expands.
+    // Dimensions grow continuously (every block during h < 512),
+    // and slots grow every block forever.
     consensus::ModelDimensions expected_dims =
-        consensus::compute_growth(height, 0);  // improving_blocks handled by caller
+        consensus::compute_growth(height);
 
     const consensus::ModelDimensions& current_dims = engine_.dims();
 

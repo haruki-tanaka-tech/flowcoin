@@ -62,7 +62,7 @@ EvalEngine::~EvalEngine() {
 // ════════════════════════════════════════════════════════════════════════════
 
 bool EvalEngine::init_genesis() {
-    ModelDimensions genesis_dims = compute_growth(0, 0);
+    ModelDimensions genesis_dims = compute_growth(0);
 
     if (!model_.init(genesis_dims, GENESIS_SEED)) {
         fprintf(stderr, "EvalEngine: failed to initialize genesis model\n");

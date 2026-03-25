@@ -37,7 +37,7 @@ static void sign_header(CBlockHeader& hdr) {
 
 // Helper: make a valid genesis header
 static CBlockHeader make_valid_genesis() {
-    auto dims = compute_growth(0, 0);
+    auto dims = compute_growth(0);
 
     CBlockHeader hdr;
     hdr.height = 0;
@@ -64,7 +64,7 @@ static CBlockHeader make_valid_genesis() {
 static BlockContext make_genesis_ctx() {
     BlockContext ctx;
     ctx.is_genesis = true;
-    ctx.expected_dims = compute_growth(0, 0);
+    ctx.expected_dims = compute_growth(0);
     ctx.min_train_steps = compute_min_steps(0);
     ctx.expected_nbits = INITIAL_NBITS;
     return ctx;
@@ -79,7 +79,7 @@ static BlockContext make_child_ctx(const CBlockHeader& parent, uint64_t child_he
     ctx.prev_timestamp = parent.timestamp;
     ctx.prev_val_loss = parent.val_loss;
     ctx.prev_nbits = parent.nbits;
-    ctx.expected_dims = compute_growth(child_height, 0);
+    ctx.expected_dims = compute_growth(child_height);
     ctx.min_train_steps = compute_min_steps(child_height);
     ctx.expected_nbits = parent.nbits;  // same period
     ctx.improving_blocks = 0;
@@ -114,7 +114,7 @@ void test_block_validation() {
         child.nbits = parent.nbits;
         child.val_loss = 4.5f;
         child.prev_val_loss = parent.val_loss;
-        auto dims = compute_growth(1, 0);
+        auto dims = compute_growth(1);
         child.d_model = dims.d_model;
         child.n_layers = dims.n_layers;
         child.d_ff = dims.d_ff;
@@ -145,7 +145,7 @@ void test_block_validation() {
         child.nbits = parent.nbits;
         child.val_loss = 4.5f;
         child.prev_val_loss = parent.val_loss;
-        auto dims = compute_growth(1, 0);
+        auto dims = compute_growth(1);
         child.d_model = dims.d_model;
         child.n_layers = dims.n_layers;
         child.d_ff = dims.d_ff;
@@ -177,7 +177,7 @@ void test_block_validation() {
         child.nbits = parent.nbits;
         child.val_loss = 4.5f;
         child.prev_val_loss = parent.val_loss;
-        auto dims = compute_growth(1, 0);
+        auto dims = compute_growth(1);
         child.d_model = dims.d_model;
         child.n_layers = dims.n_layers;
         child.d_ff = dims.d_ff;
@@ -249,7 +249,7 @@ void test_block_validation() {
         child.nbits = parent.nbits;
         child.val_loss = 4.5f;
         child.prev_val_loss = 99.0f;  // wrong, should match parent.val_loss
-        auto dims = compute_growth(1, 0);
+        auto dims = compute_growth(1);
         child.d_model = dims.d_model;
         child.n_layers = dims.n_layers;
         child.d_ff = dims.d_ff;
@@ -281,7 +281,7 @@ void test_block_validation() {
         child.nbits = parent.nbits;
         child.val_loss = 4.5f;
         child.prev_val_loss = parent.val_loss;
-        auto dims = compute_growth(1, 0);
+        auto dims = compute_growth(1);
         child.d_model = dims.d_model;
         child.n_layers = dims.n_layers;
         child.d_ff = dims.d_ff;
@@ -335,51 +335,50 @@ void test_block_validation() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 12: Growth schedule correctness
+    // Test 12: Growth schedule correctness — continuous growth
     // -----------------------------------------------------------------------
     {
-        // Plateau 0
-        auto d0 = compute_growth(0, 0);
+        // Block 0
+        auto d0 = compute_growth(0);
         assert(d0.d_model == 512);
         assert(d0.n_layers == 8);
         assert(d0.d_ff == 1024);
 
-        // Plateau 1
-        auto d1 = compute_growth(100, 0);
-        assert(d1.d_model == 640);
-        assert(d1.n_layers == 12);
+        // Block 100: continuous growth
+        auto d1 = compute_growth(100);
+        assert(d1.d_model == 612);
+        assert(d1.n_layers == 11);
 
-        // Plateau 4
-        auto d4 = compute_growth(400, 0);
-        assert(d4.d_model == 1024);
-        assert(d4.n_layers == 24);
-        assert(d4.d_ff == 2048);
+        // Block 512: dimensions at max
+        auto d512 = compute_growth(512);
+        assert(d512.d_model == 1024);
+        assert(d512.n_layers == 24);
+        assert(d512.d_ff == 2048);
 
-        // Phase 2: frozen architecture
-        auto d5 = compute_growth(500, 0);
-        assert(d5.d_model == 1024);
-        assert(d5.n_layers == 24);
+        // Block 1000: frozen dims, slots keep growing
+        auto d1000 = compute_growth(1000);
+        assert(d1000.d_model == 1024);
+        assert(d1000.n_layers == 24);
 
-        // Slot growth in Phase 2
-        auto d5_imp = compute_growth(500, 100);
-        assert(d5_imp.n_slots > d5.n_slots);
-        assert(d5_imp.n_slots == 1024 + 100 * SLOT_GROWTH_RATE);
+        // Slot growth: every block, no cap
+        assert(d1000.n_slots > d512.n_slots);
+        assert(d1000.n_slots == 1024 + 1000 * SLOT_GROWTH_PER_BLOCK);
     }
 
     // -----------------------------------------------------------------------
     // Test 13: Minimum training steps
     // -----------------------------------------------------------------------
     {
-        // Phase 1
+        // At genesis: 1000
         assert(compute_min_steps(0) == 1000);
-        assert(compute_min_steps(250) > 1000);
+        // At h=500: still 1000
+        assert(compute_min_steps(500) == 1000);
 
-        // Phase 2
-        uint32_t steps_500 = compute_min_steps(500);
-        assert(steps_500 >= 3000);
+        // After h=500: decreasing
+        assert(compute_min_steps(2000) < compute_min_steps(500));
 
-        // Steps grow with height
-        assert(compute_min_steps(2000) > compute_min_steps(500));
+        // Floor at 500
+        assert(compute_min_steps(100000) == 500);
     }
 
     // -----------------------------------------------------------------------
@@ -536,7 +535,7 @@ void test_block_validation() {
     // -----------------------------------------------------------------------
     {
         for (uint64_t h = 0; h < 600; h += 50) {
-            auto dims = compute_growth(h, 0);
+            auto dims = compute_growth(h);
             // n_heads * d_head == d_model
             assert(dims.n_heads * dims.d_head == dims.d_model);
             // d_ff == 2 * d_model

@@ -95,7 +95,7 @@ void register_training_rpcs(RpcServer& server, ChainState& chain) {
 
         // Compute expected dimensions and param count
         consensus::ModelDimensions dims = consensus::compute_growth(
-            tip->height, tip->improving_blocks);
+            tip->height);
         j["param_count"]   = estimate_param_count(dims);
         j["improving_blocks"] = tip->improving_blocks;
 
@@ -229,7 +229,6 @@ void register_training_rpcs(RpcServer& server, ChainState& chain) {
     server.register_method("getgrowthschedule",
         [](const json& params) -> json {
         uint64_t height = 0;
-        uint32_t improving_blocks = 0;
 
         if (!params.empty()) {
             if (params[0].is_number_unsigned()) {
@@ -241,12 +240,7 @@ void register_training_rpcs(RpcServer& server, ChainState& chain) {
             }
         }
 
-        if (params.size() > 1 && params[1].is_number_unsigned()) {
-            improving_blocks = params[1].get<uint32_t>();
-        }
-
-        consensus::ModelDimensions dims = consensus::compute_growth(
-            height, improving_blocks);
+        consensus::ModelDimensions dims = consensus::compute_growth(height);
         uint32_t min_steps = consensus::compute_min_steps(height);
 
         json j;
@@ -265,16 +259,10 @@ void register_training_rpcs(RpcServer& server, ChainState& chain) {
         j["min_steps"]    = min_steps;
         j["param_count"]  = estimate_param_count(dims);
 
-        // Phase info
-        bool in_growth = (height < consensus::DIM_GROWTH_END);
-        j["phase"]        = in_growth ? "growth" : "mature";
-
-        if (in_growth) {
-            uint32_t plateau = static_cast<uint32_t>(
-                height / consensus::GROWTH_PLATEAU_LEN);
-            j["plateau"]      = plateau;
-            j["plateau_end"]  = (plateau + 1) * consensus::GROWTH_PLATEAU_LEN;
-        }
+        // Growth info
+        bool dims_growing = (height < consensus::DIM_FREEZE_HEIGHT);
+        j["phase"]         = dims_growing ? "dimension_growth" : "slot_growth";
+        j["dims_frozen"]   = !dims_growing;
 
         return j;
     });

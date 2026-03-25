@@ -82,7 +82,7 @@ public:
     bool load_from_file(const std::string& path);
 
     // ════════════════════════════════════════════════════════════
-    // Growth: expand dimensions at plateau transitions
+    // Growth: expand dimensions (continuous growth)
     // ════════════════════════════════════════════════════════════
 
     // Expand model to new dimensions (zero-pad new weights, copy existing)
