@@ -168,6 +168,7 @@ TxValidationResult validate_coinbase(
     const CTransaction& tx,
     uint64_t height,
     Amount max_value) {
+    (void)height;
 
     TxValidationResult result;
 

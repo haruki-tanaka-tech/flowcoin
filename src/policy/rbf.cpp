@@ -208,7 +208,6 @@ ReplacementResult check_replacement(
     result.required_fee = calculate_required_fee(
         all_evicted, mempool, replacement_size, incremental_relay_fee);
 
-    Amount evicted_fees = calculate_conflict_fees(all_evicted, mempool);
     result.required_fee_rate = policy::calculate_fee_rate(
         result.required_fee, replacement_size);
 

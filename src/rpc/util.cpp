@@ -487,8 +487,6 @@ void register_util_rpcs(RpcServer& server, ChainState& chain,
         int64_t total_fee = 0;
         size_t total_size = block.delta_payload.size();
         int tx_count = static_cast<int>(block.vtx.size());
-        int64_t min_fee = std::numeric_limits<int64_t>::max();
-        int64_t max_fee = 0;
         int input_count = 0;
         int output_count = 0;
 

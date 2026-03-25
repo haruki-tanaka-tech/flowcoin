@@ -320,7 +320,6 @@ CoinSelection knapsack(const std::vector<CoinToSpend>& available,
     for (int iter = 0; iter < NUM_ITERATIONS; ++iter) {
         std::vector<CoinToSpend> selected;
         Amount accumulated = 0;
-        bool found = false;
 
         // Random walk: for each coin, flip a coin to decide inclusion
         for (const auto& coin : sorted) {
@@ -350,7 +349,6 @@ CoinSelection knapsack(const std::vector<CoinToSpend>& available,
 
                 Amount fee = fee_per_input * static_cast<Amount>(selected.size());
                 if (accumulated >= target + fee) {
-                    found = true;
                     Amount change = accumulated - target - fee;
 
                     if (change < best_change) {

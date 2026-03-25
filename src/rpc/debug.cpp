@@ -30,6 +30,7 @@ namespace flow {
 
 void register_debug_rpcs(RpcServer& server, ChainState& chain,
                          Mempool& mempool, Wallet& wallet) {
+    (void)wallet;
 
     // -----------------------------------------------------------------------
     // getblocktemplate_debug: detailed template for debugging miners

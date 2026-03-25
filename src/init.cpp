@@ -53,7 +53,7 @@ static std::string get_arg_value(const std::string& arg) {
     return "";
 }
 
-static std::string trim_ws(const std::string& s) {
+[[maybe_unused]] static std::string trim_ws(const std::string& s) {
     auto start = s.find_first_not_of(" \t\r\n");
     if (start == std::string::npos) return "";
     auto end = s.find_last_not_of(" \t\r\n");

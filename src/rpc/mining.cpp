@@ -400,6 +400,7 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
 
 void register_mining_mempool_rpcs(RpcServer& server, ChainState& chain,
                                    Mempool& mempool, NetManager& net) {
+    (void)net;
 
     // -----------------------------------------------------------------------
     // getblocktemplate_txs: template with selected transactions from mempool
@@ -430,7 +431,6 @@ void register_mining_mempool_rpcs(RpcServer& server, ChainState& chain,
         auto selected_txs = mempool.get_sorted_transactions(max_txs);
 
         json tx_arr = json::array();
-        Amount total_fees = 0;
         size_t total_tx_size = 0;
 
         for (const auto& tx : selected_txs) {

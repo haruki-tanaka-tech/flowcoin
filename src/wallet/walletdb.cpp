@@ -1385,7 +1385,6 @@ WalletDB::IntegrityResult WalletDB::verify_integrity() const {
 
     // 6. Verify that the HD index is consistent with key count
     uint32_t hd_idx = load_hd_index();
-    size_t key_cnt = key_count();
     // HD index should be >= number of non-imported keys
     // This is an advisory check, not a hard failure
     stmt = nullptr;
@@ -1627,7 +1626,6 @@ bool WalletDB::secure_erase_key(uint32_t index) {
     }
 
     // Overwrite the encrypted private key with random data before deletion
-    const void* enc_blob = sqlite3_column_blob(stmt, 1);
     int enc_len = sqlite3_column_bytes(stmt, 1);
     sqlite3_finalize(stmt);
 

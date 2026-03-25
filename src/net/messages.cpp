@@ -1087,6 +1087,7 @@ void MessageHandler::handle_cmpctblock(Peer& peer, const uint8_t* data, size_t l
 
     // Nonce for short txid computation
     uint64_t cmpct_nonce = r.read_u64_le();
+    (void)cmpct_nonce;
     if (r.error()) { peer.add_misbehavior(10); return; }
 
     uint256 block_hash = hdr.get_hash();
@@ -2867,7 +2868,6 @@ void MessageHandler::schedule_block_downloads() {
 
     // Walk forward from our last fully validated block to find gaps
     std::vector<CBlockIndex*> needed_blocks;
-    CBlockIndex* scan = tip;
     // Look ahead up to 1024 blocks beyond tip
     // In practice, we'd use the header chain, but for now we check
     // the block tree for entries with status HEADER_VALID but not BLOCK_VALID

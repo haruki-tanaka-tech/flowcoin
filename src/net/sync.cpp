@@ -362,11 +362,6 @@ void SyncManager::apply_buffered_blocks() {
         // Assume-valid optimization: if this block is below the assume-valid
         // height, we can skip expensive signature verification (Check 15).
         // The header chain has already been fully validated.
-        bool skip_scripts = false;
-        if (assume_valid_found_ && next_apply_height_ <= assume_valid_height_) {
-            skip_scripts = true;
-        }
-
         bool accepted;
         // accept_block handles assume-valid internally based on set_assume_valid()
         accepted = chain_.accept_block(block, vstate);

@@ -1224,7 +1224,6 @@ bool Mempool::has_unconfirmed_parents(const uint256& txid) const {
 int Mempool::get_chain_depth(const uint256& txid) const {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    int max_depth = 0;
     std::set<uint256> visited;
 
     std::function<int(const uint256&)> depth_of = [&](const uint256& id) -> int {
