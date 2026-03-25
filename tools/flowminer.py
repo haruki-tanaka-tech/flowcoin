@@ -1091,6 +1091,25 @@ def mine(args: argparse.Namespace) -> None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
 
+                # Auto-restart CUDA context every 2000 steps to prevent freeze
+                if step > 0 and step % 2000 == 0 and device.type == "cuda":
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+                    # Recreate model on fresh CUDA context
+                    state = model.state_dict()
+                    del model, optimizer
+                    torch.cuda.empty_cache()
+                    model = ResonanceNetV5(
+                        d_model=dims["d_model"], n_layers=dims["n_layers"],
+                        d_ff=dims["d_ff"], n_slots=dims["n_slots"]
+                    ).to(device)
+                    model.load_state_dict(state)
+                    model.train()
+                    optimizer = torch.optim.AdamW(
+                        model.parameters(), lr=args.lr, weight_decay=0.01
+                    )
+                    del state
+
                 step += 1
                 total_steps += 1
                 lv = loss.item()
