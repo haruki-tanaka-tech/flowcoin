@@ -10,6 +10,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include "logging.h"
 
 namespace flow {
 
@@ -20,7 +21,7 @@ namespace flow {
 TxIndex::TxIndex(const std::string& db_path) {
     int rc = sqlite3_open(db_path.c_str(), &db_);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "TxIndex: failed to open database %s: %s\n",
+        LogError("db", "failed to open database %s: %s",
                 db_path.c_str(),
                 db_ ? sqlite3_errmsg(db_) : "out of memory");
         if (db_) {
@@ -68,7 +69,7 @@ void TxIndex::init_tables() {
     char* errmsg = nullptr;
     int rc = sqlite3_exec(db_, sql, nullptr, nullptr, &errmsg);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "TxIndex: table creation failed: %s\n",
+        LogError("db", "table creation failed: %s",
                 errmsg ? errmsg : "unknown error");
         sqlite3_free(errmsg);
     }
@@ -139,7 +140,7 @@ bool TxIndex::index_block(const CBlock& block, uint64_t height,
 
         int rc = sqlite3_step(stmt_insert_);
         if (rc != SQLITE_DONE) {
-            fprintf(stderr, "TxIndex: insert failed at height %lu, tx %u: %s\n",
+            LogError("db", "insert failed at height %lu, tx %u: %s",
                     static_cast<unsigned long>(height), tx_i,
                     sqlite3_errmsg(db_));
             sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
@@ -166,7 +167,7 @@ bool TxIndex::deindex_block(uint64_t height) {
 
     int rc = sqlite3_step(stmt_delete_by_height_);
     if (rc != SQLITE_DONE) {
-        fprintf(stderr, "TxIndex: delete failed at height %lu: %s\n",
+        LogError("db", "delete failed at height %lu: %s",
                 static_cast<unsigned long>(height),
                 sqlite3_errmsg(db_));
         return false;

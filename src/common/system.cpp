@@ -3,6 +3,7 @@
 
 #include "common/system.h"
 #include "compat/compat.h"
+#include "logging.h"
 
 #include <atomic>
 #include <chrono>
@@ -89,7 +90,7 @@ std::string format_exception(const std::exception& e) {
 }
 
 void print_exception_info(const std::exception& e) {
-    std::fprintf(stderr, "Exception: %s\n", format_exception(e).c_str());
+    LogError("default", "Exception: %s", format_exception(e).c_str());
 }
 
 void set_misc_warning(const std::string& warning) {
@@ -242,12 +243,17 @@ static void crash_signal_handler(int sig) {
 #endif
     }
 
-    std::fprintf(stderr, "\n*** FlowCoin crashed with signal %s (%d) ***\n",
-                 name, sig);
+    // Use async-signal-safe write() instead of fprintf
+    static const char crash_prefix[] = "\n*** FlowCoin crashed with signal ";
+    static const char crash_suffix[] = " ***\n";
+    (void)!write(STDERR_FILENO, crash_prefix, sizeof(crash_prefix) - 1);
+    (void)!write(STDERR_FILENO, name, std::strlen(name));
+    (void)!write(STDERR_FILENO, crash_suffix, sizeof(crash_suffix) - 1);
 
 #ifdef HAVE_BACKTRACE
     std::string trace = get_stack_trace();
-    std::fprintf(stderr, "%s\n", trace.c_str());
+    (void)!write(STDERR_FILENO, trace.c_str(), trace.size());
+    (void)!write(STDERR_FILENO, "\n", 1);
 #endif
 
     // Re-raise to get a core dump

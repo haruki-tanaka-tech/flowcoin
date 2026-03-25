@@ -26,6 +26,7 @@
 #include <cstring>
 #include <memory>
 #include <sys/stat.h>
+#include "logging.h"
 
 namespace flow {
 
@@ -49,7 +50,7 @@ ChainState::ChainState(const std::string& datadir)
 bool ChainState::init() {
     // Initialize model state (loads from checkpoint or creates from genesis)
     if (!model_state_.init()) {
-        fprintf(stderr, "ChainState: model state initialization failed\n");
+        LogError("chain", "model state initialization failed");
         return false;
     }
 
@@ -57,8 +58,8 @@ bool ChainState::init() {
     if (txindex_enabled_) {
         txindex_ = std::make_unique<TxIndex>(datadir_ + "/txindex.db");
         if (!txindex_->is_open()) {
-            fprintf(stderr, "ChainState: warning: transaction index "
-                    "failed to open, continuing without it\n");
+            LogError("chain", "warning: transaction index "
+                    "failed to open, continuing without it");
             txindex_.reset();
         }
     }
@@ -81,7 +82,7 @@ bool ChainState::init() {
         // Store genesis block to disk
         BlockPos pos = store_.write_block(genesis);
         if (pos.is_null()) {
-            fprintf(stderr, "ChainState: failed to write genesis block to disk\n");
+            LogError("chain", "failed to write genesis block to disk");
             return false;
         }
         idx->pos = pos;
@@ -119,7 +120,7 @@ bool ChainState::init() {
         // Set as the best tip
         update_tip(genesis_idx);
 
-        fprintf(stderr, "ChainState: genesis block created (height 0)\n");
+        LogInfo("chain", "genesis block created (height 0)");
     }
 
     return true;
@@ -446,9 +447,9 @@ bool ChainState::accept_block(const CBlock& block,
             uint64_t disconnect_count = current_tip->height - fork_point->height;
             uint64_t connect_count = idx->height - fork_point->height;
 
-            fprintf(stderr, "ChainState: reorganizing chain: "
+            LogInfo("chain", "reorganizing chain: "
                     "disconnect %lu blocks, connect %lu blocks "
-                    "(fork at height %lu)\n",
+                    "(fork at height %lu)",
                     static_cast<unsigned long>(disconnect_count),
                     static_cast<unsigned long>(connect_count),
                     static_cast<unsigned long>(fork_point->height));
@@ -484,8 +485,8 @@ bool ChainState::accept_block(const CBlock& block,
                 }
             }
 
-            fprintf(stderr, "ChainState: reorganization complete, "
-                    "new tip at height %lu\n",
+            LogInfo("chain", "reorganization complete, "
+                    "new tip at height %lu",
                     static_cast<unsigned long>(tree_.best_tip()->height));
         }
     }
@@ -519,8 +520,8 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
         for (const CTxIn& in : tx.vin) {
             UTXOEntry spent_entry;
             if (!utxo_.get(in.prevout.txid, in.prevout.index, spent_entry)) {
-                fprintf(stderr, "connect_block: UTXO not found for input "
-                        "at height %lu, tx %zu\n",
+                LogError("chain", "connect_block: UTXO not found for input "
+                        "at height %lu, tx %zu",
                         static_cast<unsigned long>(index->height), tx_i);
                 return false;
             }
@@ -535,8 +536,8 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
     Amount max_coinbase = subsidy + fees;
 
     if (block.vtx[0].get_value_out() > max_coinbase) {
-        fprintf(stderr, "connect_block: coinbase exceeds subsidy + fees "
-                "at height %lu (coinbase=%ld, max=%ld)\n",
+        LogError("chain", "connect_block: coinbase exceeds subsidy + fees "
+                "at height %lu (coinbase=%ld, max=%ld)",
                 static_cast<unsigned long>(index->height),
                 static_cast<long>(block.vtx[0].get_value_out()),
                 static_cast<long>(max_coinbase));
@@ -547,8 +548,8 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
     for (size_t tx_i = 1; tx_i < block.vtx.size(); ++tx_i) {
         Amount out_sum = block.vtx[tx_i].get_value_out();
         if (tx_input_sums[tx_i] < out_sum) {
-            fprintf(stderr, "connect_block: tx %zu has input_sum < output_sum "
-                    "at height %lu\n", tx_i,
+            LogError("chain", "connect_block: tx %zu has input_sum < output_sum "
+                    "at height %lu", tx_i,
                     static_cast<unsigned long>(index->height));
             return false;
         }
@@ -566,8 +567,8 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
             for (const CTxIn& in : tx.vin) {
                 UTXOEntry spent_entry;
                 if (!utxo_.get(in.prevout.txid, in.prevout.index, spent_entry)) {
-                    fprintf(stderr, "connect_block: UTXO not found for input "
-                            "at height %lu, tx %zu\n",
+                    LogError("chain", "connect_block: UTXO not found for input "
+                            "at height %lu, tx %zu",
                             static_cast<unsigned long>(index->height), tx_i);
                     utxo_.rollback_transaction();
                     return false;
@@ -576,8 +577,8 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
                 // Check coinbase maturity
                 if (spent_entry.is_coinbase) {
                     if (index->height < spent_entry.height + consensus::COINBASE_MATURITY) {
-                        fprintf(stderr, "connect_block: premature coinbase spend "
-                                "at height %lu (created at %lu, maturity %d)\n",
+                        LogError("chain", "connect_block: premature coinbase spend "
+                                "at height %lu (created at %lu, maturity %d)",
                                 static_cast<unsigned long>(index->height),
                                 static_cast<unsigned long>(spent_entry.height),
                                 consensus::COINBASE_MATURITY);
@@ -611,8 +612,8 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
         std::vector<uint8_t> undo_bytes = undo.serialize();
         if (!undo_bytes.empty()) {
             if (!store_.write_undo(index->height, undo_bytes)) {
-                fprintf(stderr, "connect_block: failed to write undo data "
-                        "at height %lu\n",
+                LogError("chain", "connect_block: failed to write undo data "
+                        "at height %lu",
                         static_cast<unsigned long>(index->height));
                 // Non-fatal: reorgs past this point will use the slow path
             }
@@ -621,7 +622,7 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
 
     // === Model state: apply training delta ===
     if (!model_state_.process_block(block, index->height)) {
-        fprintf(stderr, "connect_block: model state update failed at height %lu\n",
+        LogError("chain", "connect_block: model state update failed at height %lu",
                 static_cast<unsigned long>(index->height));
         // Model state failure is non-fatal for UTXO consistency,
         // but we log it prominently. The model may need to be
@@ -632,7 +633,7 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
     if (txindex_) {
         uint256 block_hash = block.get_hash();
         if (!txindex_->index_block(block, index->height, block_hash)) {
-            fprintf(stderr, "connect_block: tx index update failed at height %lu\n",
+            LogError("chain", "connect_block: tx index update failed at height %lu",
                     static_cast<unsigned long>(index->height));
             // Non-fatal — the tx index is optional
         }
@@ -659,14 +660,14 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
 bool ChainState::disconnect_tip() {
     CBlockIndex* tip_idx = tree_.best_tip();
     if (!tip_idx || !tip_idx->prev) {
-        fprintf(stderr, "disconnect_tip: cannot disconnect genesis or null tip\n");
+        LogError("chain", "disconnect_tip: cannot disconnect genesis or null tip");
         return false;
     }
 
     // Read the tip block from disk
     CBlock tip_block;
     if (!store_.read_block(tip_idx->pos, tip_block)) {
-        fprintf(stderr, "disconnect_tip: failed to read block at height %lu\n",
+        LogError("chain", "disconnect_tip: failed to read block at height %lu",
                 static_cast<unsigned long>(tip_idx->height));
         return false;
     }
@@ -681,8 +682,8 @@ bool ChainState::disconnect_tip() {
                 persist_tip();
                 return true;
             }
-            fprintf(stderr, "disconnect_tip: fast disconnect failed, "
-                    "falling back to slow path at height %lu\n",
+            LogError("chain", "disconnect_tip: fast disconnect failed, "
+                    "falling back to slow path at height %lu",
                     static_cast<unsigned long>(tip_idx->height));
         }
     }
@@ -735,8 +736,8 @@ bool ChainState::disconnect_tip() {
                 }
 
                 if (!source_idx) {
-                    fprintf(stderr, "disconnect_tip: could not find source tx for "
-                            "input %zu of tx %d at height %lu\n",
+                    LogError("chain", "disconnect_tip: could not find source tx for "
+                            "input %zu of tx %d at height %lu",
                             vin_i, tx_i,
                             static_cast<unsigned long>(tip_idx->height));
                     utxo_.rollback_transaction();
@@ -750,7 +751,7 @@ bool ChainState::disconnect_tip() {
 
     // === Model state: undo last delta ===
     if (!model_state_.undo_block()) {
-        fprintf(stderr, "disconnect_tip: model state undo failed at height %lu\n",
+        LogError("chain", "disconnect_tip: model state undo failed at height %lu",
                 static_cast<unsigned long>(tip_idx->height));
         // Non-fatal for UTXO consistency, but the model state is now
         // inconsistent. A checkpoint reload may be required.
@@ -759,7 +760,7 @@ bool ChainState::disconnect_tip() {
     // === Transaction index: remove entries for this block ===
     if (txindex_) {
         if (!txindex_->deindex_block(tip_idx->height)) {
-            fprintf(stderr, "disconnect_tip: tx deindex failed at height %lu\n",
+            LogError("chain", "disconnect_tip: tx deindex failed at height %lu",
                     static_cast<unsigned long>(tip_idx->height));
             // Non-fatal
         }
@@ -787,7 +788,7 @@ int64_t ChainState::get_adjusted_time() const {
 void ChainState::update_tip(CBlockIndex* new_tip) {
     tree_.set_best_tip(new_tip);
     if (new_tip) {
-        fprintf(stderr, "ChainState: new tip at height %lu, hash=...\n",
+        LogInfo("chain", "new tip at height %lu, hash=...",
                 static_cast<unsigned long>(new_tip->height));
     }
 }
@@ -819,27 +820,27 @@ bool ChainState::load_from_disk() {
     try {
         chaindb_ = std::make_unique<ChainDB>(chaindb_path);
     } catch (const std::exception& e) {
-        fprintf(stderr, "ChainState: failed to open ChainDB: %s\n", e.what());
+        LogError("chain", "failed to open ChainDB: %s", e.what());
         return false;
     }
 
     if (!chaindb_->is_open()) {
-        fprintf(stderr, "ChainState: ChainDB not open after construction\n");
+        LogInfo("chain", "ChainDB not open after construction");
         return false;
     }
 
     // Step 2: Load all block indices from DB
     size_t db_count = chaindb_->count();
     if (db_count == 0) {
-        fprintf(stderr, "ChainState: empty ChainDB, starting fresh\n");
+        LogInfo("chain", "empty ChainDB, starting fresh");
         return true;  // Will create genesis in init()
     }
 
-    fprintf(stderr, "ChainState: loading %zu block indices from disk\n", db_count);
+    LogInfo("chain", "loading %zu block indices from disk", db_count);
 
     // Step 3: Reconstruct BlockTree from loaded indices
     if (!rebuild_tree_from_db()) {
-        fprintf(stderr, "ChainState: failed to rebuild block tree from DB\n");
+        LogError("chain", "failed to rebuild block tree from DB");
         return false;
     }
 
@@ -849,27 +850,27 @@ bool ChainState::load_from_disk() {
 
     CBlockIndex* stored_tip = tree_.find(stored_tip_hash);
     if (!stored_tip) {
-        fprintf(stderr, "ChainState: stored tip not found in tree, "
-                "attempting crash recovery\n");
+        LogInfo("chain", "stored tip not found in tree, "
+                "attempting crash recovery");
 
         // Step 5: Crash recovery
         CBlockIndex* recovered = recover_tip();
         if (!recovered) {
-            fprintf(stderr, "ChainState: crash recovery failed, "
-                    "no valid tip found\n");
+            LogError("chain", "crash recovery failed, "
+                    "no valid tip found");
             return false;
         }
 
         update_tip(recovered);
         persist_tip();
 
-        fprintf(stderr, "ChainState: recovered tip at height %lu\n",
+        LogInfo("chain", "recovered tip at height %lu",
                 static_cast<unsigned long>(recovered->height));
     } else {
         // Verify the stored tip is fully validated
         if (!(stored_tip->status & BLOCK_FULLY_VALIDATED)) {
-            fprintf(stderr, "ChainState: stored tip at height %lu not fully "
-                    "validated, walking back\n",
+            LogInfo("chain", "stored tip at height %lu not fully "
+                    "validated, walking back",
                     static_cast<unsigned long>(stored_tip->height));
 
             CBlockIndex* walk = stored_tip;
@@ -878,7 +879,7 @@ bool ChainState::load_from_disk() {
             }
 
             if (!walk) {
-                fprintf(stderr, "ChainState: no fully validated block found\n");
+                LogInfo("chain", "no fully validated block found");
                 return false;
             }
 
@@ -888,8 +889,8 @@ bool ChainState::load_from_disk() {
             update_tip(stored_tip);
         }
 
-        fprintf(stderr, "ChainState: loaded tip at height %lu "
-                "(stored height was %lu)\n",
+        LogInfo("chain", "loaded tip at height %lu "
+                "(stored height was %lu)",
                 static_cast<unsigned long>(tip() ? tip()->height : 0),
                 static_cast<unsigned long>(stored_height));
     }
@@ -954,7 +955,7 @@ bool ChainState::rebuild_tree_from_db() {
 
     chaindb_->commit_batch();
 
-    fprintf(stderr, "ChainState: rebuilt tree with %zu entries\n", tree_.size());
+    LogInfo("chain", "rebuilt tree with %zu entries", tree_.size());
     return tree_.size() > 0;
 }
 
@@ -982,7 +983,7 @@ bool ChainState::flush() {
     persist_tip();
     blocks_since_flush_ = 0;
 
-    fprintf(stderr, "ChainState: flushed to disk at height %lu\n",
+    LogInfo("chain", "flushed to disk at height %lu",
             static_cast<unsigned long>(height()));
 
     return true;
@@ -1101,8 +1102,8 @@ bool ChainState::reorganize_to(CBlockIndex* new_tip,
     uint64_t disconnect_count = current->height - fork_point->height;
     uint64_t connect_count = new_tip->height - fork_point->height;
 
-    fprintf(stderr, "ChainState: reorganizing: disconnect %lu, connect %lu "
-            "(fork at height %lu)\n",
+    LogInfo("chain", "reorganizing: disconnect %lu, connect %lu "
+            "(fork at height %lu)",
             static_cast<unsigned long>(disconnect_count),
             static_cast<unsigned long>(connect_count),
             static_cast<unsigned long>(fork_point->height));
@@ -1142,8 +1143,8 @@ bool ChainState::reorganize_to(CBlockIndex* new_tip,
 
     persist_tip();
 
-    fprintf(stderr, "ChainState: reorganization complete, "
-            "new tip at height %lu\n",
+    LogInfo("chain", "reorganization complete, "
+            "new tip at height %lu",
             static_cast<unsigned long>(tree_.best_tip()->height));
 
     return true;
@@ -1314,7 +1315,7 @@ bool ChainState::disconnect_block(const CBlock& block, const BlockUndo& undo) {
 
     // Model state: undo last delta
     if (!model_state_.undo_block()) {
-        fprintf(stderr, "disconnect_block: model state undo failed at height %lu\n",
+        LogError("chain", "disconnect_block: model state undo failed at height %lu",
                 static_cast<unsigned long>(tip_idx->height));
     }
 
@@ -1366,8 +1367,8 @@ bool ChainState::prune() {
     if (chaindb_) {
         size_t pruned = chaindb_->prune_below(prune_below);
         if (pruned > 0) {
-            fprintf(stderr, "ChainState: pruned %zu block index entries below "
-                    "height %lu\n", pruned,
+            LogInfo("chain", "pruned %zu block index entries below "
+                    "height %lu", pruned,
                     static_cast<unsigned long>(prune_below));
         }
     }
@@ -1423,7 +1424,7 @@ int ChainState::accept_headers_batch(const std::vector<CBlockHeader>& headers,
         if (!consensus::check_header(header, ctx, per_header_state)) {
             // Mark the header as failed and continue to the next.
             // Don't abort the entire batch for one bad header.
-            fprintf(stderr, "ChainState: batch header rejected at height %lu: %s\n",
+            LogError("chain", "batch header rejected at height %lu: %s",
                     static_cast<unsigned long>(header.height),
                     per_header_state.to_string().c_str());
             continue;
@@ -1553,8 +1554,8 @@ bool ChainState::accept_block_full(const CBlock& block,
         uint64_t disconnect_count = current_tip->height - fork_point->height;
         uint64_t connect_count = idx->height - fork_point->height;
 
-        fprintf(stderr, "ChainState: accept_block_full triggering reorg: "
-                "disconnect %lu, connect %lu (fork at height %lu)\n",
+        LogInfo("chain", "accept_block_full triggering reorg: "
+                "disconnect %lu, connect %lu (fork at height %lu)",
                 static_cast<unsigned long>(disconnect_count),
                 static_cast<unsigned long>(connect_count),
                 static_cast<unsigned long>(fork_point->height));
@@ -1627,7 +1628,7 @@ ChainState::ReorgStats ChainState::reorganize(const CBlockIndex* new_tip_const) 
     // Find fork point
     CBlockIndex* fork = find_fork_point(current, new_tip_idx);
     if (!fork) {
-        fprintf(stderr, "ChainState: reorganize: no fork point found\n");
+        LogInfo("chain", "reorganize: no fork point found");
         return stats;
     }
 
@@ -1642,19 +1643,19 @@ ChainState::ReorgStats ChainState::reorganize(const CBlockIndex* new_tip_const) 
 
     // Only reorganize if the new chain has strictly more work
     if (new_work <= current_work) {
-        fprintf(stderr, "ChainState: reorganize: new chain does not have more work "
-                "(%lu <= %lu)\n",
+        LogInfo("chain", "reorganize: new chain does not have more work "
+                "(%lu <= %lu)",
                 static_cast<unsigned long>(new_work),
                 static_cast<unsigned long>(current_work));
         return stats;
     }
 
-    fprintf(stderr, "ChainState: reorganizing chain\n"
+    LogInfo("chain", "reorganizing chain\n"
             "  Old tip: height=%lu\n"
             "  New tip: height=%lu\n"
             "  Fork:    height=%lu\n"
             "  Blocks to disconnect: %lu\n"
-            "  Blocks to connect:    %lu\n",
+            "  Blocks to connect:    %lu",
             static_cast<unsigned long>(current->height),
             static_cast<unsigned long>(new_tip_idx->height),
             static_cast<unsigned long>(fork->height),
@@ -1664,7 +1665,7 @@ ChainState::ReorgStats ChainState::reorganize(const CBlockIndex* new_tip_const) 
     // Step 1: Disconnect from current tip to fork point
     while (tree_.best_tip() != fork) {
         if (!disconnect_tip()) {
-            fprintf(stderr, "ChainState: reorganize: disconnect failed at height %lu\n",
+            LogError("chain", "reorganize: disconnect failed at height %lu",
                     static_cast<unsigned long>(tree_.best_tip()->height));
             break;
         }
@@ -1684,13 +1685,13 @@ ChainState::ReorgStats ChainState::reorganize(const CBlockIndex* new_tip_const) 
     for (CBlockIndex* connect_idx : connect_path) {
         CBlock block_data;
         if (!store_.read_block(connect_idx->pos, block_data)) {
-            fprintf(stderr, "ChainState: reorganize: failed to read block at height %lu\n",
+            LogError("chain", "reorganize: failed to read block at height %lu",
                     static_cast<unsigned long>(connect_idx->height));
             break;
         }
 
         if (!connect_block(block_data, connect_idx)) {
-            fprintf(stderr, "ChainState: reorganize: connect failed at height %lu\n",
+            LogError("chain", "reorganize: connect failed at height %lu",
                     static_cast<unsigned long>(connect_idx->height));
             connect_idx->status |= BLOCK_FAILED;
             break;
@@ -1707,10 +1708,10 @@ ChainState::ReorgStats ChainState::reorganize(const CBlockIndex* new_tip_const) 
     stats.reorg_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         t1 - t0).count();
 
-    fprintf(stderr, "ChainState: reorganization complete in %ld ms\n"
+    LogInfo("chain", "reorganization complete in %ld ms\n"
             "  Disconnected: %d blocks\n"
             "  Connected:    %d blocks\n"
-            "  New tip:      height=%lu\n",
+            "  New tip:      height=%lu",
             static_cast<long>(stats.reorg_time_ms),
             stats.blocks_disconnected,
             stats.blocks_connected,
@@ -1799,7 +1800,7 @@ void ChainState::periodic_flush() {
     // Persist current tip
     persist_tip();
 
-    fprintf(stderr, "ChainState: periodic flush at height %lu\n",
+    LogInfo("chain", "periodic flush at height %lu",
             static_cast<unsigned long>(height()));
 }
 
@@ -1823,7 +1824,7 @@ void ChainState::periodic_compact() {
         txindex_->compact();
     }
 
-    fprintf(stderr, "ChainState: databases compacted at height %lu\n",
+    LogInfo("chain", "databases compacted at height %lu",
             static_cast<unsigned long>(height()));
 }
 
@@ -1836,7 +1837,7 @@ bool ChainState::check_consistency() const {
 
     CBlockIndex* t = tip();
     if (!t) {
-        fprintf(stderr, "ChainState: consistency check: no tip\n");
+        LogInfo("chain", "consistency check: no tip");
         return false;
     }
 
@@ -1848,8 +1849,8 @@ bool ChainState::check_consistency() const {
     while (walk) {
         // Height must match
         if (walk->height != expected_height) {
-            fprintf(stderr, "ChainState: consistency check: height gap at block %lu "
-                    "(expected %lu)\n",
+            LogInfo("chain", "consistency check: height gap at block %lu "
+                    "(expected %lu)",
                     static_cast<unsigned long>(walk->height),
                     static_cast<unsigned long>(expected_height));
             return false;
@@ -1857,16 +1858,16 @@ bool ChainState::check_consistency() const {
 
         // Block must be fully validated
         if (!(walk->status & BLOCK_FULLY_VALIDATED)) {
-            fprintf(stderr, "ChainState: consistency check: block at height %lu "
-                    "not fully validated (status=0x%x)\n",
+            LogInfo("chain", "consistency check: block at height %lu "
+                    "not fully validated (status=0x%x)",
                     static_cast<unsigned long>(walk->height), walk->status);
             return false;
         }
 
         // Block must have data stored
         if (!(walk->status & BLOCK_DATA_STORED)) {
-            fprintf(stderr, "ChainState: consistency check: block at height %lu "
-                    "has no stored data\n",
+            LogInfo("chain", "consistency check: block at height %lu "
+                    "has no stored data",
                     static_cast<unsigned long>(walk->height));
             return false;
         }
@@ -1874,8 +1875,8 @@ bool ChainState::check_consistency() const {
         // Parent pointer must be consistent
         if (walk->prev) {
             if (walk->prev->height + 1 != walk->height) {
-                fprintf(stderr, "ChainState: consistency check: parent height mismatch "
-                        "at block %lu\n",
+                LogError("chain", "consistency check: parent height mismatch "
+                        "at block %lu",
                         static_cast<unsigned long>(walk->height));
                 return false;
             }
@@ -1895,8 +1896,8 @@ bool ChainState::check_consistency() const {
     // Verify the UTXO count is reasonable
     size_t utxo_count = utxo_.size();
     if (utxo_count == 0 && t->height > 0) {
-        fprintf(stderr, "ChainState: consistency check: UTXO set is empty "
-                "but chain height is %lu\n",
+        LogInfo("chain", "consistency check: UTXO set is empty "
+                "but chain height is %lu",
                 static_cast<unsigned long>(t->height));
         return false;
     }
@@ -1905,14 +1906,14 @@ bool ChainState::check_consistency() const {
     if (chaindb_) {
         uint256 stored_hash = chaindb_->load_tip();
         if (!stored_hash.is_null() && stored_hash != t->hash) {
-            fprintf(stderr, "ChainState: consistency check: stored tip hash "
-                    "does not match tree tip\n");
+            LogInfo("chain", "consistency check: stored tip hash "
+                    "does not match tree tip");
             return false;
         }
     }
 
-    fprintf(stderr, "ChainState: consistency check passed (%d blocks verified, "
-            "%zu UTXOs, height %lu)\n",
+    LogInfo("chain", "consistency check passed (%d blocks verified, "
+            "%zu UTXOs, height %lu)",
             blocks_checked,
             utxo_count,
             static_cast<unsigned long>(t->height));
@@ -2532,16 +2533,16 @@ bool ChainState::load_utxo_snapshot(const UTXOSnapshot& snapshot) {
     static constexpr size_t ENTRY_SIZE = 85;
 
     if (snapshot.serialized_utxos.size() % ENTRY_SIZE != 0) {
-        fprintf(stderr, "load_utxo_snapshot: invalid serialized size %zu "
-                "(not a multiple of %zu)\n",
+        LogError("chain", "load_utxo_snapshot: invalid serialized size %zu "
+                "(not a multiple of %zu)",
                 snapshot.serialized_utxos.size(), ENTRY_SIZE);
         return false;
     }
 
     size_t expected_count = snapshot.serialized_utxos.size() / ENTRY_SIZE;
     if (expected_count != snapshot.utxo_count) {
-        fprintf(stderr, "load_utxo_snapshot: count mismatch: header says %zu, "
-                "data has %zu entries\n",
+        LogError("chain", "load_utxo_snapshot: count mismatch: header says %zu, "
+                "data has %zu entries",
                 snapshot.utxo_count, expected_count);
         return false;
     }
@@ -2591,7 +2592,7 @@ bool ChainState::load_utxo_snapshot(const UTXOSnapshot& snapshot) {
 
     utxo_.commit_transaction();
 
-    fprintf(stderr, "load_utxo_snapshot: loaded %zu UTXOs at height %lu\n",
+    LogInfo("chain", "load_utxo_snapshot: loaded %zu UTXOs at height %lu",
             loaded, static_cast<unsigned long>(snapshot.height));
 
     return true;

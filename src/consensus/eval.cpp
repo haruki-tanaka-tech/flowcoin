@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include "logging.h"
 
 namespace flow::consensus {
 
@@ -65,37 +66,37 @@ bool EvalEngine::init_genesis() {
     ModelDimensions genesis_dims = compute_growth(0);
 
     if (!model_.init(genesis_dims, GENESIS_SEED)) {
-        fprintf(stderr, "EvalEngine: failed to initialize genesis model\n");
+        LogError("eval", "failed to initialize genesis model");
         return false;
     }
 
     delta_history_.clear();
-    fprintf(stderr, "EvalEngine: initialized genesis model (%zu params, seed=%u)\n",
+    LogInfo("eval", "initialized genesis model (%zu params, seed=%u)",
             model_.param_count(), GENESIS_SEED);
     return true;
 }
 
 bool EvalEngine::load_checkpoint(const std::string& path) {
     if (!model_.load_from_file(path)) {
-        fprintf(stderr, "EvalEngine: failed to load checkpoint from %s\n",
+        LogError("eval", "failed to load checkpoint from %s",
                 path.c_str());
         return false;
     }
 
     delta_history_.clear();
-    fprintf(stderr, "EvalEngine: loaded checkpoint from %s (%zu params)\n",
+    LogInfo("eval", "loaded checkpoint from %s (%zu params)",
             path.c_str(), model_.param_count());
     return true;
 }
 
 bool EvalEngine::save_checkpoint(const std::string& path) const {
     if (!model_.save_to_file(path)) {
-        fprintf(stderr, "EvalEngine: failed to save checkpoint to %s\n",
+        LogError("eval", "failed to save checkpoint to %s",
                 path.c_str());
         return false;
     }
 
-    fprintf(stderr, "EvalEngine: saved checkpoint to %s (%zu params)\n",
+    LogInfo("eval", "saved checkpoint to %s (%zu params)",
             path.c_str(), model_.param_count());
     return true;
 }
@@ -143,14 +144,14 @@ std::vector<float> EvalEngine::decompress_delta(
             compressed.data(), compressed.size());
 
         if (ZSTD_isError(result)) {
-            fprintf(stderr, "EvalEngine: zstd decompress error: %s\n",
+            LogError("eval", "zstd decompress error: %s",
                     ZSTD_getErrorName(result));
             return {};
         }
 
         if (result != expected_size) {
-            fprintf(stderr, "EvalEngine: decompressed size mismatch: "
-                    "got %zu, expected %zu\n", result, expected_size);
+            LogError("eval", "decompressed size mismatch: "
+                    "got %zu, expected %zu", result, expected_size);
             return {};
         }
 
@@ -173,7 +174,7 @@ std::vector<float> EvalEngine::decompress_delta(
             compressed.data(), compressed.size());
 
         if (ZSTD_isError(result)) {
-            fprintf(stderr, "EvalEngine: zstd decompress error (sparse): %s\n",
+            LogError("eval", "zstd decompress error (sparse): %s",
                     ZSTD_getErrorName(result));
             return {};
         }
@@ -202,8 +203,8 @@ std::vector<float> EvalEngine::decompress_delta(
                     if (idx < expected_floats) {
                         delta[idx] = val;
                     } else {
-                        fprintf(stderr, "EvalEngine: sparse delta index %u "
-                                "out of range (max %zu)\n", idx, expected_floats);
+                        LogInfo("eval", "sparse delta index %u "
+                                "out of range (max %zu)", idx, expected_floats);
                         return {};
                     }
                 }
@@ -212,8 +213,8 @@ std::vector<float> EvalEngine::decompress_delta(
         }
 
         // Not a recognized format
-        fprintf(stderr, "EvalEngine: unrecognized delta format "
-                "(frame_size=%llu, expected=%zu)\n", frame_size, expected_size);
+        LogInfo("eval", "unrecognized delta format "
+                "(frame_size=%llu, expected=%zu)", frame_size, expected_size);
         return {};
     }
 
@@ -224,14 +225,14 @@ std::vector<float> EvalEngine::decompress_delta(
         compressed.data(), compressed.size());
 
     if (ZSTD_isError(result)) {
-        fprintf(stderr, "EvalEngine: zstd decompress error: %s\n",
+        LogError("eval", "zstd decompress error: %s",
                 ZSTD_getErrorName(result));
         return {};
     }
 
     if (result != expected_size) {
-        fprintf(stderr, "EvalEngine: decompressed size mismatch: "
-                "got %zu, expected %zu\n", result, expected_size);
+        LogError("eval", "decompressed size mismatch: "
+                "got %zu, expected %zu", result, expected_size);
         return {};
     }
 
@@ -254,8 +255,8 @@ bool EvalEngine::apply_block_delta(const std::vector<uint8_t>& compressed_delta)
     std::vector<float> delta = decompress_delta(compressed_delta, n_params);
 
     if (delta.empty()) {
-        fprintf(stderr, "EvalEngine: failed to decompress delta "
-                "(%zu compressed bytes, %zu expected params)\n",
+        LogError("eval", "failed to decompress delta "
+                "(%zu compressed bytes, %zu expected params)",
                 compressed_delta.size(), n_params);
         return false;
     }
@@ -267,7 +268,7 @@ bool EvalEngine::apply_block_delta(const std::vector<uint8_t>& compressed_delta)
 
     // Apply the delta to the model
     if (!model_.apply_delta(delta)) {
-        fprintf(stderr, "EvalEngine: failed to apply delta to model\n");
+        LogError("eval", "failed to apply delta to model");
         return false;
     }
 
@@ -286,7 +287,7 @@ bool EvalEngine::apply_block_delta(const std::vector<uint8_t>& compressed_delta)
 
 bool EvalEngine::undo_last_delta() {
     if (delta_history_.empty()) {
-        fprintf(stderr, "EvalEngine: no delta history available for undo\n");
+        LogInfo("eval", "no delta history available for undo");
         return false;
     }
 
@@ -299,7 +300,7 @@ bool EvalEngine::undo_last_delta() {
     }
 
     if (!model_.apply_delta(neg_delta)) {
-        fprintf(stderr, "EvalEngine: failed to apply negative delta for undo\n");
+        LogError("eval", "failed to apply negative delta for undo");
         return false;
     }
 
@@ -317,12 +318,12 @@ bool EvalEngine::expand_model(const ModelDimensions& new_dims) {
     delta_history_.clear();
 
     if (!model_.expand_to(new_dims)) {
-        fprintf(stderr, "EvalEngine: model expansion failed\n");
+        LogError("eval", "model expansion failed");
         return false;
     }
 
-    fprintf(stderr, "EvalEngine: model expanded to d=%u, L=%u, d_ff=%u, "
-            "slots=%u (%zu params)\n",
+    LogInfo("eval", "model expanded to d=%u, L=%u, d_ff=%u, "
+            "slots=%u (%zu params)",
             new_dims.d_model, new_dims.n_layers, new_dims.d_ff,
             new_dims.n_slots, model_.param_count());
     return true;
@@ -339,7 +340,7 @@ float EvalEngine::evaluate_with_delta(
     // Step 1: Verify dataset hash matches consensus
     uint256 expected_hash = compute_dataset_hash();
     if (dataset_hash != expected_hash) {
-        fprintf(stderr, "EvalEngine: dataset hash mismatch in evaluation\n");
+        LogError("eval", "dataset hash mismatch in evaluation");
         return MAX_VAL_LOSS;
     }
 
@@ -348,22 +349,22 @@ float EvalEngine::evaluate_with_delta(
     // Step 2: Clone the current model weights
     std::vector<float> cloned_weights = model_.get_weights();
     if (cloned_weights.size() != n_params) {
-        fprintf(stderr, "EvalEngine: weight clone size mismatch\n");
+        LogError("eval", "weight clone size mismatch");
         return MAX_VAL_LOSS;
     }
 
     // Step 3: Decompress the delta
     std::vector<float> delta = decompress_delta(compressed_delta, n_params);
     if (delta.empty() && !compressed_delta.empty()) {
-        fprintf(stderr, "EvalEngine: delta decompression failed during eval\n");
+        LogError("eval", "delta decompression failed during eval");
         return MAX_VAL_LOSS;
     }
 
     // Step 4: Apply delta to cloned weights
     if (!delta.empty()) {
         if (delta.size() != n_params) {
-            fprintf(stderr, "EvalEngine: delta size mismatch "
-                    "(%zu vs %zu params)\n", delta.size(), n_params);
+            LogError("eval", "delta size mismatch "
+                    "(%zu vs %zu params)", delta.size(), n_params);
             return MAX_VAL_LOSS;
         }
         for (size_t i = 0; i < n_params; i++) {
@@ -376,19 +377,19 @@ float EvalEngine::evaluate_with_delta(
     // modified weights into it.
     ConsensusModel eval_model;
     if (!eval_model.init(model_.dims(), GENESIS_SEED)) {
-        fprintf(stderr, "EvalEngine: failed to create eval model\n");
+        LogError("eval", "failed to create eval model");
         return MAX_VAL_LOSS;
     }
 
     if (!eval_model.set_weights(cloned_weights)) {
-        fprintf(stderr, "EvalEngine: failed to set weights on eval model\n");
+        LogError("eval", "failed to set weights on eval model");
         return MAX_VAL_LOSS;
     }
 
     // Step 6: Generate validation data
     std::vector<uint8_t> val_data = generate_validation_data();
     if (val_data.empty()) {
-        fprintf(stderr, "EvalEngine: failed to generate validation data\n");
+        LogError("eval", "failed to generate validation data");
         return MAX_VAL_LOSS;
     }
 
@@ -397,7 +398,7 @@ float EvalEngine::evaluate_with_delta(
 
     // Sanity check the result
     if (!std::isfinite(loss) || loss <= 0.0f) {
-        fprintf(stderr, "EvalEngine: forward_eval returned invalid loss: %f\n",
+        LogError("eval", "forward_eval returned invalid loss: %f",
                 static_cast<double>(loss));
         return MAX_VAL_LOSS;
     }
@@ -430,8 +431,8 @@ float EvalEngine::eval_function_adapter(
         const uint256& dataset_hash) {
 
     if (!instance_) {
-        fprintf(stderr, "EvalEngine: eval_function_adapter called but "
-                "no instance set\n");
+        LogInfo("eval", "eval_function_adapter called but "
+                "no instance set");
         return MAX_VAL_LOSS;
     }
 

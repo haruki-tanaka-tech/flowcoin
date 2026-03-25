@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 
 #include "sqlite3.h"
+#include "logging.h"
 
 namespace flow {
 
@@ -279,7 +280,7 @@ void UTXOSet::begin_transaction() {
     char* errmsg = nullptr;
     sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, &errmsg);
     if (errmsg) {
-        fprintf(stderr, "UTXOSet: begin_transaction failed: %s\n", errmsg);
+        LogError("db", "begin_transaction failed: %s", errmsg);
         sqlite3_free(errmsg);
     }
 }
@@ -288,7 +289,7 @@ void UTXOSet::commit_transaction() {
     char* errmsg = nullptr;
     sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
     if (errmsg) {
-        fprintf(stderr, "UTXOSet: commit_transaction failed: %s\n", errmsg);
+        LogError("db", "commit_transaction failed: %s", errmsg);
         sqlite3_free(errmsg);
     }
 }
@@ -297,7 +298,7 @@ void UTXOSet::rollback_transaction() {
     char* errmsg = nullptr;
     sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &errmsg);
     if (errmsg) {
-        fprintf(stderr, "UTXOSet: rollback_transaction failed: %s\n", errmsg);
+        LogError("db", "rollback_transaction failed: %s", errmsg);
         sqlite3_free(errmsg);
     }
 }

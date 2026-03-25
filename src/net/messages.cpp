@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include "logging.h"
 
 namespace flow {
 
@@ -88,7 +89,7 @@ void MessageHandler::process_message(Peer& peer, const std::string& command,
         handle_feefilter(peer, payload, payload_len);
     } else {
         // Unknown command -- ignore
-        fprintf(stderr, "net: unknown command '%s' from peer %lu\n",
+        LogInfo("net", "unknown command '%s' from peer %lu",
                 command.c_str(), (unsigned long)peer.id());
     }
 }
@@ -139,7 +140,7 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
 
     VersionMessage ver;
     if (!VersionMessage::deserialize(data, len, ver)) {
-        fprintf(stderr, "net: failed to parse version from peer %lu\n",
+        LogError("net", "failed to parse version from peer %lu",
                 (unsigned long)peer.id());
         peer.add_misbehavior(10);
         return;
@@ -147,7 +148,7 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
 
     // Self-connection detection
     if (ver.nonce == netman_.local_nonce()) {
-        fprintf(stderr, "net: detected self-connection to peer %lu, disconnecting\n",
+        LogInfo("net", "detected self-connection to peer %lu, disconnecting",
                 (unsigned long)peer.id());
         netman_.disconnect(peer, "self-connection");
         return;
@@ -161,7 +162,7 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
     peer.set_nonce(ver.nonce);
     peer.set_version_received(true);
 
-    fprintf(stderr, "net: received version from peer %lu: %s height=%lu\n",
+    LogInfo("net", "received version from peer %lu: %s height=%lu",
             (unsigned long)peer.id(), ver.user_agent.c_str(),
             (unsigned long)ver.start_height);
 
@@ -177,7 +178,7 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
     if (peer.verack_received()) {
         peer.set_state(PeerState::HANDSHAKE_DONE);
         netman_.addrman().mark_good(peer.addr());
-        fprintf(stderr, "net: handshake complete with peer %lu (%s)\n",
+        LogInfo("net", "handshake complete with peer %lu (%s)",
                 (unsigned long)peer.id(), peer.addr().to_string().c_str());
     }
 }
@@ -194,14 +195,14 @@ void MessageHandler::handle_verack(Peer& peer) {
     if (peer.version_received()) {
         peer.set_state(PeerState::HANDSHAKE_DONE);
         netman_.addrman().mark_good(peer.addr());
-        fprintf(stderr, "net: handshake complete with peer %lu (%s)\n",
+        LogInfo("net", "handshake complete with peer %lu (%s)",
                 (unsigned long)peer.id(), peer.addr().to_string().c_str());
 
         // If peer has a higher chain, request headers
         uint64_t our_height = chain_.height();
         uint64_t their_height = peer.start_height();
         if (their_height > our_height) {
-            fprintf(stderr, "net: peer %lu has height %lu (ours: %lu), requesting headers\n",
+            LogInfo("net", "peer %lu has height %lu (ours: %lu), requesting headers",
                     (unsigned long)peer.id(), (unsigned long)their_height,
                     (unsigned long)our_height);
 
@@ -576,7 +577,7 @@ static bool deserialize_block_from_wire(const uint8_t* data, size_t len, CBlock&
 void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
     CBlock block;
     if (!deserialize_block_from_wire(data, len, block)) {
-        fprintf(stderr, "net: failed to deserialize block from peer %lu\n",
+        LogError("net", "failed to deserialize block from peer %lu",
                 (unsigned long)peer.id());
         peer.add_misbehavior(20);
         return;
@@ -592,11 +593,11 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
     // Validate and accept the block
     consensus::ValidationState vstate;
     if (chain_.accept_block(block, vstate)) {
-        fprintf(stderr, "net: accepted block at height %lu from peer %lu\n",
+        LogInfo("net", "accepted block at height %lu from peer %lu",
                 (unsigned long)block.height, (unsigned long)peer.id());
         relay_block(block_hash);
     } else {
-        fprintf(stderr, "net: rejected block from peer %lu: %s\n",
+        LogError("net", "rejected block from peer %lu: %s",
                 (unsigned long)peer.id(), vstate.reject_reason().c_str());
         peer.add_misbehavior(10);
     }
@@ -607,7 +608,7 @@ void MessageHandler::handle_tx(Peer& peer, const uint8_t* data, size_t len) {
     (void)len;
     // No mempool implemented yet -- silently accept and discard
     // In future: deserialize CTransaction, validate, add to mempool, relay
-    fprintf(stderr, "net: received tx from peer %lu (mempool not implemented)\n",
+    LogInfo("net", "received tx from peer %lu (mempool not implemented)",
             (unsigned long)peer.id());
 }
 
@@ -772,7 +773,7 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         if (new_idx) {
             got_new = true;
         } else {
-            fprintf(stderr, "net: rejected header from peer %lu: %s\n",
+            LogError("net", "rejected header from peer %lu: %s",
                     (unsigned long)peer.id(), vstate.reject_reason().c_str());
             peer.add_misbehavior(10);
             return;
@@ -949,7 +950,7 @@ void MessageHandler::handle_reject(Peer& peer, const uint8_t* data, size_t len) 
         default: break;
     }
 
-    fprintf(stderr, "net: peer %lu rejected %s: %s (code=%s, hash=%.8s...)\n",
+    LogError("net", "peer %lu rejected %s: %s (code=%s, hash=%.8s...)",
             (unsigned long)peer.id(),
             rejected_msg.c_str(),
             reason.c_str(),
@@ -971,7 +972,7 @@ void MessageHandler::handle_reject(Peer& peer, const uint8_t* data, size_t len) 
 
 void MessageHandler::handle_sendheaders(Peer& peer) {
     peer.set_prefers_headers(true);
-    fprintf(stderr, "net: peer %lu prefers header announcements\n",
+    LogInfo("net", "peer %lu prefers header announcements",
             (unsigned long)peer.id());
 }
 
@@ -1004,7 +1005,7 @@ void MessageHandler::handle_sendcmpct(Peer& peer, const uint8_t* data, size_t le
         peer.set_wants_cmpct_high_bandwidth(announce != 0);
         peer.set_prefers_compact_blocks(announce != 0);
 
-        fprintf(stderr, "net: peer %lu supports compact blocks v%lu (high-bw: %s)\n",
+        LogInfo("net", "peer %lu supports compact blocks v%lu (high-bw: %s)",
                 (unsigned long)peer.id(),
                 (unsigned long)version,
                 announce ? "yes" : "no");
@@ -1253,11 +1254,11 @@ void MessageHandler::handle_cmpctblock(Peer& peer, const uint8_t* data, size_t l
 
         consensus::ValidationState vstate;
         if (chain_.accept_block(block, vstate)) {
-            fprintf(stderr, "net: accepted compact block at height %lu from peer %lu\n",
+            LogInfo("net", "accepted compact block at height %lu from peer %lu",
                     (unsigned long)block.height, (unsigned long)peer.id());
             relay_block(block_hash);
         } else {
-            fprintf(stderr, "net: rejected compact block from peer %lu: %s\n",
+            LogError("net", "rejected compact block from peer %lu: %s",
                     (unsigned long)peer.id(), vstate.reject_reason().c_str());
             peer.add_misbehavior(10);
         }
@@ -1273,7 +1274,7 @@ void MessageHandler::handle_cmpctblock(Peer& peer, const uint8_t* data, size_t l
         }
         send(peer, NetCmd::GETBLOCKTXN, w.release());
 
-        fprintf(stderr, "net: compact block from peer %lu missing %zu txs, requesting\n",
+        LogInfo("net", "compact block from peer %lu missing %zu txs, requesting",
                 (unsigned long)peer.id(), missing_indices.size());
     }
 }
@@ -1454,11 +1455,11 @@ void MessageHandler::handle_blocktxn(Peer& peer, const uint8_t* data, size_t len
 
     consensus::ValidationState vstate;
     if (chain_.accept_block(block, vstate)) {
-        fprintf(stderr, "net: accepted reconstructed block at height %lu from peer %lu\n",
+        LogInfo("net", "accepted reconstructed block at height %lu from peer %lu",
                 (unsigned long)block.height, (unsigned long)peer.id());
         relay_block(block_hash);
     } else {
-        fprintf(stderr, "net: rejected reconstructed block from peer %lu: %s\n",
+        LogError("net", "rejected reconstructed block from peer %lu: %s",
                 (unsigned long)peer.id(), vstate.reject_reason().c_str());
         peer.add_misbehavior(10);
     }
@@ -1492,7 +1493,7 @@ void MessageHandler::handle_feefilter(Peer& peer, const uint8_t* data, size_t le
     }
 
     peer.set_fee_filter(fee_rate);
-    fprintf(stderr, "net: peer %lu set fee filter to %ld sat/kB\n",
+    LogInfo("net", "peer %lu set fee filter to %ld sat/kB",
             (unsigned long)peer.id(), (long)fee_rate);
 }
 
@@ -1507,7 +1508,7 @@ void MessageHandler::handle_tx_full(Peer& peer, const uint8_t* data, size_t len)
 
     tx.version = r.read_u32_le();
     if (r.error()) {
-        fprintf(stderr, "net: malformed tx from peer %lu: cannot read version\n",
+        LogError("net", "malformed tx from peer %lu: cannot read version",
                 (unsigned long)peer.id());
         peer.add_misbehavior(10);
         return;
@@ -1516,7 +1517,7 @@ void MessageHandler::handle_tx_full(Peer& peer, const uint8_t* data, size_t len)
     // Read inputs
     uint64_t vin_count = r.read_compact_size();
     if (r.error() || vin_count > 10000) {
-        fprintf(stderr, "net: malformed tx from peer %lu: bad vin count %lu\n",
+        LogError("net", "malformed tx from peer %lu: bad vin count %lu",
                 (unsigned long)peer.id(), (unsigned long)vin_count);
         peer.add_misbehavior(10);
         return;
@@ -1539,7 +1540,7 @@ void MessageHandler::handle_tx_full(Peer& peer, const uint8_t* data, size_t len)
     // Read outputs
     uint64_t vout_count = r.read_compact_size();
     if (r.error() || vout_count > 10000) {
-        fprintf(stderr, "net: malformed tx from peer %lu: bad vout count %lu\n",
+        LogError("net", "malformed tx from peer %lu: bad vout count %lu",
                 (unsigned long)peer.id(), (unsigned long)vout_count);
         peer.add_misbehavior(10);
         return;
@@ -1555,7 +1556,7 @@ void MessageHandler::handle_tx_full(Peer& peer, const uint8_t* data, size_t len)
 
     tx.locktime = r.read_i64_le();
     if (r.error()) {
-        fprintf(stderr, "net: malformed tx from peer %lu: truncated at locktime\n",
+        LogError("net", "malformed tx from peer %lu: truncated at locktime",
                 (unsigned long)peer.id());
         peer.add_misbehavior(10);
         return;
@@ -1593,7 +1594,7 @@ void MessageHandler::handle_tx_full(Peer& peer, const uint8_t* data, size_t len)
     std::string reject_reason = add_result.reject_reason;
 
     if (accepted) {
-        fprintf(stderr, "net: accepted tx %s from peer %lu (%zu in, %zu out)\n",
+        LogInfo("net", "accepted tx %s from peer %lu (%zu in, %zu out)",
                 hex_encode(txid.data(), 8).c_str(),
                 (unsigned long)peer.id(),
                 tx.vin.size(), tx.vout.size());
@@ -1625,7 +1626,7 @@ void MessageHandler::handle_tx_full(Peer& peer, const uint8_t* data, size_t len)
                 }
             }
         } else {
-            fprintf(stderr, "net: rejected tx %s from peer %lu: %s\n",
+            LogError("net", "rejected tx %s from peer %lu: %s",
                     hex_encode(txid.data(), 8).c_str(),
                     (unsigned long)peer.id(),
                     reject_reason.c_str());
@@ -1660,7 +1661,7 @@ void MessageHandler::add_orphan_tx(const CTransaction& tx, uint64_t from_peer) {
 
     // Don't accept oversized orphans
     if (tx.get_serialize_size() > MAX_ORPHAN_TX_SIZE) {
-        fprintf(stderr, "net: orphan tx %s too large (%zu bytes), ignoring\n",
+        LogInfo("net", "orphan tx %s too large (%zu bytes), ignoring",
                 hex_encode(txid.data(), 8).c_str(), tx.get_serialize_size());
         return;
     }
@@ -1681,7 +1682,7 @@ void MessageHandler::add_orphan_tx(const CTransaction& tx, uint64_t from_peer) {
         orphan_by_parent_[vin.prevout.txid].insert(txid);
     }
 
-    fprintf(stderr, "net: added orphan tx %s from peer %lu (pool size: %zu)\n",
+    LogInfo("net", "added orphan tx %s from peer %lu (pool size: %zu)",
             hex_encode(txid.data(), 8).c_str(),
             (unsigned long)from_peer,
             orphan_pool_.size());
@@ -1747,7 +1748,7 @@ void MessageHandler::process_orphan_dependents(const uint256& parent_txid) {
         auto orphan_result = mempool->add_transaction(orphan_tx);
         std::string reject_reason = orphan_result.reject_reason;
         if (orphan_result.accepted) {
-            fprintf(stderr, "net: accepted former orphan tx %s\n",
+            LogInfo("net", "accepted former orphan tx %s",
                     hex_encode(orphan_txid.data(), 8).c_str());
             relay_tx_to_peers(orphan_txid, 0);
             // Recursively process any orphans depending on this tx
@@ -1794,7 +1795,7 @@ void MessageHandler::expire_orphans() {
     }
 
     if (!expired.empty()) {
-        fprintf(stderr, "net: expired %zu orphan transactions\n", expired.size());
+        LogWarn("net", "expired %zu orphan transactions", expired.size());
     }
 }
 
@@ -1947,7 +1948,7 @@ void MessageHandler::handle_inv_full(Peer& peer, const uint8_t* data, size_t len
     send(peer, NetCmd::GETDATA, w.release());
 
     if (!needed_blocks.empty()) {
-        fprintf(stderr, "net: requesting %zu blocks and %zu txs from peer %lu\n",
+        LogInfo("net", "requesting %zu blocks and %zu txs from peer %lu",
                 needed_blocks.size(), needed_txs.size(),
                 (unsigned long)peer.id());
     }
@@ -2032,11 +2033,11 @@ void MessageHandler::handle_notfound_full(Peer& peer, const uint8_t* data, size_
             // Clear the request tracking so we can request from another peer
             peer.clear_requested_tx(item.hash);
 
-            fprintf(stderr, "net: peer %lu does not have tx %s\n",
+            LogInfo("net", "peer %lu does not have tx %s",
                     (unsigned long)peer.id(),
                     hex_encode(item.hash.data(), 8).c_str());
         } else if (item.type == INV_BLOCK) {
-            fprintf(stderr, "net: peer %lu does not have block %s\n",
+            LogInfo("net", "peer %lu does not have block %s",
                     (unsigned long)peer.id(),
                     hex_encode(item.hash.data(), 8).c_str());
         }
@@ -2246,7 +2247,7 @@ void MessageHandler::handle_getaddr_full(Peer& peer) {
     }
     send(peer, NetCmd::ADDR, w.release());
 
-    fprintf(stderr, "net: sent %zu addresses to peer %lu (of %zu known)\n",
+    LogInfo("net", "sent %zu addresses to peer %lu (of %zu known)",
             addrs.size(), (unsigned long)peer.id(), total_known);
 }
 
@@ -2318,7 +2319,7 @@ void MessageHandler::handle_pong_full(Peer& peer, const uint8_t* data, size_t le
 
         // Sanity check latency (reject if > 5 minutes)
         if (latency < 0 || latency > 300'000'000LL) {
-            fprintf(stderr, "net: bogus ping latency from peer %lu: %ld us\n",
+            LogWarn("net", "bogus ping latency from peer %lu: %ld us",
                     (unsigned long)peer.id(), (long)latency);
             return;
         }
@@ -2333,7 +2334,7 @@ void MessageHandler::handle_pong_full(Peer& peer, const uint8_t* data, size_t le
 
         // Log if latency is notable
         if (latency > 10'000'000LL) {  // > 10 seconds
-            fprintf(stderr, "net: high ping latency from peer %lu: %.1f s\n",
+            LogWarn("net", "high ping latency from peer %lu: %.1f s",
                     (unsigned long)peer.id(),
                     static_cast<double>(latency) / 1e6);
         }
@@ -2544,7 +2545,7 @@ void MessageHandler::add_orphan_block(const CBlock& block, uint64_t peer_id) {
     orphan_blocks_[hash] = std::move(ob);
     orphans_by_prev_[block.prev_hash].push_back(hash);
 
-    fprintf(stderr, "net: stored orphan block %.8s (prev=%.8s) from peer %lu\n",
+    LogInfo("net", "stored orphan block %.8s (prev=%.8s) from peer %lu",
             hex_encode(hash.data(), 32).c_str(),
             hex_encode(block.prev_hash.data(), 32).c_str(),
             (unsigned long)peer_id);
@@ -2582,14 +2583,14 @@ void MessageHandler::process_orphan_blocks(const uint256& accepted_hash) {
         // Try to accept this previously orphaned block
         consensus::ValidationState vstate;
         if (chain_.accept_block(orphan_block, vstate)) {
-            fprintf(stderr, "net: accepted former orphan block at height %lu\n",
+            LogInfo("net", "accepted former orphan block at height %lu",
                     (unsigned long)orphan_block.height);
             relay_block(orphan_hash);
 
             // Recursively process orphans of this block
             process_orphan_blocks(orphan_hash);
         } else {
-            fprintf(stderr, "net: rejected orphan block: %s (peer %lu)\n",
+            LogError("net", "rejected orphan block: %s (peer %lu)",
                     vstate.reject_reason().c_str(), (unsigned long)from_peer);
         }
     }
@@ -2647,7 +2648,7 @@ void MessageHandler::request_headers_batch(Peer& peer, const uint256& from_hash)
 
     send(peer, NetCmd::GETHEADERS, w.release());
 
-    fprintf(stderr, "net: requesting headers batch from peer %lu starting at %.8s\n",
+    LogInfo("net", "requesting headers batch from peer %lu starting at %.8s",
             (unsigned long)peer.id(), hex_encode(from_hash.data(), 32).c_str());
 }
 
@@ -2676,7 +2677,7 @@ void MessageHandler::process_headers_batch(Peer& peer,
             peer.set_synced_headers(new_idx->height);
         } else {
             rejected++;
-            fprintf(stderr, "net: rejected header from batch: %s\n",
+            LogError("net", "rejected header from batch: %s",
                     vstate.reject_reason().c_str());
             if (rejected > 10) {
                 // Too many bad headers; penalize and stop
@@ -2686,8 +2687,8 @@ void MessageHandler::process_headers_batch(Peer& peer,
         }
     }
 
-    fprintf(stderr, "net: processed headers batch from peer %lu: "
-            "%d accepted, %d rejected (of %zu)\n",
+    LogError("net", "processed headers batch from peer %lu: "
+            "%d accepted, %d rejected (of %zu)",
             (unsigned long)peer.id(), accepted, rejected, headers.size());
 
     // If we got a full batch, request more
@@ -2762,7 +2763,7 @@ void MessageHandler::rebroadcast_wallet_txs(
             track_tx_broadcast(txid);
         }
 
-        fprintf(stderr, "net: rebroadcast wallet tx %.8s\n",
+        LogInfo("net", "rebroadcast wallet tx %.8s",
                 hex_encode(txid.data(), 32).c_str());
     }
 }
@@ -2783,7 +2784,7 @@ void MessageHandler::check_peer_timeouts() {
             // Handshake timeout: disconnect if version not completed within 60s
             int64_t elapsed = now - peer->connect_time();
             if (elapsed > 60) {
-                fprintf(stderr, "net: handshake timeout for peer %lu, disconnecting\n",
+                LogWarn("net", "handshake timeout for peer %lu, disconnecting",
                         (unsigned long)peer->id());
                 netman_.disconnect(*peer, "handshake timeout");
             }
@@ -2794,7 +2795,7 @@ void MessageHandler::check_peer_timeouts() {
         if (peer->last_recv_time() > 0) {
             int64_t since_recv = now - peer->last_recv_time();
             if (since_recv > 1200) {
-                fprintf(stderr, "net: no data from peer %lu for %ld seconds, disconnecting\n",
+                LogInfo("net", "no data from peer %lu for %ld seconds, disconnecting",
                         (unsigned long)peer->id(), (long)since_recv);
                 netman_.disconnect(*peer, "no data timeout");
                 continue;
@@ -2805,7 +2806,7 @@ void MessageHandler::check_peer_timeouts() {
         if (peer->ping_nonce() != 0 && peer->last_ping_time() > 0) {
             int64_t ping_elapsed = (GetTimeMicros() - peer->last_ping_time()) / 1000000;
             if (ping_elapsed > 1200) {
-                fprintf(stderr, "net: ping timeout for peer %lu, disconnecting\n",
+                LogWarn("net", "ping timeout for peer %lu, disconnecting",
                         (unsigned long)peer->id());
                 netman_.disconnect(*peer, "ping timeout");
                 continue;
@@ -2815,7 +2816,7 @@ void MessageHandler::check_peer_timeouts() {
         // Check for stalled block downloads
         auto stalled = peer->get_stalled_requests(now);
         if (stalled.size() > 3) {
-            fprintf(stderr, "net: peer %lu has %zu stalled requests, adding misbehavior\n",
+            LogWarn("net", "peer %lu has %zu stalled requests, adding misbehavior",
                     (unsigned long)peer->id(), stalled.size());
             peer->add_misbehavior(5);
         }

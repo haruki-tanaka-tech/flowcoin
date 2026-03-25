@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 
 #include "sqlite3.h"
+#include "logging.h"
 
 namespace flow {
 
@@ -1204,7 +1205,7 @@ bool WalletDB::migrate_schema(int from_version, int to_version) {
             // Update schema version
             store_meta("schema_version", "1");
         } catch (const std::exception& e) {
-            fprintf(stderr, "WalletDB: migration 0->1 failed: %s\n", e.what());
+            LogError("wallet", "migration 0->1 failed: %s", e.what());
             success = false;
         }
     }
@@ -1255,7 +1256,7 @@ bool WalletDB::migrate_schema(int from_version, int to_version) {
 
             store_meta("schema_version", "2");
         } catch (const std::exception& e) {
-            fprintf(stderr, "WalletDB: migration 1->2 failed: %s\n", e.what());
+            LogError("wallet", "migration 1->2 failed: %s", e.what());
             success = false;
         }
     }
@@ -1286,7 +1287,7 @@ bool WalletDB::check_and_migrate() {
         return true;  // already at current version
     }
 
-    fprintf(stderr, "WalletDB: migrating schema from v%d to v%d\n",
+    LogInfo("wallet", "migrating schema from v%d to v%d",
             current_version, CURRENT_SCHEMA_VERSION);
 
     return migrate_schema(current_version, CURRENT_SCHEMA_VERSION);
@@ -1431,7 +1432,7 @@ int WalletDB::repair() {
             if (rc == SQLITE_DONE) {
                 int changes = sqlite3_changes(db_);
                 if (changes > 0) {
-                    fprintf(stderr, "WalletDB: repaired %d orphan addresses\n", changes);
+                    LogInfo("wallet", "repaired %d orphan addresses", changes);
                     fixes += changes;
                 }
             }
@@ -1451,7 +1452,7 @@ int WalletDB::repair() {
             if (rc == SQLITE_DONE) {
                 int changes = sqlite3_changes(db_);
                 if (changes > 0) {
-                    fprintf(stderr, "WalletDB: repaired %d duplicate labels\n", changes);
+                    LogInfo("wallet", "repaired %d duplicate labels", changes);
                     fixes += changes;
                 }
             }
@@ -1471,7 +1472,7 @@ int WalletDB::repair() {
                 uint32_t current_hd = load_hd_index();
                 if (static_cast<uint32_t>(max_idx) >= current_hd) {
                     store_hd_index(static_cast<uint32_t>(max_idx) + 1);
-                    fprintf(stderr, "WalletDB: repaired HD index: %u -> %d\n",
+                    LogInfo("wallet", "repaired HD index: %u -> %d",
                             current_hd, max_idx + 1);
                     fixes++;
                 }

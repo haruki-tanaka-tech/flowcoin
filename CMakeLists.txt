@@ -474,6 +474,34 @@ target_link_libraries(flowcoin-tx PRIVATE
     m
 )
 
+# --- flowcoin-miner (standalone training miner) ---
+add_executable(flowcoin-miner
+    src/flowcoin-miner.cpp
+    src/mining/gpu_miner.cpp
+    src/logging.cpp
+)
+target_include_directories(flowcoin-miner PRIVATE src)
+target_link_libraries(flowcoin-miner PRIVATE
+    -Wl,--start-group
+    flowcoin_consensus
+    flowcoin_primitives
+    flowcoin_crypto
+    flowcoin_hash
+    flowcoin_util
+    flowcoin_support
+    flowcoin_compat
+    ggml
+    -Wl,--end-group
+    sqlite
+    ed25519
+    xkcp
+    zstd
+    pthread
+    dl
+    m
+)
+install(TARGETS flowcoin-miner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 # =============================================================================
 # Tests (assert-based, no external framework required)
 # =============================================================================

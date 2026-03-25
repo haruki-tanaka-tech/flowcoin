@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <set>
+#include "logging.h"
 
 namespace flow {
 
@@ -89,7 +90,7 @@ bool NetManager::start() {
 
     loop_ = uv_loop_new();
     if (!loop_) {
-        fprintf(stderr, "net: failed to create event loop\n");
+        LogError("net", "failed to create event loop");
         return false;
     }
 
@@ -106,9 +107,13 @@ bool NetManager::start() {
     uv_ip4_addr("0.0.0.0", port_, &bind_addr);
     int r = uv_tcp_bind(server_, reinterpret_cast<const struct sockaddr*>(&bind_addr), 0);
     if (r < 0) {
-        fprintf(stderr, "net: bind failed on port %u: %s\n", port_, uv_strerror(r));
-        delete server_;
+        LogError("net", "bind failed on port %u: %s", port_, uv_strerror(r));
+        // Close the handle properly before deleting the loop: schedule close,
+        // run the loop to let the callback fire, then delete.
+        uv_close(reinterpret_cast<uv_handle_t*>(server_), on_close);
         server_ = nullptr;
+        uv_run(loop_, UV_RUN_DEFAULT);
+        uv_loop_close(loop_);
         uv_loop_delete(loop_);
         loop_ = nullptr;
         return false;
@@ -117,15 +122,19 @@ bool NetManager::start() {
     // Start listening
     r = uv_listen(reinterpret_cast<uv_stream_t*>(server_), 128, on_new_connection);
     if (r < 0) {
-        fprintf(stderr, "net: listen failed: %s\n", uv_strerror(r));
+        LogError("net", "listen failed on port %u: %s", port_, uv_strerror(r));
+        // Close the handle properly before deleting the loop: schedule close,
+        // run the loop to let the callback fire, then delete.
         uv_close(reinterpret_cast<uv_handle_t*>(server_), on_close);
         server_ = nullptr;
+        uv_run(loop_, UV_RUN_DEFAULT);
+        uv_loop_close(loop_);
         uv_loop_delete(loop_);
         loop_ = nullptr;
         return false;
     }
 
-    fprintf(stderr, "net: listening on port %u\n", port_);
+    LogInfo("net", "listening on port %u", port_);
 
     // Create periodic timer (fires every 30 seconds)
     timer_ = new uv_timer_t;
@@ -285,7 +294,7 @@ void NetManager::connect_to(const CNetAddr& addr) {
                                 reinterpret_cast<const struct sockaddr*>(&dest6),
                                 on_connect);
         if (r6 < 0) {
-            fprintf(stderr, "net: connect to %s failed: %s\n",
+            LogError("net", "connect to %s failed: %s",
                     addr.to_string().c_str(), uv_strerror(r6));
             delete ctx;
             uv_close(reinterpret_cast<uv_handle_t*>(tcp), on_close);
@@ -299,7 +308,7 @@ void NetManager::connect_to(const CNetAddr& addr) {
                            reinterpret_cast<const struct sockaddr*>(&dest),
                            on_connect);
     if (r < 0) {
-        fprintf(stderr, "net: connect to %s failed: %s\n",
+        LogError("net", "connect to %s failed: %s",
                 addr.to_string().c_str(), uv_strerror(r));
         delete ctx;
         uv_close(reinterpret_cast<uv_handle_t*>(tcp), on_close);
@@ -316,7 +325,7 @@ void NetManager::send_to(Peer& peer, const std::vector<uint8_t>& data) {
     int r = uv_write(&ctx->req, reinterpret_cast<uv_stream_t*>(tcp),
                      &ctx->buf, 1, on_write);
     if (r < 0) {
-        fprintf(stderr, "net: write to peer %lu failed: %s\n",
+        LogError("net", "write to peer %lu failed: %s",
                 (unsigned long)peer.id(), uv_strerror(r));
         delete ctx;
         return;
@@ -328,7 +337,7 @@ void NetManager::send_to(Peer& peer, const std::vector<uint8_t>& data) {
 void NetManager::disconnect(Peer& peer, const std::string& reason) {
     if (peer.state() == PeerState::DISCONNECTED) return;
 
-    fprintf(stderr, "net: disconnecting peer %lu (%s): %s\n",
+    LogInfo("net", "disconnecting peer %lu (%s): %s",
             (unsigned long)peer.id(), peer.addr().to_string().c_str(),
             reason.c_str());
 
@@ -434,7 +443,7 @@ void NetManager::on_new_connection(uv_stream_t* server, int status) {
     NetManager* self = static_cast<NetManager*>(server->data);
 
     if (status < 0) {
-        fprintf(stderr, "net: new connection error: %s\n", uv_strerror(status));
+        LogError("net", "new connection error: %s", uv_strerror(status));
         return;
     }
 
@@ -485,13 +494,13 @@ void NetManager::on_new_connection(uv_stream_t* server, int status) {
 
     // Check if this address is banned
     if (self->banman_.is_banned(remote_addr)) {
-        fprintf(stderr, "net: rejected banned inbound connection from %s\n",
+        LogError("net", "rejected banned inbound connection from %s",
                 remote_addr.to_string().c_str());
         uv_close(reinterpret_cast<uv_handle_t*>(client), on_close);
         return;
     }
 
-    fprintf(stderr, "net: inbound connection from %s\n",
+    LogInfo("net", "inbound connection from %s",
             remote_addr.to_string().c_str());
 
     // Create peer entry
@@ -509,7 +518,7 @@ void NetManager::on_connect(uv_connect_t* req, int status) {
     NetManager* self = ctx->netman;
 
     if (status < 0) {
-        fprintf(stderr, "net: outbound connect to %s failed: %s\n",
+        LogError("net", "outbound connect to %s failed: %s",
                 ctx->addr.to_string().c_str(), uv_strerror(status));
         self->addrman_.mark_failed(ctx->addr);
         uv_close(reinterpret_cast<uv_handle_t*>(ctx->tcp_handle), on_close);
@@ -517,7 +526,7 @@ void NetManager::on_connect(uv_connect_t* req, int status) {
         return;
     }
 
-    fprintf(stderr, "net: connected to %s\n", ctx->addr.to_string().c_str());
+    LogInfo("net", "connected to %s", ctx->addr.to_string().c_str());
 
     // Create peer entry
     Peer& peer = self->create_peer(ctx->addr, false, ctx->tcp_handle);
@@ -554,7 +563,7 @@ void NetManager::on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
     if (nread < 0) {
         // Connection closed or error
         if (nread != UV_EOF) {
-            fprintf(stderr, "net: read error on peer %lu: %s\n",
+            LogError("net", "read error on peer %lu: %s",
                     (unsigned long)peer_id, uv_strerror(static_cast<int>(nread)));
         }
 
@@ -605,7 +614,7 @@ void NetManager::on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
 void NetManager::on_write(uv_write_t* req, int status) {
     auto* ctx = static_cast<WriteContext*>(req->data);
     if (status < 0) {
-        fprintf(stderr, "net: write error: %s\n", uv_strerror(status));
+        LogError("net", "write error: %s", uv_strerror(status));
     }
     delete ctx;
 }
@@ -660,7 +669,7 @@ void NetManager::process_recv(Peer& peer) {
 
         // Validate magic bytes
         if (hdr.magic != magic_) {
-            fprintf(stderr, "net: bad magic from peer %lu (got 0x%08x, expected 0x%08x)\n",
+            LogError("net", "bad magic from peer %lu (got 0x%08x, expected 0x%08x)",
                     (unsigned long)peer.id(), hdr.magic, magic_);
             peer.add_misbehavior(50);
             buf.clear();
@@ -669,7 +678,7 @@ void NetManager::process_recv(Peer& peer) {
 
         // Validate payload size
         if (hdr.payload_size > MessageHeader::MAX_PAYLOAD_SIZE) {
-            fprintf(stderr, "net: oversized payload from peer %lu: %u bytes\n",
+            LogError("net", "oversized payload from peer %lu: %u bytes",
                     (unsigned long)peer.id(), hdr.payload_size);
             peer.add_misbehavior(50);
             buf.clear();
@@ -686,7 +695,7 @@ void NetManager::process_recv(Peer& peer) {
         const uint8_t* payload_ptr = buf.data() + MessageHeader::SIZE;
         uint32_t expected_checksum = compute_checksum(payload_ptr, hdr.payload_size);
         if (hdr.checksum != expected_checksum) {
-            fprintf(stderr, "net: bad checksum from peer %lu on '%s'\n",
+            LogError("net", "bad checksum from peer %lu on '%s'",
                     (unsigned long)peer.id(), hdr.command_string().c_str());
             peer.add_misbehavior(10);
             // Skip this message
@@ -707,7 +716,7 @@ void NetManager::process_recv(Peer& peer) {
     // Safety: if the buffer is growing too large without producing valid messages,
     // disconnect the peer to prevent memory exhaustion
     if (buf.size() > 4 * 1024 * 1024) {
-        fprintf(stderr, "net: recv buffer overflow for peer %lu (%zu bytes)\n",
+        LogError("net", "recv buffer overflow for peer %lu (%zu bytes)",
                 (unsigned long)peer.id(), buf.size());
         disconnect(peer, "recv buffer overflow");
     }
@@ -906,7 +915,7 @@ void NetManager::start_feeler() {
     // Don't feeler if we already have too many outbound
     if (outbound_count() >= static_cast<size_t>(consensus::MAX_OUTBOUND_PEERS)) return;
 
-    fprintf(stderr, "net: starting feeler connection to %s\n",
+    LogInfo("net", "starting feeler connection to %s",
             addr.to_string().c_str());
 
     connect_to(addr);
@@ -1042,15 +1051,15 @@ void NetManager::resolve_dns_seeds() {
     const auto& dns_seeds = GetDNSSeeds(magic_);
 
     for (const auto& seed_host : dns_seeds) {
-        fprintf(stderr, "net: resolving DNS seed %s\n", seed_host.c_str());
+        LogInfo("net", "resolving DNS seed %s", seed_host.c_str());
 
         auto addrs = LookupHost(seed_host, 256, true);
         if (addrs.empty()) {
-            fprintf(stderr, "net: DNS seed %s returned no results\n", seed_host.c_str());
+            LogInfo("net", "DNS seed %s returned no results", seed_host.c_str());
             continue;
         }
 
-        fprintf(stderr, "net: DNS seed %s returned %zu addresses\n",
+        LogInfo("net", "DNS seed %s returned %zu addresses",
                 seed_host.c_str(), addrs.size());
 
         int64_t now = GetTime();
@@ -1120,7 +1129,7 @@ void NetManager::load_peers() {
     if (data_dir_.empty()) return;
     std::string path = data_dir_ + "/peers.dat";
     if (!addrman_.load_from_file(path)) {
-        fprintf(stderr, "net: no peers.dat found, starting fresh\n");
+        LogInfo("net", "no peers.dat found, starting fresh");
     }
 }
 
@@ -1147,7 +1156,7 @@ bool NetManager::connect_to_host(const std::string& addr_str) {
     }
 
     if (host.empty()) {
-        fprintf(stderr, "net: empty host in connect_to_host\n");
+        LogInfo("net", "empty host in connect_to_host");
         return false;
     }
 
@@ -1164,7 +1173,7 @@ bool NetManager::connect_to_host(const std::string& addr_str) {
             std::lock_guard<std::mutex> lock(peers_mutex_);
             for (const auto& [id, peer] : peers_) {
                 if (peer->addr() == addr && peer->state() != PeerState::DISCONNECTED) {
-                    fprintf(stderr, "net: already connected to %s\n", addr_str.c_str());
+                    LogInfo("net", "already connected to %s", addr_str.c_str());
                     return false;
                 }
             }
@@ -1172,7 +1181,7 @@ bool NetManager::connect_to_host(const std::string& addr_str) {
 
         // Check if banned
         if (banman_.is_banned(addr)) {
-            fprintf(stderr, "net: cannot connect to banned address %s\n", addr_str.c_str());
+            LogError("net", "cannot connect to banned address %s", addr_str.c_str());
             return false;
         }
 
@@ -1181,10 +1190,10 @@ bool NetManager::connect_to_host(const std::string& addr_str) {
     }
 
     // DNS resolve if it's a hostname
-    fprintf(stderr, "net: resolving hostname %s\n", host.c_str());
+    LogInfo("net", "resolving hostname %s", host.c_str());
     auto resolved = LookupHost(host, 1, false);
     if (resolved.empty()) {
-        fprintf(stderr, "net: failed to resolve %s\n", host.c_str());
+        LogError("net", "failed to resolve %s", host.c_str());
         return false;
     }
 
@@ -1194,7 +1203,7 @@ bool NetManager::connect_to_host(const std::string& addr_str) {
     resolved_addr.port = port;
 
     if (banman_.is_banned(resolved_addr)) {
-        fprintf(stderr, "net: resolved address %s is banned\n",
+        LogInfo("net", "resolved address %s is banned",
                 resolved_addr.to_string().c_str());
         return false;
     }
@@ -1289,7 +1298,7 @@ void NetManager::on_new_inbound(uv_stream_t* server) {
         // Try to evict a low-quality inbound peer
         Peer* victim = select_eviction_candidate();
         if (victim) {
-            fprintf(stderr, "net: evicting peer %lu (%s) for new inbound\n",
+            LogInfo("net", "evicting peer %lu (%s) for new inbound",
                     (unsigned long)victim->id(),
                     victim->addr().to_string().c_str());
             disconnect(*victim, "evicted for new inbound");
@@ -1302,7 +1311,7 @@ void NetManager::on_new_inbound(uv_stream_t* server) {
             } else {
                 delete client;
             }
-            fprintf(stderr, "net: rejected inbound (at capacity, no eviction candidates)\n");
+            LogError("net", "rejected inbound (at capacity, no eviction candidates)");
             return;
         }
     }
@@ -1336,7 +1345,7 @@ void NetManager::on_new_inbound(uv_stream_t* server) {
 
     // Check ban list
     if (banman_.is_banned(remote_addr)) {
-        fprintf(stderr, "net: rejected banned inbound from %s\n",
+        LogError("net", "rejected banned inbound from %s",
                 remote_addr.to_string().c_str());
         uv_close(reinterpret_cast<uv_handle_t*>(client), on_close);
         return;
@@ -1356,13 +1365,13 @@ void NetManager::on_new_inbound(uv_stream_t* server) {
 
     // Allow at most 3 connections from the same IP
     if (same_ip_count >= 3) {
-        fprintf(stderr, "net: rejected inbound from %s (too many connections from same IP)\n",
+        LogError("net", "rejected inbound from %s (too many connections from same IP)",
                 remote_addr.to_string().c_str());
         uv_close(reinterpret_cast<uv_handle_t*>(client), on_close);
         return;
     }
 
-    fprintf(stderr, "net: accepted inbound connection from %s\n",
+    LogInfo("net", "accepted inbound connection from %s",
             remote_addr.to_string().c_str());
 
     Peer& peer = create_peer(remote_addr, true, client);
@@ -1402,7 +1411,7 @@ NetManager::BandwidthStats NetManager::get_bandwidth_stats() const {
 
 void NetManager::set_max_upload_rate(int64_t bytes_per_second) {
     max_upload_rate_ = bytes_per_second;
-    fprintf(stderr, "net: upload rate limit set to %ld bytes/s\n", (long)bytes_per_second);
+    LogInfo("net", "upload rate limit set to %ld bytes/s", (long)bytes_per_second);
 }
 
 bool NetManager::can_send(size_t bytes) const {
@@ -1524,11 +1533,11 @@ void NetManager::process_events() {
 // ===========================================================================
 
 void NetManager::network_thread_func() {
-    fprintf(stderr, "net: network thread started\n");
+    LogInfo("net", "network thread started");
 
     // Initialize libuv loop
     if (!start()) {
-        fprintf(stderr, "net: failed to start network\n");
+        LogError("net", "failed to start network");
         return;
     }
 
@@ -1537,7 +1546,7 @@ void NetManager::network_thread_func() {
     // Run the event loop
     run();
 
-    fprintf(stderr, "net: network thread exited\n");
+    LogInfo("net", "network thread exited");
 }
 
 // ===========================================================================

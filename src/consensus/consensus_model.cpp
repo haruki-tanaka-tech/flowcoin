@@ -16,6 +16,7 @@
 
 #include "consensus_model.h"
 #include "../hash/keccak.h"
+#include "logging.h"
 
 #include "../ggml/ggml.h"
 #include "../ggml/ggml-cpu.h"
@@ -418,22 +419,17 @@ void ConsensusModel::init_weights(uint32_t seed) {
 bool ConsensusModel::init(const consensus::ModelDimensions& dims, uint32_t seed) {
     dims_ = dims;
 
-    fprintf(stderr, "ConsensusModel::init: d=%u L=%u slots=%u params=%zu\n",
+    LogInfo("eval", "model init: d=%u L=%u slots=%u params=%zu",
             dims.d_model, dims.n_layers, dims.n_slots, param_count());
-    fprintf(stderr, "ConsensusModel::init: allocating ggml context (%zu MB)...\n",
-            (param_count() * 4 + 1024*1024) / (1024*1024));
 
     if (!allocate_context()) {
-        fprintf(stderr, "ConsensusModel::init: ggml allocation failed!\n");
+        LogError("eval", "model init: ggml allocation failed");
         return false;
     }
-    fprintf(stderr, "ConsensusModel::init: creating tensors...\n");
 
     create_tensors();
-    fprintf(stderr, "ConsensusModel::init: initializing weights (seed=%u)...\n", seed);
-
     init_weights(seed);
-    fprintf(stderr, "ConsensusModel::init: done (%zu params)\n", param_count());
+    LogInfo("eval", "model init: done (%zu params, seed=%u)", param_count(), seed);
 
     return true;
 }

@@ -5,6 +5,8 @@
 
 #include "../hash/keccak.h"
 
+#include "../logging.h"
+
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -25,8 +27,8 @@ static int GetUrandomFD() {
     if (fd == -1) {
         fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
         if (fd < 0) {
-            std::fprintf(stderr, "FATAL: failed to open /dev/urandom: %s\n",
-                         std::strerror(errno));
+            LogFatal("default", "failed to open /dev/urandom: %s",
+                     std::strerror(errno));
             std::abort();
         }
     }
@@ -45,12 +47,12 @@ void GetRandBytes(uint8_t* buf, size_t len) {
         if (n < 0) {
             if (errno == EINTR)
                 continue;
-            std::fprintf(stderr, "FATAL: read from /dev/urandom failed: %s\n",
-                         std::strerror(errno));
+            LogFatal("default", "read from /dev/urandom failed: %s",
+                     std::strerror(errno));
             std::abort();
         }
         if (n == 0) {
-            std::fprintf(stderr, "FATAL: /dev/urandom returned EOF\n");
+            LogFatal("default", "/dev/urandom returned EOF");
             std::abort();
         }
         total += static_cast<size_t>(n);
