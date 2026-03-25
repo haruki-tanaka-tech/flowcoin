@@ -274,7 +274,7 @@ bool CoinStatsIndex::write_block(const CBlock& block, uint64_t height) {
 
         // Remove spent UTXOs from the hash (XOR them out)
         if (!tx.is_coinbase()) {
-            for (const auto& in : tx.vin) {
+            for ([[maybe_unused]] const auto& in : tx.vin) {
                 // We do not have the UTXO data here, but we can track
                 // the count change. For a full implementation, we would
                 // need UTXO data. We approximate by only tracking outputs.

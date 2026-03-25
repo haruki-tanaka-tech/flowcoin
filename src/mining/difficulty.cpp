@@ -55,7 +55,6 @@ double DifficultyMonitor::compute_difficulty(uint32_t nbits) {
     // difficulty = genesis_target / current_target
     // To avoid integer division issues with 256-bit numbers, we use
     // the bit positions for an approximation.
-    int genesis_bits = genesis_target.bits();
     int target_bits = target.bits();
 
     if (target_bits <= 0) return std::numeric_limits<double>::infinity();

@@ -2097,7 +2097,7 @@ ChainState::UTXOStatistics ChainState::get_utxo_stats() const {
     stats.max_height = 0;
 
     // Iterate the UTXO set to compute aggregate statistics
-    utxo_.for_each([&](const uint256& txid, uint32_t vout, const UTXOEntry& entry) {
+    utxo_.for_each([&](const uint256& /*txid*/, uint32_t /*vout*/, const UTXOEntry& entry) {
         stats.total_value += entry.value;
 
         if (entry.is_coinbase) {
@@ -2164,8 +2164,7 @@ double ChainState::compute_tx_priority(const CTransaction& tx,
 ChainState::ChainStats ChainState::get_chain_stats() const {
     std::lock_guard<std::mutex> lock(cs_main_);
 
-    ChainStats stats;
-    std::memset(&stats, 0, sizeof(stats));
+    ChainStats stats{};
 
     CBlockIndex* t = tip();
     if (!t) {

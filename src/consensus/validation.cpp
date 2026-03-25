@@ -412,6 +412,7 @@ bool check_block(const CBlock& block, const BlockContext& ctx,
 
 bool check_block_transactions(const CBlock& block, const BlockContext& ctx,
                                ValidationState& state) {
+    (void)ctx;
 
     // Block size check (serialized size estimate)
     size_t estimated_size = 308;  // header
@@ -507,6 +508,7 @@ bool check_block_transactions(const CBlock& block, const BlockContext& ctx,
 
 bool check_coinbase(const CTransaction& coinbase, uint64_t height,
                      Amount max_allowed, ValidationState& state) {
+    (void)height;
 
     // Must be a coinbase transaction
     if (!coinbase.is_coinbase()) {
@@ -830,7 +832,7 @@ static bool verify_coinbase_height(const CTransaction& coinbase, uint64_t expect
             "coinbase height push_size out of range");
     }
 
-    if (push_size + 1 > sig.size()) {
+    if (static_cast<size_t>(push_size + 1) > sig.size()) {
         return state.invalid(ValidationResult::BLOCK_INVALID, "bad-cb-height",
             "coinbase script_sig too short for height encoding");
     }
@@ -877,6 +879,8 @@ static TxValidationResult validate_tx_against_utxo(
         size_t tx_index_in_block,
         uint64_t block_height,
         const std::vector<std::pair<uint256, std::vector<CTxOut>>>& prev_tx_outputs) {
+    (void)tx_index_in_block;
+    (void)block_height;
 
     TxValidationResult result;
     result.valid = true;
@@ -1453,6 +1457,7 @@ bool check_monetary_supply(const CBlock& block, Amount subsidy, Amount fees,
 
 bool validate_block_full(const CBlock& block, const BlockContext& ctx,
                           ValidationState& state) {
+    (void)ctx;
 
     // 1. Verify block locktime constraints
     if (!check_block_locktime(block, state)) {

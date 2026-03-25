@@ -34,7 +34,7 @@ static void signal_handler(int signum) {
         // Write directly to stderr — async-signal-safe
         const char* msg = "\nReceived shutdown signal, stopping...\n";
         // write() is async-signal-safe
-        static_cast<void>(::write(STDERR_FILENO, msg, strlen(msg)));
+        if (::write(STDERR_FILENO, msg, strlen(msg)) < 0) {}
 
         if (g_node) {
             g_node->interrupt();

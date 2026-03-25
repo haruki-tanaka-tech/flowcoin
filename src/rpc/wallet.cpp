@@ -571,7 +571,7 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet,
 
         Amount immature = 0;
         Amount unconfirmed = 0;
-        for (const auto& coin : unspent) {
+        for ([[maybe_unused]] const auto& coin : unspent) {
             // All listed UTXOs are confirmed; immature would require
             // checking coinbase maturity
         }
@@ -633,11 +633,11 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet,
     // listreceivedbyaddress(minconf, include_empty): list received amounts
     // -----------------------------------------------------------------------
     server.register_method("listreceivedbyaddress", [&wallet](const json& params) -> json {
-        int min_conf = 1;
         bool include_empty = false;
 
         if (!params.empty() && params[0].is_number()) {
-            min_conf = params[0].get<int>();
+            // min_conf parameter parsed but not yet used for filtering
+            (void)params[0].get<int>();
         }
         if (params.size() > 1 && params[1].is_boolean()) {
             include_empty = params[1].get<bool>();

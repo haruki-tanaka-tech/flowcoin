@@ -451,7 +451,6 @@ BlockTemplate BlockAssembler::create_template(const std::string& coinbase_addres
     fill_header(tmpl.header, next_height);
 
     // Model dimensions
-    uint32_t improving_blocks = tip ? tip->improving_blocks : 0;
     tmpl.dims = consensus::compute_growth(next_height);
 
     // Decode target
@@ -488,7 +487,6 @@ BlockTemplate BlockAssembler::create_template(const std::array<uint8_t, 32>& coi
 
     fill_header(tmpl.header, next_height);
 
-    uint32_t improving_blocks = tip ? tip->improving_blocks : 0;
     tmpl.dims = consensus::compute_growth(next_height);
 
     arith_uint256 target_arith;

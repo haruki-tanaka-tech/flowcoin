@@ -2223,7 +2223,6 @@ void ConsensusModel::InferenceSession::feed(const std::vector<uint8_t>& tokens) 
     const int d_ff = static_cast<int>(model_.dims().d_ff);
     const int n_slots = static_cast<int>(model_.dims().n_slots);
     const int top_k = static_cast<int>(model_.dims().top_k);
-    const int vocab = static_cast<int>(model_.dims().vocab);
     const int n_layers = static_cast<int>(model_.dims().n_layers);
     const int seq_len = static_cast<int>(tokens.size());
 

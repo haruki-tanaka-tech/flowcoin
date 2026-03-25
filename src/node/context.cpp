@@ -849,7 +849,7 @@ bool NodeContext::lock_datadir() {
     int len = std::snprintf(pid_buf, sizeof(pid_buf), "%d\n", getpid());
     if (len > 0) {
         // Ignore write errors — the lock itself is what matters
-        static_cast<void>(::write(lockfile_fd, pid_buf, static_cast<size_t>(len)));
+        if (::write(lockfile_fd, pid_buf, static_cast<size_t>(len)) < 0) {}
     }
 
     LogInfo("node", "Data directory locked: %s", lock_file_path.c_str());

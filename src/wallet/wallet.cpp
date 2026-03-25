@@ -384,8 +384,6 @@ void Wallet::notify_transaction(const CTransaction& tx, uint64_t block_height) {
     for (const auto& in : tx.vin) {
         if (in.is_coinbase()) continue;
         if (our_pubkeys_.count(in.pubkey)) {
-            // Look up the value of the spent UTXO
-            UTXOEntry entry;
             // The UTXO may already be removed, so we account for it via
             // the output side. For accurate tracking, we check the pubkey.
             // Since the UTXO is already spent, we can't look it up.

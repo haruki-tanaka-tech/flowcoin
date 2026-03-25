@@ -280,6 +280,7 @@ void GetRetargetPeriod(uint64_t height, uint64_t& period_start,
 bool VerifyFullProofOfTraining(const CBlockHeader& header,
                                 uint32_t parent_nbits,
                                 uint64_t child_height) {
+    (void)parent_nbits;
     // Step 1: Verify the basic PoT (hash meets target)
     if (!CheckProofOfTraining(header)) {
         return false;
