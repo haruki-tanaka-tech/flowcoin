@@ -204,17 +204,18 @@ public:
     /// Load weights from an int8 quantized buffer (reverses quantize_weights_int8).
     bool load_quantized_int8(const std::vector<uint8_t>& quantized);
 
-private:
-    consensus::ModelDimensions dims_{};
+    // ════════════════════════════════════════════════════════════
+    // Training support: expose tensors to GPUMiner
+    // ════════════════════════════════════════════════════════════
 
-    // ggml context for weight storage
-    struct ggml_context* ctx_ = nullptr;
+    /// Get token embedding tensor (lives in model ggml context)
+    struct ggml_tensor* get_tok_emb() { return tok_emb_; }
 
-    // ─── Model tensors (per-layer) ──────────────────────────────
-    // Embedding
-    struct ggml_tensor* tok_emb_ = nullptr;      // [vocab, d_model]
+    /// Get final norm weight tensor
+    struct ggml_tensor* get_final_norm_w() { return final_norm_w_; }
 
-    // Per-layer tensors (indexed by layer)
+    /// Per-layer tensor accessors for training graph construction.
+    /// These are the same LayerTensors stored internally.
     struct LayerTensors {
         // RMSNorm weights (4 per layer: before conv, gru, slot, ffn)
         ggml_tensor* norm1_w;    // [d_model]
@@ -246,6 +247,27 @@ private:
         ggml_tensor* ffn_down_w; // [d_ff, d_model] down projection
     };
 
+    /// Get number of layers
+    uint32_t num_layers() const { return dims_.n_layers; }
+
+    /// Get mutable reference to layer tensors for training
+    LayerTensors& get_layer(uint32_t i) { return layers_[i]; }
+    const LayerTensors& get_layer(uint32_t i) const { return layers_[i]; }
+
+    /// Get all weight tensors in serialization order (public for training)
+    std::vector<ggml_tensor*> get_weight_tensors() const { return weight_tensors(); }
+
+private:
+    consensus::ModelDimensions dims_{};
+
+    // ggml context for weight storage
+    struct ggml_context* ctx_ = nullptr;
+
+    // ─── Model tensors (per-layer) ──────────────────────────────
+    // Embedding
+    struct ggml_tensor* tok_emb_ = nullptr;      // [vocab, d_model]
+
+    // Per-layer tensors use the public LayerTensors struct
     std::vector<LayerTensors> layers_;
 
     // Final norm

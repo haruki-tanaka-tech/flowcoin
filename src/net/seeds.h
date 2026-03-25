@@ -38,7 +38,7 @@ const std::vector<SeedNode> MAINNET_SEEDS = {
     // ── Static IP fallback ───────────────────────────────────
     // Used when DNS resolution fails (firewall, censorship, etc.)
     // These are stable nodes operated by the core team.
-    {"211.205.13.203",           9333},   // Korea — genesis seed node
+    {"125.185.70.218",           9333},   // Korea — genesis seed node
 };
 
 // ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ const std::vector<SeedNode> MAINNET_SEEDS = {
 
 const std::vector<SeedNode> TESTNET_SEEDS = {
     {"seed.flowcoin.org",        19333},  // Testnet on same host, different port
-    {"211.205.13.203",           19333},
+    {"125.185.70.218",           19333},
 };
 
 // ---------------------------------------------------------------------------

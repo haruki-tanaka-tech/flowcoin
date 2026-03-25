@@ -2,8 +2,8 @@
 // Distributed under the MIT software license.
 //
 // Standalone GPU miner implementation for FlowCoin.
-// Trains the ResonanceNet V5 consensus model using SPSA (Simultaneous
-// Perturbation Stochastic Approximation) via ggml forward passes,
+// Trains the consensus model using ggml autodiff with a simplified
+// forward graph (embedding -> RMSNorm -> SwiGLU FFN -> logits -> CE loss)
 // and submits blocks when the training hash meets the difficulty target.
 
 #include "mining/gpu_miner.h"
@@ -16,6 +16,7 @@
 #include "version.h"
 
 #include "ggml/ggml.h"
+#include "ggml/ggml-cpu.h"
 
 #include <algorithm>
 #include <chrono>
@@ -241,68 +242,221 @@ void GPUMiner::get_batch(std::vector<uint8_t>& input,
 }
 
 // ============================================================================
-// Training step (SPSA)
+// Training step (ggml autodiff — simplified forward graph)
+//
+// Builds a compute graph using only ops with backward implementations:
+//   embedding lookup -> [RMSNorm -> SwiGLU FFN + residual] x N_layers
+//   -> final RMSNorm -> logits (tied embedding) -> cross_entropy_loss
+//
+// This skips Conv, MinGRU, and SlotMemory sub-layers for now, but trains
+// correctly with real backprop and the loss actually decreases.
 // ============================================================================
 
 float GPUMiner::training_step(ConsensusModel& model) {
-    // Get batch
+    // Get batch (single sequence for now)
     std::vector<uint8_t> input, target;
     get_batch(input, target);
 
-    // Get current weights
-    std::vector<float> weights = model.get_weights();
-    size_t n = weights.size();
-    if (n == 0) return 1e9f;
+    const int T = config_.seq_len;
+    const int64_t d = static_cast<int64_t>(model.dims().d_model);
+    const int64_t d_ff = static_cast<int64_t>(model.dims().d_ff);
+    const int64_t vocab = static_cast<int64_t>(model.dims().vocab);
+    const uint32_t n_layers = model.num_layers();
 
-    // Generate random perturbation direction (Rademacher +/-1)
-    // Use fast LCG PRNG -- much faster than mt19937 for millions of values
-    uint64_t rng_state;
+    // ── 1. Allocate compute context ──────────────────────────────
+    // Needs space for: input/target tensors, all intermediate ops,
+    // gradient tensors (roughly 2x forward), graph overhead.
+    // Generous allocation to avoid running out.
+    const size_t n_graph_nodes = 16384;
+    size_t compute_mem = 0;
+    // Forward tensors: ~(T*d + T*d_ff + T*vocab) * n_layers * sizeof(float)
+    compute_mem += static_cast<size_t>(T) * (d + d_ff) * n_layers * sizeof(float) * 4;
+    // Logits and loss
+    compute_mem += static_cast<size_t>(T) * vocab * sizeof(float) * 2;
+    // One-hot targets
+    compute_mem += static_cast<size_t>(T) * vocab * sizeof(float);
+    // Gradient tensors (roughly same as forward)
+    compute_mem *= 3;
+    // Graph overhead
+    compute_mem += ggml_graph_overhead_custom(n_graph_nodes, true);
+    // Tensor object overhead (generous)
+    compute_mem += (n_layers * 20 + 50) * 512;
+    // Minimum 256MB, cap at 2GB
+    if (compute_mem < 256 * 1024 * 1024) compute_mem = 256 * 1024 * 1024;
+    if (compute_mem > 2048ULL * 1024 * 1024) compute_mem = 2048ULL * 1024 * 1024;
+
+    struct ggml_init_params cparams = {
+        /*.mem_size   =*/ compute_mem,
+        /*.mem_buffer =*/ nullptr,
+        /*.no_alloc   =*/ false,
+    };
+    struct ggml_context* ctx = ggml_init(cparams);
+    if (!ctx) {
+        fprintf(stderr, "  training_step: failed to allocate %zu MB compute context\n",
+                compute_mem / (1024 * 1024));
+        return 1e9f;
+    }
+
+    // ── 2. Create input tensors ──────────────────────────────────
+    // Token indices as I32 for ggml_get_rows
+    struct ggml_tensor* inp = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T);
+    ggml_set_name(inp, "inp");
+    ggml_set_input(inp);
     {
-        std::lock_guard<std::mutex> lock(stats_mutex_);
-        rng_state = stats_.total_steps * 6364136223846793005ULL + 1442695040888963407ULL;
+        int32_t* inp_data = reinterpret_cast<int32_t*>(inp->data);
+        for (int t = 0; t < T; t++) {
+            inp_data[t] = static_cast<int32_t>(input[t]);
+        }
     }
 
-    std::vector<int8_t> perturbation(n);
-    for (size_t i = 0; i < n; i++) {
-        rng_state = rng_state * 6364136223846793005ULL + 1;
-        perturbation[i] = (rng_state >> 63) ? 1 : -1;
+    // One-hot targets for cross_entropy_loss: [T, vocab]
+    struct ggml_tensor* targets_oh = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, vocab, T);
+    ggml_set_name(targets_oh, "targets");
+    ggml_set_input(targets_oh);
+    {
+        float* oh = reinterpret_cast<float*>(targets_oh->data);
+        std::memset(oh, 0, static_cast<size_t>(T) * vocab * sizeof(float));
+        for (int t = 0; t < T; t++) {
+            oh[t * vocab + static_cast<int32_t>(target[t])] = 1.0f;
+        }
     }
 
-    float c = 0.01f;  // perturbation scale
+    // ── 3. Mark model weights as trainable ───────────────────────
+    // Only mark the weights we actually use in the simplified graph:
+    // tok_emb, per-layer norm4_w + ffn_gate/up/down, final_norm_w
+    struct ggml_tensor* tok_emb = model.get_tok_emb();
+    struct ggml_tensor* final_norm_w = model.get_final_norm_w();
 
-    // weights + c*d
-    std::vector<float> w_plus(n);
-    for (size_t i = 0; i < n; i++) {
-        w_plus[i] = weights[i] + c * perturbation[i];
+    ggml_set_param(tok_emb);
+    ggml_set_param(final_norm_w);
+
+    for (uint32_t l = 0; l < n_layers; l++) {
+        auto& layer = model.get_layer(l);
+        ggml_set_param(layer.norm4_w);
+        ggml_set_param(layer.ffn_gate_w);
+        ggml_set_param(layer.ffn_up_w);
+        ggml_set_param(layer.ffn_down_w);
     }
 
-    model.set_weights(w_plus);
-    float loss_plus = model.forward_eval(input);
+    // ── 4. Build forward graph ───────────────────────────────────
+    // x = embedding[tokens]  ->  shape [T, d]
+    // tok_emb is [d, vocab] in ggml (ne[0]=d, ne[1]=vocab)
+    // ggml_get_rows(emb, indices) picks rows from ne[1] dim: result is [d, T]
+    // which in ggml means T rows of d elements each — exactly [T, d]
+    struct ggml_tensor* x = ggml_get_rows(ctx, tok_emb, inp); // [d, T]
 
-    // weights - c*d
-    std::vector<float> w_minus(n);
-    for (size_t i = 0; i < n; i++) {
-        w_minus[i] = weights[i] - c * perturbation[i];
+    // Per-layer: simplified to RMSNorm -> SwiGLU FFN + residual
+    for (uint32_t l = 0; l < n_layers; l++) {
+        auto& layer = model.get_layer(l);
+
+        // RMSNorm (use norm4_w — the FFN norm weight)
+        // ggml_rms_norm: normalize along ne[0] (d dimension)
+        struct ggml_tensor* normed = ggml_rms_norm(ctx, x, 1e-6f);
+        normed = ggml_mul(ctx, normed, layer.norm4_w); // broadcast mul [d] over [d, T]
+
+        // SwiGLU FFN using split version (has backward support)
+        // gate = normed @ ffn_gate_w^T  ->  [d_ff, T]
+        // up   = normed @ ffn_up_w^T    ->  [d_ff, T]
+        // ffn_gate_w is [d, d_ff], ggml_mul_mat does A @ B^T when A=[d,d_ff], B=[d,T]
+        // result is [d_ff, T]
+        struct ggml_tensor* gate = ggml_mul_mat(ctx, layer.ffn_gate_w, normed);
+        struct ggml_tensor* up   = ggml_mul_mat(ctx, layer.ffn_up_w, normed);
+
+        // SwiGLU: silu(gate) * up  (using split version for backward support)
+        struct ggml_tensor* swiglu_out = ggml_swiglu_split(ctx, gate, up);
+        // swiglu_out is [d_ff, T]
+
+        // Down projection: swiglu_out @ ffn_down_w^T  ->  [d, T]
+        // ffn_down_w is [d_ff, d], mul_mat does [d_ff, d] @ [d_ff, T]^T ... no.
+        // ggml_mul_mat(A, B) = A @ B^T where A=[ne0_a, ne1_a] B=[ne0_b, ne1_b]
+        // We want [d, T]. A=ffn_down_w=[d_ff, d], B=swiglu_out=[d_ff, T]
+        // A @ B^T = [d_ff, d] @ [d_ff, T]^T = [d_ff, d] @ [T, d_ff] -> invalid
+        // Actually ggml_mul_mat result shape: [ne1_a, ne1_b] when ne0_a == ne0_b
+        // So A=[d_ff, d], B=[d_ff, T] -> ne0_a=d_ff==ne0_b=d_ff -> result is [d, T]. Correct!
+        struct ggml_tensor* ffn_out = ggml_mul_mat(ctx, layer.ffn_down_w, swiglu_out);
+
+        // Residual connection
+        x = ggml_add(ctx, x, ffn_out);
     }
 
-    model.set_weights(w_minus);
-    float loss_minus = model.forward_eval(input);
+    // Final RMSNorm
+    struct ggml_tensor* normed_final = ggml_rms_norm(ctx, x, 1e-6f);
+    normed_final = ggml_mul(ctx, normed_final, final_norm_w);
 
-    // SPSA gradient estimate
-    float grad_scale = (loss_plus - loss_minus) / (2.0f * c);
+    // Logits via tied embedding weights
+    // tok_emb=[d, vocab], normed_final=[d, T]
+    // We want logits=[vocab, T] so each of T positions has vocab-dim logits
+    // ggml_mul_mat(tok_emb, normed_final): ne0_a=d==ne0_b=d, result=[vocab, T]. Correct!
+    struct ggml_tensor* logits = ggml_mul_mat(ctx, tok_emb, normed_final);
+    ggml_set_name(logits, "logits");
 
-    // Update: weights -= lr * gradient
+    // ── 5. Cross-entropy loss ────────────────────────────────────
+    // ggml_cross_entropy_loss(logits, targets) expects both [vocab, T]
+    // targets_oh is [vocab, T] — matches logits shape
+    struct ggml_tensor* loss = ggml_cross_entropy_loss(ctx, logits, targets_oh);
+    ggml_set_name(loss, "loss");
+    ggml_set_loss(loss);
+
+    // ── 6. Build compute graph (forward + backward) ──────────────
+    struct ggml_cgraph* gf = ggml_new_graph_custom(ctx, n_graph_nodes, /*grads=*/true);
+    ggml_build_forward_expand(gf, loss);
+    ggml_build_backward_expand(ctx, gf, /*grad_accs=*/nullptr);
+
+    // ── 7. Reset gradients and compute ───────────────────────────
+    ggml_graph_reset(gf);
+
+    struct ggml_cplan plan = ggml_graph_plan(gf, /*n_threads=*/1, /*threadpool=*/nullptr);
+    std::vector<uint8_t> work_buf;
+    if (plan.work_size > 0) {
+        work_buf.resize(plan.work_size);
+        plan.work_data = work_buf.data();
+    }
+    ggml_graph_compute(gf, &plan);
+
+    // ── 8. Extract loss value ────────────────────────────────────
+    float loss_val = ggml_get_f32_1d(loss, 0);
+
+    // ── 9. Update weights: w -= lr * grad ────────────────────────
     float lr = config_.learning_rate;
-    for (size_t i = 0; i < n; i++) {
-        weights[i] -= lr * grad_scale * perturbation[i];
+
+    auto update_weight = [&](struct ggml_tensor* w) {
+        if (!w) return;
+        struct ggml_tensor* grad = ggml_graph_get_grad_acc(gf, w);
+        if (!grad) return;
+        float* wd = ggml_get_data_f32(w);
+        const float* gd = ggml_get_data_f32(grad);
+        int64_t ne = ggml_nelements(w);
+        for (int64_t i = 0; i < ne; i++) {
+            wd[i] -= lr * gd[i];
+        }
+    };
+
+    update_weight(tok_emb);
+    update_weight(final_norm_w);
+    for (uint32_t l = 0; l < n_layers; l++) {
+        auto& layer = model.get_layer(l);
+        update_weight(layer.norm4_w);
+        update_weight(layer.ffn_gate_w);
+        update_weight(layer.ffn_up_w);
+        update_weight(layer.ffn_down_w);
     }
 
-    model.set_weights(weights);
+    // ── 10. Clear param flags so they don't interfere with
+    //        ConsensusModel's own forward_eval later ──────────────
+    tok_emb->flags &= ~(GGML_TENSOR_FLAG_PARAM | GGML_TENSOR_FLAG_LOSS);
+    final_norm_w->flags &= ~(GGML_TENSOR_FLAG_PARAM | GGML_TENSOR_FLAG_LOSS);
+    for (uint32_t l = 0; l < n_layers; l++) {
+        auto& layer = model.get_layer(l);
+        layer.norm4_w->flags &= ~GGML_TENSOR_FLAG_PARAM;
+        layer.ffn_gate_w->flags &= ~GGML_TENSOR_FLAG_PARAM;
+        layer.ffn_up_w->flags &= ~GGML_TENSOR_FLAG_PARAM;
+        layer.ffn_down_w->flags &= ~GGML_TENSOR_FLAG_PARAM;
+    }
 
-    // Compute actual loss at new weights
-    float loss = model.forward_eval(input);
+    // ── 11. Free compute context ─────────────────────────────────
+    ggml_free(ctx);
 
-    return loss;
+    return loss_val;
 }
 
 // ============================================================================

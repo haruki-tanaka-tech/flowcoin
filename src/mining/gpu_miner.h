@@ -104,7 +104,8 @@ private:
     void get_batch(std::vector<uint8_t>& input,
                    std::vector<uint8_t>& target);
 
-    // Training step using ConsensusModel (SPSA)
+    // Training step using ggml autodiff (simplified forward graph)
+    // Builds: embedding -> [RMSNorm -> SwiGLU FFN + residual] x N -> RMSNorm -> logits -> cross_entropy
     // Returns loss
     float training_step(ConsensusModel& model);
 
