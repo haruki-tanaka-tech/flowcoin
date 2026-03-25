@@ -47,12 +47,14 @@ ChainParams ChainParams::mainnet() {
     p.coinbase_maturity = consensus::COINBASE_MATURITY;
 
     // Network
+    // DNS seeds (primary discovery)
     p.dns_seeds = {
-        "seed1.flowcoin.org",
-        "seed2.flowcoin.org",
-        "seed3.flowcoin.org",
+        "seed.flowcoin.org",
     };
-    p.seed_nodes = {};
+    // Static IP fallback
+    p.seed_nodes = {
+        {"211.205.13.203", 9333},
+    };
 
     // Feature flags
     p.allow_min_difficulty = false;
@@ -98,10 +100,11 @@ ChainParams ChainParams::testnet() {
 
     // Network
     p.dns_seeds = {
-        "testseed1.flowcoin.org",
-        "testseed2.flowcoin.org",
+        "seed.flowcoin.org",
     };
-    p.seed_nodes = {};
+    p.seed_nodes = {
+        {"211.205.13.203", 19333},
+    };
 
     // Feature flags: testnet allows min difficulty blocks after 20 minutes
     p.allow_min_difficulty = true;
