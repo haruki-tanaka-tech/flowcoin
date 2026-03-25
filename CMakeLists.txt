@@ -488,58 +488,19 @@ target_link_libraries(flowcoin-tx PRIVATE
 # FlowCoin Miner (standalone, native C++)
 # =============================================================================
 
-# Core miner library (always built)
+# Core miner library (uses ggml for all tensor ops -- no custom backends)
+# GPU support (CUDA, Metal, Vulkan) comes from ggml automatically when available
 add_library(flowcoin_miner STATIC
     src/miner/model.cpp
     src/miner/miner.cpp
     src/miner/rpc_client.cpp
-    src/miner/training.cpp
     src/miner/hash_check.cpp
-    src/miner/backend_cpu.cpp
-    src/miner/backend_factory.cpp
 )
 target_include_directories(flowcoin_miner PRIVATE src)
 target_link_libraries(flowcoin_miner PRIVATE
     flowcoin_hash flowcoin_crypto flowcoin_util flowcoin_consensus flowcoin_primitives
+    ggml
 )
-
-# CUDA backend (optional)
-option(FLOWCOIN_USE_CUDA "Build with CUDA support" OFF)
-if(FLOWCOIN_USE_CUDA)
-    enable_language(CUDA)
-    target_sources(flowcoin_miner PRIVATE src/miner/backend_cuda.cu)
-    target_compile_definitions(flowcoin_miner PUBLIC FLOWCOIN_USE_CUDA)
-    target_link_libraries(flowcoin_miner PRIVATE cublas cudart)
-endif()
-
-# Vulkan backend (optional)
-option(FLOWCOIN_USE_VULKAN "Build with Vulkan support" OFF)
-if(FLOWCOIN_USE_VULKAN)
-    find_package(Vulkan REQUIRED)
-    target_sources(flowcoin_miner PRIVATE src/miner/backend_vulkan.cpp)
-    target_compile_definitions(flowcoin_miner PUBLIC FLOWCOIN_USE_VULKAN)
-    target_link_libraries(flowcoin_miner PRIVATE Vulkan::Vulkan)
-endif()
-
-# Metal backend (macOS only)
-if(APPLE)
-    option(FLOWCOIN_USE_METAL "Build with Metal support" ON)
-    if(FLOWCOIN_USE_METAL)
-        target_sources(flowcoin_miner PRIVATE src/miner/backend_metal.mm)
-        target_compile_definitions(flowcoin_miner PUBLIC FLOWCOIN_USE_METAL)
-        target_link_libraries(flowcoin_miner PRIVATE
-            "-framework Metal" "-framework MetalPerformanceShaders" "-framework Foundation")
-    endif()
-endif()
-
-# OpenCL backend (optional)
-option(FLOWCOIN_USE_OPENCL "Build with OpenCL support" OFF)
-if(FLOWCOIN_USE_OPENCL)
-    find_package(OpenCL REQUIRED)
-    target_sources(flowcoin_miner PRIVATE src/miner/backend_opencl.cpp)
-    target_compile_definitions(flowcoin_miner PUBLIC FLOWCOIN_USE_OPENCL)
-    target_link_libraries(flowcoin_miner PRIVATE OpenCL::OpenCL)
-endif()
 
 # Miner executable
 add_executable(flowcoin-miner
