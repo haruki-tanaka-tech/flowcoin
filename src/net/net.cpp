@@ -523,7 +523,7 @@ void NetManager::on_connect(uv_connect_t* req, int status) {
     NetManager* self = ctx->netman;
 
     if (status < 0) {
-        LogError("net", "outbound connect to %s failed: %s",
+        LogDebug("net", "outbound connect to %s failed: %s",
                 ctx->addr.to_string().c_str(), uv_strerror(status));
         self->addrman_.mark_failed(ctx->addr);
         uv_close(reinterpret_cast<uv_handle_t*>(ctx->tcp_handle), on_close);
