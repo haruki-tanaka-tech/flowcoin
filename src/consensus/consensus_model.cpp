@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -1635,6 +1636,935 @@ bool ConsensusModel::load_quantized_int8(const std::vector<uint8_t>& quantized) 
     }
 
     return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Text Generation (non-consensus, for model usage after downloading blocks)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── GenerationConfig defaults ────────────────────────────────────────────
+// (struct defined in header; defaults inline)
+
+// ── Softmax helper ───────────────────────────────────────────────────────
+static void softmax_cpu(const float* logits, float* probs, int n) {
+    float max_val = logits[0];
+    for (int i = 1; i < n; i++) {
+        if (logits[i] > max_val) max_val = logits[i];
+    }
+
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        probs[i] = std::exp(logits[i] - max_val);
+        sum += probs[i];
+    }
+
+    float inv_sum = 1.0f / sum;
+    for (int i = 0; i < n; i++) {
+        probs[i] *= inv_sum;
+    }
+}
+
+// ── PRNG for sampling ────────────────────────────────────────────────────
+class SamplingPRNG {
+public:
+    explicit SamplingPRNG(uint64_t seed) {
+        state_ = seed;
+        if (state_ == 0) {
+            // Use timestamp-based seed
+            auto now = std::chrono::steady_clock::now();
+            state_ = static_cast<uint64_t>(
+                now.time_since_epoch().count());
+            if (state_ == 0) state_ = 0xDEADBEEFCAFE1234ULL;
+        }
+    }
+
+    // xorshift64
+    uint64_t next() {
+        state_ ^= state_ << 13;
+        state_ ^= state_ >> 7;
+        state_ ^= state_ << 17;
+        return state_;
+    }
+
+    // Returns uniform float in [0, 1)
+    float next_float() {
+        return static_cast<float>(next() & 0xFFFFFFFF) / 4294967296.0f;
+    }
+
+private:
+    uint64_t state_;
+};
+
+// ── Top-k filtering ──────────────────────────────────────────────────────
+// Keeps the top k logits; sets the rest to -infinity.
+static void apply_top_k(float* logits, int vocab, int k) {
+    if (k <= 0 || k >= vocab) return;
+
+    // Find the k-th largest value using partial sort indices
+    std::vector<int> indices(vocab);
+    std::iota(indices.begin(), indices.end(), 0);
+
+    std::partial_sort(indices.begin(), indices.begin() + k, indices.end(),
+                      [&](int a, int b) { return logits[a] > logits[b]; });
+
+    float threshold = logits[indices[k - 1]];
+
+    for (int i = 0; i < vocab; i++) {
+        if (logits[i] < threshold) {
+            logits[i] = -1e30f;
+        }
+    }
+}
+
+// ── Top-p (nucleus) filtering ────────────────────────────────────────────
+// Keeps the smallest set of tokens whose cumulative probability exceeds p.
+static void apply_top_p(float* logits, int vocab, float p) {
+    if (p >= 1.0f) return;
+
+    // First compute probabilities from current logits
+    std::vector<float> probs(vocab);
+    softmax_cpu(logits, probs.data(), vocab);
+
+    // Sort by probability descending
+    std::vector<int> indices(vocab);
+    std::iota(indices.begin(), indices.end(), 0);
+    std::sort(indices.begin(), indices.end(),
+              [&](int a, int b) { return probs[a] > probs[b]; });
+
+    // Accumulate probabilities until we exceed p
+    float cumulative = 0.0f;
+    int cutoff_idx = vocab;
+    for (int i = 0; i < vocab; i++) {
+        cumulative += probs[indices[i]];
+        if (cumulative > p) {
+            cutoff_idx = i + 1;  // keep this many
+            break;
+        }
+    }
+
+    // Zero out tokens beyond the cutoff
+    for (int i = cutoff_idx; i < vocab; i++) {
+        logits[indices[i]] = -1e30f;
+    }
+}
+
+// ── Repetition penalty ───────────────────────────────────────────────────
+// Reduces logits for tokens that appeared recently in the generation window.
+static void apply_repetition_penalty(float* logits, int vocab,
+                                      const std::vector<uint8_t>& recent_tokens,
+                                      int window, float penalty) {
+    if (penalty <= 1.0f || window <= 0) return;
+
+    // Count occurrences of each token in the window
+    int start = static_cast<int>(recent_tokens.size()) - window;
+    if (start < 0) start = 0;
+
+    std::vector<int> token_count(vocab, 0);
+    for (int i = start; i < static_cast<int>(recent_tokens.size()); i++) {
+        int tok = recent_tokens[i];
+        if (tok >= 0 && tok < vocab) {
+            token_count[tok]++;
+        }
+    }
+
+    // Apply penalty: if logit > 0, divide by penalty; if logit < 0, multiply by penalty.
+    // This reduces the likelihood of recently seen tokens.
+    for (int v = 0; v < vocab; v++) {
+        if (token_count[v] > 0) {
+            float times = static_cast<float>(token_count[v]);
+            float effective_penalty = 1.0f;
+            for (int p = 0; p < static_cast<int>(times); p++) {
+                effective_penalty *= penalty;
+            }
+
+            if (logits[v] > 0.0f) {
+                logits[v] /= effective_penalty;
+            } else {
+                logits[v] *= effective_penalty;
+            }
+        }
+    }
+}
+
+// ── Sample from probability distribution ─────────────────────────────────
+static int sample_from_probs(const float* probs, int vocab, SamplingPRNG& rng) {
+    float r = rng.next_float();
+    float cumulative = 0.0f;
+
+    for (int i = 0; i < vocab; i++) {
+        cumulative += probs[i];
+        if (r < cumulative) {
+            return i;
+        }
+    }
+
+    // Fallback: return the last token (shouldn't happen with valid probs)
+    return vocab - 1;
+}
+
+// ── Greedy selection ─────────────────────────────────────────────────────
+static int greedy_select(const float* logits, int vocab) {
+    int best = 0;
+    float best_val = logits[0];
+    for (int i = 1; i < vocab; i++) {
+        if (logits[i] > best_val) {
+            best_val = logits[i];
+            best = i;
+        }
+    }
+    return best;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ConsensusModel::generate — autoregressive text generation
+// ════════════════════════════════════════════════════════════════════════════
+
+ConsensusModel::GenerationResult ConsensusModel::generate(
+        const std::vector<uint8_t>& prompt,
+        const GenerationConfig& config) const {
+
+    auto t0 = std::chrono::steady_clock::now();
+
+    GenerationResult result;
+    result.avg_logprob = 0.0f;
+    result.generation_time_ms = 0;
+    result.tokens_per_second = 0.0f;
+
+    const int vocab = static_cast<int>(dims_.vocab);
+    const int seq_len = static_cast<int>(dims_.seq_len);
+
+    if (prompt.empty()) {
+        return result;
+    }
+
+    SamplingPRNG rng(config.seed);
+
+    // Build working context: start with the prompt tokens
+    std::vector<uint8_t> context(prompt.begin(), prompt.end());
+
+    // Track all generated tokens for repetition penalty
+    std::vector<uint8_t> all_generated;
+    all_generated.reserve(config.max_tokens);
+
+    double total_logprob = 0.0;
+    int tokens_generated = 0;
+
+    // Logits buffer for one sequence
+    std::vector<float> logits(static_cast<size_t>(seq_len) * vocab);
+
+    for (int step = 0; step < config.max_tokens; step++) {
+        // Determine the input window: take the last seq_len tokens from context
+        int ctx_len = static_cast<int>(context.size());
+        int input_start = (ctx_len > seq_len) ? (ctx_len - seq_len) : 0;
+        int input_len = ctx_len - input_start;
+
+        // Pad to full seq_len if needed (pad with zeros at the beginning)
+        std::vector<uint8_t> input_tokens(seq_len, 0);
+        int pad = seq_len - input_len;
+        std::memcpy(input_tokens.data() + pad, context.data() + input_start,
+                     input_len);
+
+        // Run forward pass
+        forward_sequence(input_tokens.data(), seq_len, logits.data());
+
+        // Get logits for the last real position
+        int last_pos = seq_len - 1;
+        float* last_logits = logits.data() + last_pos * vocab;
+
+        // Create a working copy of the logits for sampling
+        std::vector<float> work_logits(last_logits, last_logits + vocab);
+
+        // Apply temperature
+        if (!config.greedy && config.temperature > 0.0f &&
+            config.temperature != 1.0f) {
+            float inv_temp = 1.0f / config.temperature;
+            for (int v = 0; v < vocab; v++) {
+                work_logits[v] *= inv_temp;
+            }
+        }
+
+        // Apply repetition penalty
+        if (config.repetition_penalty > 1.0f && config.repetition_window > 0) {
+            // Build recent tokens list from context
+            std::vector<uint8_t> recent;
+            int win = config.repetition_window;
+            int start_idx = static_cast<int>(context.size()) - win;
+            if (start_idx < 0) start_idx = 0;
+            for (int i = start_idx; i < static_cast<int>(context.size()); i++) {
+                recent.push_back(context[i]);
+            }
+            apply_repetition_penalty(work_logits.data(), vocab, recent,
+                                      win, config.repetition_penalty);
+        }
+
+        int next_token;
+
+        if (config.greedy) {
+            next_token = greedy_select(work_logits.data(), vocab);
+        } else {
+            // Apply top-k filtering
+            if (config.top_k > 0) {
+                apply_top_k(work_logits.data(), vocab, config.top_k);
+            }
+
+            // Apply top-p (nucleus) filtering
+            if (config.top_p < 1.0f) {
+                apply_top_p(work_logits.data(), vocab, config.top_p);
+            }
+
+            // Convert to probabilities and sample
+            std::vector<float> probs(vocab);
+            softmax_cpu(work_logits.data(), probs.data(), vocab);
+            next_token = sample_from_probs(probs.data(), vocab, rng);
+        }
+
+        // Compute log probability of the selected token
+        {
+            std::vector<float> probs(vocab);
+            softmax_cpu(last_logits, probs.data(), vocab);
+            float prob = probs[next_token];
+            if (prob > 0.0f) {
+                total_logprob += static_cast<double>(std::log(prob));
+            } else {
+                total_logprob += -30.0;  // very low probability
+            }
+        }
+
+        // Append to context and result
+        context.push_back(static_cast<uint8_t>(next_token));
+        result.tokens.push_back(static_cast<uint8_t>(next_token));
+        all_generated.push_back(static_cast<uint8_t>(next_token));
+        tokens_generated++;
+    }
+
+    auto t1 = std::chrono::steady_clock::now();
+    result.generation_time_ms = std::chrono::duration_cast<
+        std::chrono::milliseconds>(t1 - t0).count();
+
+    if (tokens_generated > 0) {
+        result.avg_logprob = static_cast<float>(
+            total_logprob / static_cast<double>(tokens_generated));
+    }
+
+    if (result.generation_time_ms > 0) {
+        result.tokens_per_second = static_cast<float>(
+            static_cast<double>(tokens_generated) * 1000.0 /
+            static_cast<double>(result.generation_time_ms));
+    }
+
+    return result;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Perplexity evaluation
+// ════════════════════════════════════════════════════════════════════════════
+
+ConsensusModel::PerplexityResult ConsensusModel::evaluate_perplexity(
+        const std::vector<uint8_t>& text) const {
+
+    auto t0 = std::chrono::steady_clock::now();
+
+    PerplexityResult result;
+    result.perplexity = 0.0f;
+    result.bits_per_byte = 0.0f;
+    result.cross_entropy = 0.0f;
+    result.num_tokens = 0;
+    result.eval_time_ms = 0;
+
+    const int seq_len = static_cast<int>(dims_.seq_len);
+    const int vocab = static_cast<int>(dims_.vocab);
+
+    if (text.size() < static_cast<size_t>(seq_len + 1)) {
+        return result;
+    }
+
+    // Process in chunks of seq_len, same as forward_eval
+    const int n_sequences = static_cast<int>((text.size() - 1) / seq_len);
+    if (n_sequences <= 0) {
+        return result;
+    }
+
+    std::vector<float> logits(static_cast<size_t>(seq_len) * vocab);
+    double total_nll = 0.0;
+    int total_tokens = 0;
+
+    for (int seq = 0; seq < n_sequences; seq++) {
+        const int offset = seq * seq_len;
+
+        if (offset + seq_len >= static_cast<int>(text.size())) {
+            break;
+        }
+
+        const uint8_t* input_tokens = text.data() + offset;
+
+        // Forward pass
+        forward_sequence(input_tokens, seq_len, logits.data());
+
+        // Compute per-token log-probabilities
+        for (int t = 0; t < seq_len; t++) {
+            int target = text[offset + t + 1];
+            const float* logits_row = logits.data() + t * vocab;
+
+            // Numerically stable log-softmax
+            float max_logit = logits_row[0];
+            for (int v = 1; v < vocab; v++) {
+                if (logits_row[v] > max_logit) max_logit = logits_row[v];
+            }
+
+            float sum_exp = 0.0f;
+            for (int v = 0; v < vocab; v++) {
+                sum_exp += std::exp(logits_row[v] - max_logit);
+            }
+
+            float log_sum_exp = max_logit + std::log(sum_exp);
+            float log_prob = logits_row[target] - log_sum_exp;
+
+            result.per_token_logprobs.push_back(log_prob);
+            total_nll -= static_cast<double>(log_prob);
+            total_tokens++;
+        }
+    }
+
+    result.num_tokens = total_tokens;
+
+    if (total_tokens > 0) {
+        result.cross_entropy = static_cast<float>(
+            total_nll / static_cast<double>(total_tokens));
+        result.perplexity = std::exp(result.cross_entropy);
+        // bits per byte = cross_entropy / ln(2)
+        result.bits_per_byte = result.cross_entropy / std::log(2.0f);
+    }
+
+    auto t1 = std::chrono::steady_clock::now();
+    result.eval_time_ms = std::chrono::duration_cast<
+        std::chrono::milliseconds>(t1 - t0).count();
+
+    return result;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Embedding extraction
+// ════════════════════════════════════════════════════════════════════════════
+
+std::vector<float> ConsensusModel::get_embedding(
+        const std::vector<uint8_t>& text) const {
+
+    const int d = static_cast<int>(dims_.d_model);
+    const int seq_len = static_cast<int>(dims_.seq_len);
+    const int vocab = static_cast<int>(dims_.vocab);
+
+    std::vector<float> embedding(d, 0.0f);
+
+    if (text.empty()) {
+        return embedding;
+    }
+
+    // Prepare input: take the last seq_len tokens, pad if needed
+    std::vector<uint8_t> input(seq_len, 0);
+    int actual_len = static_cast<int>(text.size());
+    if (actual_len > seq_len) actual_len = seq_len;
+    int pad = seq_len - actual_len;
+    std::memcpy(input.data() + pad, text.data() + text.size() - actual_len,
+                 actual_len);
+
+    // We need the hidden state before the final logit projection.
+    // Run the forward pass but capture the post-final-norm hidden state.
+    // The forward_sequence function computes logits = normed @ tok_emb^T.
+    // We need the normed state before that multiplication.
+    // Since we can't easily intercept forward_sequence, we recompute
+    // the hidden state by running the full forward pass and then computing
+    // the hidden state from the logits via pseudoinverse... but that's impractical.
+    //
+    // Instead, we run a modified version: compute logits, then recover the
+    // hidden state average from the embedding lookup of the tokens and
+    // the forward pass result.
+    //
+    // Practical approach: run forward, get logits for each position, and
+    // compute the average of the token embeddings weighted by the model's
+    // representation. For simplicity, we use the mean of the input token
+    // embeddings after applying the model forward pass.
+
+    // Run full forward pass to get logits
+    std::vector<float> logits(static_cast<size_t>(seq_len) * vocab);
+    forward_sequence(input.data(), seq_len, logits.data());
+
+    // Use the last position's logits to derive an embedding.
+    // Approach: the logits are linear projections of the hidden state.
+    // logits = h @ E^T, where E is the embedding matrix [vocab x d].
+    // We can approximate h by: h ~= softmax(logits) @ E
+    // This gives us a weighted average of embedding vectors.
+
+    const float* emb_data = ggml_get_data_f32(tok_emb_);
+    float* last_logits = logits.data() + (seq_len - 1) * vocab;
+
+    // Compute softmax of last-position logits
+    std::vector<float> probs(vocab);
+    softmax_cpu(last_logits, probs.data(), vocab);
+
+    // Weighted average of embedding rows
+    for (int v = 0; v < vocab; v++) {
+        if (probs[v] > 1e-8f) {
+            const float* emb_row = emb_data + v * d;
+            for (int j = 0; j < d; j++) {
+                embedding[j] += probs[v] * emb_row[j];
+            }
+        }
+    }
+
+    // Additionally blend in the mean of actual input token embeddings
+    // to capture the input context, not just the output distribution.
+    int valid_tokens = 0;
+    std::vector<float> input_emb(d, 0.0f);
+    for (int t = pad; t < seq_len; t++) {
+        int tok = input[t];
+        const float* emb_row = emb_data + tok * d;
+        for (int j = 0; j < d; j++) {
+            input_emb[j] += emb_row[j];
+        }
+        valid_tokens++;
+    }
+
+    if (valid_tokens > 0) {
+        float inv_n = 1.0f / static_cast<float>(valid_tokens);
+        for (int j = 0; j < d; j++) {
+            // Blend: 50% output-derived + 50% input-derived
+            embedding[j] = 0.5f * embedding[j] + 0.5f * (input_emb[j] * inv_n);
+        }
+    }
+
+    // L2 normalize the embedding
+    float norm_sq = 0.0f;
+    for (int j = 0; j < d; j++) {
+        norm_sq += embedding[j] * embedding[j];
+    }
+    if (norm_sq > 0.0f) {
+        float inv_norm = 1.0f / std::sqrt(norm_sq);
+        for (int j = 0; j < d; j++) {
+            embedding[j] *= inv_norm;
+        }
+    }
+
+    return embedding;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Token probability distribution
+// ════════════════════════════════════════════════════════════════════════════
+
+std::vector<float> ConsensusModel::get_next_token_probs(
+        const std::vector<uint8_t>& context) const {
+
+    const int seq_len = static_cast<int>(dims_.seq_len);
+    const int vocab = static_cast<int>(dims_.vocab);
+
+    std::vector<float> probs(vocab, 0.0f);
+
+    if (context.empty()) {
+        // Uniform distribution
+        float uniform = 1.0f / static_cast<float>(vocab);
+        std::fill(probs.begin(), probs.end(), uniform);
+        return probs;
+    }
+
+    // Prepare input: take the last seq_len tokens, pad if needed
+    std::vector<uint8_t> input(seq_len, 0);
+    int actual_len = static_cast<int>(context.size());
+    if (actual_len > seq_len) actual_len = seq_len;
+    int pad = seq_len - actual_len;
+    std::memcpy(input.data() + pad, context.data() + context.size() - actual_len,
+                 actual_len);
+
+    // Forward pass
+    std::vector<float> logits(static_cast<size_t>(seq_len) * vocab);
+    forward_sequence(input.data(), seq_len, logits.data());
+
+    // Softmax of the last position
+    float* last_logits = logits.data() + (seq_len - 1) * vocab;
+    softmax_cpu(last_logits, probs.data(), vocab);
+
+    return probs;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// InferenceSession — maintains GRU hidden states between calls
+// ════════════════════════════════════════════════════════════════════════════
+
+ConsensusModel::InferenceSession::InferenceSession(const ConsensusModel& model)
+    : model_(model)
+    , has_state_(false) {
+
+    const uint32_t n_layers = model_.dims().n_layers;
+    const uint32_t d = model_.dims().d_model;
+
+    // Allocate per-layer hidden states for the MinGRU
+    layer_states_.resize(n_layers);
+    for (uint32_t l = 0; l < n_layers; l++) {
+        layer_states_[l].resize(d, 0.0f);
+    }
+}
+
+void ConsensusModel::InferenceSession::reset() {
+    for (auto& state : layer_states_) {
+        std::fill(state.begin(), state.end(), 0.0f);
+    }
+    has_state_ = false;
+}
+
+void ConsensusModel::InferenceSession::feed(const std::vector<uint8_t>& tokens) {
+    if (tokens.empty()) return;
+
+    const int d = static_cast<int>(model_.dims().d_model);
+    const int d_ff = static_cast<int>(model_.dims().d_ff);
+    const int n_slots = static_cast<int>(model_.dims().n_slots);
+    const int top_k = static_cast<int>(model_.dims().top_k);
+    const int vocab = static_cast<int>(model_.dims().vocab);
+    const int n_layers = static_cast<int>(model_.dims().n_layers);
+    const int seq_len = static_cast<int>(tokens.size());
+
+    // Get embedding data
+    auto tensors = model_.weight_tensors();
+    const float* emb_data = ggml_get_data_f32(model_.tok_emb_);
+
+    // Working buffers
+    std::vector<float> x(static_cast<size_t>(seq_len) * d);
+    std::vector<float> tmp_norm(static_cast<size_t>(seq_len) * d);
+    std::vector<float> tmp_conv1(static_cast<size_t>(seq_len) * d);
+    std::vector<float> tmp_conv2(static_cast<size_t>(seq_len) * d);
+    std::vector<float> tmp_conv3(static_cast<size_t>(seq_len) * d);
+    std::vector<float> tmp_conv_sum(static_cast<size_t>(seq_len) * d);
+    std::vector<float> tmp_sub(static_cast<size_t>(seq_len) * d);
+    std::vector<float> tmp_gru_proj(static_cast<size_t>(seq_len) * d);
+    std::vector<float> tmp_slot_q(static_cast<size_t>(seq_len) * d);
+    std::vector<float> tmp_slot_scores(static_cast<size_t>(seq_len) * n_slots);
+    std::vector<float> tmp_slot_retrieved(static_cast<size_t>(seq_len) * d);
+    std::vector<float> tmp_ffn_gate(static_cast<size_t>(seq_len) * d_ff);
+    std::vector<float> tmp_ffn_up(static_cast<size_t>(seq_len) * d_ff);
+    std::vector<float> tmp_ffn_act(static_cast<size_t>(seq_len) * d_ff);
+
+    const size_t buf_sd = static_cast<size_t>(seq_len) * d;
+    const size_t buf_sd_ff = static_cast<size_t>(seq_len) * d_ff;
+
+    // Token embedding lookup
+    for (int t = 0; t < seq_len; t++) {
+        int tok = tokens[t];
+        std::memcpy(x.data() + t * d, emb_data + tok * d, d * sizeof(float));
+    }
+
+    // Process through layers, using and updating persistent GRU states
+    for (int layer_idx = 0; layer_idx < n_layers; layer_idx++) {
+        const auto& L = model_.layers_[layer_idx];
+
+        // Sub-layer 1: Multi-Scale Causal Conv
+        {
+            const float* norm_w = ggml_get_data_f32(L.norm1_w);
+            rmsnorm_cpu(x.data(), norm_w, tmp_norm.data(), seq_len, d);
+
+            const float* k3 = ggml_get_data_f32(L.conv3_w);
+            const float* k7 = ggml_get_data_f32(L.conv7_w);
+            const float* k15 = ggml_get_data_f32(L.conv15_w);
+
+            causal_conv1d_depthwise_cpu(tmp_norm.data(), k3, tmp_conv1.data(),
+                                        seq_len, d, 3);
+            causal_conv1d_depthwise_cpu(tmp_norm.data(), k7, tmp_conv2.data(),
+                                        seq_len, d, 7);
+            causal_conv1d_depthwise_cpu(tmp_norm.data(), k15, tmp_conv3.data(),
+                                        seq_len, d, 15);
+
+            for (size_t i = 0; i < buf_sd; i++) {
+                tmp_conv_sum[i] = tmp_conv1[i] + tmp_conv2[i] + tmp_conv3[i];
+            }
+
+            const float* mix_w = ggml_get_data_f32(L.conv_mix_w);
+            matmul_cpu(tmp_conv_sum.data(), mix_w, tmp_sub.data(),
+                       seq_len, d, d);
+
+            add_cpu(x.data(), x.data(), tmp_sub.data(), static_cast<int>(buf_sd));
+        }
+
+        // Sub-layer 2: MinGRU with persistent hidden state
+        {
+            const float* norm_w = ggml_get_data_f32(L.norm2_w);
+            rmsnorm_cpu(x.data(), norm_w, tmp_norm.data(), seq_len, d);
+
+            const float* wz = ggml_get_data_f32(L.gru_wz);
+            const float* wh = ggml_get_data_f32(L.gru_wh);
+            const float* bz = ggml_get_data_f32(L.gru_bz);
+            const float* bh = ggml_get_data_f32(L.gru_bh);
+
+            // Use persistent hidden state from this session
+            std::vector<float>& h_state = layer_states_[layer_idx];
+
+            for (int t = 0; t < seq_len; t++) {
+                const float* xt = tmp_norm.data() + t * d;
+                float* out_t = tmp_sub.data() + t * d;
+
+                // z = sigmoid(xt @ Wz^T + bz)
+                for (int j = 0; j < d; j++) {
+                    float sum = bz[j];
+                    for (int k = 0; k < d; k++) {
+                        sum += xt[k] * wz[j * d + k];
+                    }
+                    tmp_gru_proj[j] = sigmoid_f(sum);
+                }
+
+                // h_tilde = xt @ Wh^T + bh
+                for (int j = 0; j < d; j++) {
+                    float sum = bh[j];
+                    for (int k = 0; k < d; k++) {
+                        sum += xt[k] * wh[j * d + k];
+                    }
+                    out_t[j] = sum;
+                }
+
+                // h = (1 - z) * h_prev + z * h_tilde
+                for (int j = 0; j < d; j++) {
+                    float z = tmp_gru_proj[j];
+                    h_state[j] = (1.0f - z) * h_state[j] + z * out_t[j];
+                    out_t[j] = h_state[j];
+                }
+            }
+
+            add_cpu(x.data(), x.data(), tmp_sub.data(), static_cast<int>(buf_sd));
+        }
+
+        // Sub-layer 3: Slot Memory
+        {
+            const float* norm_w = ggml_get_data_f32(L.norm3_w);
+            rmsnorm_cpu(x.data(), norm_w, tmp_norm.data(), seq_len, d);
+
+            const float* proj_q_w = ggml_get_data_f32(L.slot_proj_q);
+            const float* sk = ggml_get_data_f32(L.slot_keys);
+            const float* sv = ggml_get_data_f32(L.slot_values);
+            const float* proj_out_w = ggml_get_data_f32(L.slot_proj_out);
+
+            matmul_cpu(tmp_norm.data(), proj_q_w, tmp_slot_q.data(),
+                       seq_len, d, d);
+
+            matmul_cpu(tmp_slot_q.data(), sk, tmp_slot_scores.data(),
+                       seq_len, d, n_slots);
+
+            const float scale = 1.0f / std::sqrt(static_cast<float>(d));
+
+            for (int t = 0; t < seq_len; t++) {
+                float* scores_t = tmp_slot_scores.data() + t * n_slots;
+
+                for (int s = 0; s < n_slots; s++) {
+                    scores_t[s] *= scale;
+                }
+
+                std::vector<int> top_idx(top_k);
+                std::vector<float> top_val(top_k, -1e30f);
+
+                for (int s = 0; s < n_slots; s++) {
+                    int min_pos = 0;
+                    for (int ki = 1; ki < top_k; ki++) {
+                        if (top_val[ki] < top_val[min_pos]) {
+                            min_pos = ki;
+                        }
+                    }
+                    if (scores_t[s] > top_val[min_pos]) {
+                        top_val[min_pos] = scores_t[s];
+                        top_idx[min_pos] = s;
+                    }
+                }
+
+                float max_score = *std::max_element(top_val.begin(), top_val.end());
+                float sum_exp = 0.0f;
+                for (int ki = 0; ki < top_k; ki++) {
+                    top_val[ki] = std::exp(top_val[ki] - max_score);
+                    sum_exp += top_val[ki];
+                }
+                for (int ki = 0; ki < top_k; ki++) {
+                    top_val[ki] /= sum_exp;
+                }
+
+                float* retrieved_t = tmp_slot_retrieved.data() + t * d;
+                std::fill(retrieved_t, retrieved_t + d, 0.0f);
+
+                for (int ki = 0; ki < top_k; ki++) {
+                    int si = top_idx[ki];
+                    float w = top_val[ki];
+                    const float* val_row = sv + si * d;
+                    for (int j = 0; j < d; j++) {
+                        retrieved_t[j] += w * val_row[j];
+                    }
+                }
+            }
+
+            matmul_cpu(tmp_slot_retrieved.data(), proj_out_w, tmp_sub.data(),
+                       seq_len, d, d);
+
+            add_cpu(x.data(), x.data(), tmp_sub.data(), static_cast<int>(buf_sd));
+        }
+
+        // Sub-layer 4: SwiGLU FFN
+        {
+            const float* norm_w = ggml_get_data_f32(L.norm4_w);
+            rmsnorm_cpu(x.data(), norm_w, tmp_norm.data(), seq_len, d);
+
+            const float* gate_w = ggml_get_data_f32(L.ffn_gate_w);
+            const float* up_w = ggml_get_data_f32(L.ffn_up_w);
+            const float* down_w = ggml_get_data_f32(L.ffn_down_w);
+
+            matmul_cpu(tmp_norm.data(), gate_w, tmp_ffn_gate.data(),
+                       seq_len, d, d_ff);
+            matmul_cpu(tmp_norm.data(), up_w, tmp_ffn_up.data(),
+                       seq_len, d, d_ff);
+
+            for (size_t i = 0; i < buf_sd_ff; i++) {
+                tmp_ffn_act[i] = silu_f(tmp_ffn_gate[i]) * tmp_ffn_up[i];
+            }
+
+            matmul_cpu(tmp_ffn_act.data(), down_w, tmp_sub.data(),
+                       seq_len, d_ff, d);
+
+            add_cpu(x.data(), x.data(), tmp_sub.data(), static_cast<int>(buf_sd));
+        }
+    }
+
+    has_state_ = true;
+}
+
+std::vector<uint8_t> ConsensusModel::InferenceSession::generate(
+        int n_tokens, const GenerationConfig& config) {
+
+    std::vector<uint8_t> generated;
+    generated.reserve(n_tokens);
+
+    SamplingPRNG rng(config.seed);
+
+    const int vocab = static_cast<int>(model_.dims().vocab);
+
+    // For session-based generation, we feed one token at a time
+    // and use the internal state for efficiency
+    std::vector<uint8_t> prev_generated;
+
+    for (int step = 0; step < n_tokens; step++) {
+        // Get next-token probabilities from current state
+        std::vector<float> probs = get_probs();
+
+        int next_token;
+
+        if (config.greedy) {
+            // Find argmax
+            next_token = 0;
+            float best_prob = probs[0];
+            for (int v = 1; v < vocab; v++) {
+                if (probs[v] > best_prob) {
+                    best_prob = probs[v];
+                    next_token = v;
+                }
+            }
+        } else {
+            // Convert probs to logits for filtering
+            std::vector<float> logits(vocab);
+            for (int v = 0; v < vocab; v++) {
+                logits[v] = (probs[v] > 1e-30f) ? std::log(probs[v]) : -30.0f;
+            }
+
+            // Apply temperature
+            if (config.temperature > 0.0f && config.temperature != 1.0f) {
+                float inv_temp = 1.0f / config.temperature;
+                for (int v = 0; v < vocab; v++) {
+                    logits[v] *= inv_temp;
+                }
+            }
+
+            // Apply repetition penalty
+            if (config.repetition_penalty > 1.0f && !prev_generated.empty()) {
+                apply_repetition_penalty(logits.data(), vocab, prev_generated,
+                                          config.repetition_window,
+                                          config.repetition_penalty);
+            }
+
+            // Apply top-k
+            if (config.top_k > 0) {
+                apply_top_k(logits.data(), vocab, config.top_k);
+            }
+
+            // Apply top-p
+            if (config.top_p < 1.0f) {
+                apply_top_p(logits.data(), vocab, config.top_p);
+            }
+
+            std::vector<float> filtered_probs(vocab);
+            softmax_cpu(logits.data(), filtered_probs.data(), vocab);
+            next_token = sample_from_probs(filtered_probs.data(), vocab, rng);
+        }
+
+        generated.push_back(static_cast<uint8_t>(next_token));
+        prev_generated.push_back(static_cast<uint8_t>(next_token));
+
+        // Feed the generated token back to update state
+        std::vector<uint8_t> single_token = {static_cast<uint8_t>(next_token)};
+        feed(single_token);
+    }
+
+    return generated;
+}
+
+std::vector<float> ConsensusModel::InferenceSession::get_probs() {
+    const int vocab = static_cast<int>(model_.dims().vocab);
+    const int d = static_cast<int>(model_.dims().d_model);
+
+    std::vector<float> probs(vocab, 0.0f);
+
+    if (!has_state_) {
+        // No state yet, return uniform
+        float uniform = 1.0f / static_cast<float>(vocab);
+        std::fill(probs.begin(), probs.end(), uniform);
+        return probs;
+    }
+
+    // Use the last layer's GRU hidden state as the representation
+    const auto& last_state = layer_states_.back();
+
+    // Apply final RMSNorm
+    const float* norm_w = ggml_get_data_f32(model_.final_norm_w_);
+    std::vector<float> normed(d);
+    rmsnorm_cpu(last_state.data(), norm_w, normed.data(), 1, d);
+
+    // Compute logits: normed @ tok_emb^T
+    const float* emb_data = ggml_get_data_f32(model_.tok_emb_);
+    std::vector<float> logits(vocab);
+    matmul_cpu(normed.data(), emb_data, logits.data(), 1, d, vocab);
+
+    // Softmax
+    softmax_cpu(logits.data(), probs.data(), vocab);
+
+    return probs;
+}
+
+std::vector<float> ConsensusModel::InferenceSession::get_state() const {
+    const int n_layers = static_cast<int>(model_.dims().n_layers);
+    const int d = static_cast<int>(model_.dims().d_model);
+
+    std::vector<float> state;
+    state.reserve(static_cast<size_t>(n_layers) * d);
+
+    for (const auto& layer_state : layer_states_) {
+        state.insert(state.end(), layer_state.begin(), layer_state.end());
+    }
+
+    return state;
+}
+
+void ConsensusModel::InferenceSession::set_state(const std::vector<float>& state) {
+    const int n_layers = static_cast<int>(model_.dims().n_layers);
+    const int d = static_cast<int>(model_.dims().d_model);
+
+    if (state.size() != static_cast<size_t>(n_layers) * d) {
+        return;  // Invalid state size
+    }
+
+    size_t offset = 0;
+    for (int l = 0; l < n_layers; l++) {
+        std::memcpy(layer_states_[l].data(), state.data() + offset,
+                     d * sizeof(float));
+        offset += d;
+    }
+
+    has_state_ = true;
 }
 
 } // namespace flow

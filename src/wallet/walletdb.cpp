@@ -1157,4 +1157,811 @@ int64_t WalletDB::db_size_bytes() const {
     return -1;
 }
 
+// ===========================================================================
+// Database schema migration
+// ===========================================================================
+
+bool WalletDB::migrate_schema(int from_version, int to_version) {
+    if (from_version >= to_version) {
+        return true;  // nothing to do
+    }
+
+    // Begin a transaction for the entire migration
+    begin_batch();
+
+    bool success = true;
+
+    // Version 0 -> 1: Add locked_coins table and address_book table
+    if (from_version < 1 && to_version >= 1) {
+        try {
+            exec_sql(db_,
+                "CREATE TABLE IF NOT EXISTS locked_coins ("
+                "  txid BLOB NOT NULL,"
+                "  vout INTEGER NOT NULL,"
+                "  locked_at INTEGER DEFAULT 0,"
+                "  reason TEXT DEFAULT '',"
+                "  PRIMARY KEY (txid, vout)"
+                ");");
+
+            exec_sql(db_,
+                "CREATE TABLE IF NOT EXISTS address_book ("
+                "  address TEXT PRIMARY KEY,"
+                "  label TEXT DEFAULT '',"
+                "  purpose TEXT DEFAULT 'send',"
+                "  created_at INTEGER DEFAULT 0"
+                ");");
+
+            exec_sql(db_,
+                "CREATE INDEX IF NOT EXISTS idx_address_book_label "
+                "ON address_book(label);");
+
+            // Update schema version
+            store_meta("schema_version", "1");
+        } catch (const std::exception& e) {
+            fprintf(stderr, "WalletDB: migration 0->1 failed: %s\n", e.what());
+            success = false;
+        }
+    }
+
+    // Version 1 -> 2: Add tx_details table for full transaction storage
+    if (success && from_version < 2 && to_version >= 2) {
+        try {
+            exec_sql(db_,
+                "CREATE TABLE IF NOT EXISTS tx_details ("
+                "  txid BLOB PRIMARY KEY,"
+                "  raw_tx BLOB,"
+                "  fee INTEGER DEFAULT 0,"
+                "  confirmations INTEGER DEFAULT 0,"
+                "  abandoned INTEGER DEFAULT 0,"
+                "  conflicted INTEGER DEFAULT 0,"
+                "  first_seen INTEGER DEFAULT 0"
+                ");");
+
+            exec_sql(db_,
+                "CREATE INDEX IF NOT EXISTS idx_tx_details_confirmations "
+                "ON tx_details(confirmations);");
+
+            exec_sql(db_,
+                "CREATE INDEX IF NOT EXISTS idx_tx_details_first_seen "
+                "ON tx_details(first_seen);");
+
+            // Add coin_control table for persistent UTXO locking
+            exec_sql(db_,
+                "CREATE TABLE IF NOT EXISTS coin_control ("
+                "  txid BLOB NOT NULL,"
+                "  vout INTEGER NOT NULL,"
+                "  frozen INTEGER DEFAULT 0,"
+                "  label TEXT DEFAULT '',"
+                "  PRIMARY KEY (txid, vout)"
+                ");");
+
+            // Add scan_progress table for tracking rescan state
+            exec_sql(db_,
+                "CREATE TABLE IF NOT EXISTS scan_progress ("
+                "  id INTEGER PRIMARY KEY DEFAULT 1,"
+                "  current_height INTEGER DEFAULT 0,"
+                "  target_height INTEGER DEFAULT 0,"
+                "  last_scan_time INTEGER DEFAULT 0,"
+                "  found_txs INTEGER DEFAULT 0"
+                ");");
+            exec_sql(db_,
+                "INSERT OR IGNORE INTO scan_progress (id) VALUES (1);");
+
+            store_meta("schema_version", "2");
+        } catch (const std::exception& e) {
+            fprintf(stderr, "WalletDB: migration 1->2 failed: %s\n", e.what());
+            success = false;
+        }
+    }
+
+    if (success) {
+        commit_batch();
+    } else {
+        rollback_batch();
+    }
+
+    return success;
+}
+
+bool WalletDB::check_and_migrate() {
+    // Read current schema version from meta table
+    std::string version_str;
+    int current_version = 0;
+
+    if (load_meta("schema_version", version_str) && !version_str.empty()) {
+        try {
+            current_version = std::stoi(version_str);
+        } catch (...) {
+            current_version = 0;
+        }
+    }
+
+    if (current_version >= CURRENT_SCHEMA_VERSION) {
+        return true;  // already at current version
+    }
+
+    fprintf(stderr, "WalletDB: migrating schema from v%d to v%d\n",
+            current_version, CURRENT_SCHEMA_VERSION);
+
+    return migrate_schema(current_version, CURRENT_SCHEMA_VERSION);
+}
+
+// ===========================================================================
+// Database integrity verification
+// ===========================================================================
+
+WalletDB::IntegrityResult WalletDB::verify_integrity() const {
+    IntegrityResult result;
+    result.passed = true;
+    result.orphan_keys = 0;
+    result.orphan_addrs = 0;
+    result.missing_txids = 0;
+    result.duplicate_entries = 0;
+
+    // 1. Run SQLite integrity check
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "PRAGMA integrity_check;", -1, &stmt, nullptr);
+    if (rc == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const char* check_result = reinterpret_cast<const char*>(
+                sqlite3_column_text(stmt, 0));
+            if (check_result) {
+                std::string msg(check_result);
+                if (msg != "ok") {
+                    result.passed = false;
+                    result.errors.push_back("integrity_check: " + msg);
+                }
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    // 2. Check for keys without corresponding addresses
+    stmt = nullptr;
+    rc = sqlite3_prepare_v2(db_,
+        "SELECT COUNT(*) FROM keys k "
+        "LEFT JOIN addresses a ON k.pubkey = a.pubkey "
+        "WHERE a.address IS NULL;",
+        -1, &stmt, nullptr);
+    if (rc == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            result.orphan_keys = sqlite3_column_int(stmt, 0);
+            if (result.orphan_keys > 0) {
+                result.errors.push_back(
+                    std::to_string(result.orphan_keys) + " keys without addresses");
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    // 3. Check for addresses without corresponding keys
+    stmt = nullptr;
+    rc = sqlite3_prepare_v2(db_,
+        "SELECT COUNT(*) FROM addresses a "
+        "LEFT JOIN keys k ON a.pubkey = k.pubkey "
+        "WHERE k.pubkey IS NULL;",
+        -1, &stmt, nullptr);
+    if (rc == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            result.orphan_addrs = sqlite3_column_int(stmt, 0);
+            if (result.orphan_addrs > 0) {
+                result.errors.push_back(
+                    std::to_string(result.orphan_addrs) + " addresses without keys");
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    // 4. Check for duplicate pubkeys in the keys table
+    stmt = nullptr;
+    rc = sqlite3_prepare_v2(db_,
+        "SELECT pubkey, COUNT(*) as cnt FROM keys "
+        "GROUP BY pubkey HAVING cnt > 1;",
+        -1, &stmt, nullptr);
+    if (rc == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            result.duplicate_entries++;
+        }
+        if (result.duplicate_entries > 0) {
+            result.errors.push_back(
+                std::to_string(result.duplicate_entries) + " duplicate key entries");
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    // 5. Check that the master seed exists
+    if (!has_master_seed()) {
+        result.passed = false;
+        result.errors.push_back("master seed is missing");
+    }
+
+    // 6. Verify that the HD index is consistent with key count
+    uint32_t hd_idx = load_hd_index();
+    size_t key_cnt = key_count();
+    // HD index should be >= number of non-imported keys
+    // This is an advisory check, not a hard failure
+    stmt = nullptr;
+    rc = sqlite3_prepare_v2(db_,
+        "SELECT COUNT(*) FROM keys WHERE path != 'imported';",
+        -1, &stmt, nullptr);
+    if (rc == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            int hd_key_count = sqlite3_column_int(stmt, 0);
+            if (static_cast<int>(hd_idx) < hd_key_count) {
+                result.errors.push_back(
+                    "HD index (" + std::to_string(hd_idx) +
+                    ") is less than HD key count (" +
+                    std::to_string(hd_key_count) + ")");
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    // Overall pass/fail
+    if (!result.errors.empty()) {
+        result.passed = false;
+    }
+
+    return result;
+}
+
+// ===========================================================================
+// Database repair
+// ===========================================================================
+
+int WalletDB::repair() {
+    int fixes = 0;
+
+    // 1. Remove orphan addresses (addresses without keys)
+    {
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db_,
+            "DELETE FROM addresses WHERE pubkey NOT IN "
+            "(SELECT pubkey FROM keys);",
+            -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            rc = sqlite3_step(stmt);
+            if (rc == SQLITE_DONE) {
+                int changes = sqlite3_changes(db_);
+                if (changes > 0) {
+                    fprintf(stderr, "WalletDB: repaired %d orphan addresses\n", changes);
+                    fixes += changes;
+                }
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    // 2. Remove duplicate labels
+    {
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db_,
+            "DELETE FROM labels WHERE rowid NOT IN "
+            "(SELECT MIN(rowid) FROM labels GROUP BY address);",
+            -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            rc = sqlite3_step(stmt);
+            if (rc == SQLITE_DONE) {
+                int changes = sqlite3_changes(db_);
+                if (changes > 0) {
+                    fprintf(stderr, "WalletDB: repaired %d duplicate labels\n", changes);
+                    fixes += changes;
+                }
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    // 3. Fix HD index if it's too low
+    {
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db_,
+            "SELECT MAX(hd_index) FROM keys WHERE path != 'imported';",
+            -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                int max_idx = sqlite3_column_int(stmt, 0);
+                uint32_t current_hd = load_hd_index();
+                if (static_cast<uint32_t>(max_idx) >= current_hd) {
+                    store_hd_index(static_cast<uint32_t>(max_idx) + 1);
+                    fprintf(stderr, "WalletDB: repaired HD index: %u -> %d\n",
+                            current_hd, max_idx + 1);
+                    fixes++;
+                }
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    // 4. Vacuum the database to reclaim space
+    try {
+        exec_sql(db_, "VACUUM;");
+    } catch (...) {
+        // VACUUM can fail if there's an active transaction; ignore
+    }
+
+    return fixes;
+}
+
+// ===========================================================================
+// Database statistics
+// ===========================================================================
+
+WalletDB::DBStats WalletDB::get_db_stats() const {
+    DBStats stats;
+
+    // File size
+    struct stat st;
+    if (stat(db_path_.c_str(), &st) == 0) {
+        stats.file_size = static_cast<size_t>(st.st_size);
+    } else {
+        stats.file_size = 0;
+    }
+
+    // Table counts
+    stats.key_count = static_cast<int>(key_count());
+    stats.address_count = static_cast<int>(address_count());
+    stats.tx_count = static_cast<int>(transaction_count());
+
+    // Label count
+    {
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db_,
+            "SELECT COUNT(*) FROM labels;",
+            -1, &stmt, nullptr);
+        stats.label_count = 0;
+        if (rc == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW) {
+            stats.label_count = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    // Schema version
+    std::string version_str;
+    if (load_meta("schema_version", version_str)) {
+        try {
+            stats.schema_version = std::stoi(version_str);
+        } catch (...) {
+            stats.schema_version = 0;
+        }
+    } else {
+        stats.schema_version = 0;
+    }
+
+    // SQLite version
+    stats.sqlite_version = sqlite3_libversion();
+
+    // WAL mode check
+    {
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db_,
+            "PRAGMA journal_mode;",
+            -1, &stmt, nullptr);
+        stats.wal_mode = false;
+        if (rc == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW) {
+            const char* mode = reinterpret_cast<const char*>(
+                sqlite3_column_text(stmt, 0));
+            if (mode) {
+                std::string mode_str(mode);
+                std::transform(mode_str.begin(), mode_str.end(),
+                               mode_str.begin(),
+                               [](unsigned char c) { return std::tolower(c); });
+                stats.wal_mode = (mode_str == "wal");
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    // Page size and count
+    {
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db_,
+            "PRAGMA page_size;",
+            -1, &stmt, nullptr);
+        stats.page_size = 0;
+        if (rc == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW) {
+            stats.page_size = static_cast<size_t>(sqlite3_column_int64(stmt, 0));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    {
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db_,
+            "PRAGMA page_count;",
+            -1, &stmt, nullptr);
+        stats.page_count = 0;
+        if (rc == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW) {
+            stats.page_count = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    {
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db_,
+            "PRAGMA freelist_count;",
+            -1, &stmt, nullptr);
+        stats.freelist_count = 0;
+        if (rc == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW) {
+            stats.freelist_count = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    return stats;
+}
+
+// ===========================================================================
+// Secure erase
+// ===========================================================================
+
+bool WalletDB::secure_erase_key(uint32_t index) {
+    // Find the key by HD index
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "SELECT pubkey, encrypted_privkey FROM keys WHERE hd_index = ?;",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return false;
+
+    sqlite3_bind_int(stmt, 1, static_cast<int>(index));
+
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        return false;
+    }
+
+    // Get the pubkey for deletion
+    std::array<uint8_t, 32> pubkey{};
+    const uint8_t* pk = static_cast<const uint8_t*>(sqlite3_column_blob(stmt, 0));
+    if (pk && sqlite3_column_bytes(stmt, 0) >= 32) {
+        std::memcpy(pubkey.data(), pk, 32);
+    }
+
+    // Overwrite the encrypted private key with random data before deletion
+    const void* enc_blob = sqlite3_column_blob(stmt, 1);
+    int enc_len = sqlite3_column_bytes(stmt, 1);
+    sqlite3_finalize(stmt);
+
+    if (enc_len > 0) {
+        // Write random data over the key
+        std::vector<uint8_t> random_data(static_cast<size_t>(enc_len));
+        GetRandBytes(random_data.data(), random_data.size());
+
+        sqlite3_stmt* update_stmt = nullptr;
+        rc = sqlite3_prepare_v2(db_,
+            "UPDATE keys SET encrypted_privkey = ? WHERE hd_index = ?;",
+            -1, &update_stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            bind_blob(update_stmt, 1, random_data.data(),
+                      static_cast<int>(random_data.size()));
+            sqlite3_bind_int(update_stmt, 2, static_cast<int>(index));
+            sqlite3_step(update_stmt);
+            sqlite3_finalize(update_stmt);
+        }
+
+        // Write zeros
+        std::memset(random_data.data(), 0, random_data.size());
+        update_stmt = nullptr;
+        rc = sqlite3_prepare_v2(db_,
+            "UPDATE keys SET encrypted_privkey = ? WHERE hd_index = ?;",
+            -1, &update_stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            bind_blob(update_stmt, 1, random_data.data(),
+                      static_cast<int>(random_data.size()));
+            sqlite3_bind_int(update_stmt, 2, static_cast<int>(index));
+            sqlite3_step(update_stmt);
+            sqlite3_finalize(update_stmt);
+        }
+    }
+
+    // Now delete the key record
+    return delete_key(pubkey);
+}
+
+bool WalletDB::secure_erase_all_keys() {
+    // First overwrite all encrypted private keys with random data
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "SELECT pubkey FROM keys;",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return false;
+
+    std::vector<std::array<uint8_t, 32>> all_pubkeys;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        std::array<uint8_t, 32> pk{};
+        const uint8_t* blob = static_cast<const uint8_t*>(
+            sqlite3_column_blob(stmt, 0));
+        if (blob && sqlite3_column_bytes(stmt, 0) >= 32) {
+            std::memcpy(pk.data(), blob, 32);
+            all_pubkeys.push_back(pk);
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    // Overwrite each key with random data then zeros
+    for (const auto& pk : all_pubkeys) {
+        std::vector<uint8_t> random_data(32);
+        GetRandBytes(random_data.data(), random_data.size());
+
+        sqlite3_stmt* update_stmt = nullptr;
+        rc = sqlite3_prepare_v2(db_,
+            "UPDATE keys SET encrypted_privkey = ? WHERE pubkey = ?;",
+            -1, &update_stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            bind_blob(update_stmt, 1, random_data.data(), 32);
+            bind_blob(update_stmt, 2, pk.data(), 32);
+            sqlite3_step(update_stmt);
+            sqlite3_finalize(update_stmt);
+        }
+    }
+
+    // Zero-fill pass
+    for (const auto& pk : all_pubkeys) {
+        std::vector<uint8_t> zeros(32, 0);
+
+        sqlite3_stmt* update_stmt = nullptr;
+        rc = sqlite3_prepare_v2(db_,
+            "UPDATE keys SET encrypted_privkey = ? WHERE pubkey = ?;",
+            -1, &update_stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            bind_blob(update_stmt, 1, zeros.data(), 32);
+            bind_blob(update_stmt, 2, pk.data(), 32);
+            sqlite3_step(update_stmt);
+            sqlite3_finalize(update_stmt);
+        }
+    }
+
+    // Delete all keys
+    try {
+        exec_sql(db_, "DELETE FROM keys;");
+    } catch (...) {
+        return false;
+    }
+
+    // Also securely erase the master seed
+    if (has_master_seed()) {
+        // Overwrite with random data
+        std::vector<uint8_t> random_seed(64);
+        GetRandBytes(random_seed.data(), random_seed.size());
+        store_master_seed(random_seed);
+
+        // Overwrite with zeros
+        std::vector<uint8_t> zero_seed(64, 0);
+        store_master_seed(zero_seed);
+
+        // Delete
+        delete_meta("master_seed");
+    }
+
+    return true;
+}
+
+// ===========================================================================
+// Locked coins persistence
+// ===========================================================================
+
+bool WalletDB::store_locked_coin(const uint256& txid, uint32_t vout,
+                                  const std::string& reason) {
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "INSERT OR REPLACE INTO locked_coins (txid, vout, locked_at, reason) "
+        "VALUES (?, ?, ?, ?);",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        // Table might not exist yet; create it
+        try {
+            exec_sql(db_,
+                "CREATE TABLE IF NOT EXISTS locked_coins ("
+                "  txid BLOB NOT NULL,"
+                "  vout INTEGER NOT NULL,"
+                "  locked_at INTEGER DEFAULT 0,"
+                "  reason TEXT DEFAULT '',"
+                "  PRIMARY KEY (txid, vout)"
+                ");");
+        } catch (...) {
+            return false;
+        }
+        rc = sqlite3_prepare_v2(db_,
+            "INSERT OR REPLACE INTO locked_coins (txid, vout, locked_at, reason) "
+            "VALUES (?, ?, ?, ?);",
+            -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) return false;
+    }
+
+    bind_blob(stmt, 1, txid.data(), 32);
+    sqlite3_bind_int(stmt, 2, static_cast<int>(vout));
+    sqlite3_bind_int64(stmt, 3, GetTime());
+    bind_text(stmt, 4, reason);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
+bool WalletDB::remove_locked_coin(const uint256& txid, uint32_t vout) {
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "DELETE FROM locked_coins WHERE txid = ? AND vout = ?;",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return false;
+
+    bind_blob(stmt, 1, txid.data(), 32);
+    sqlite3_bind_int(stmt, 2, static_cast<int>(vout));
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
+std::vector<std::pair<uint256, uint32_t>> WalletDB::load_locked_coins() const {
+    std::vector<std::pair<uint256, uint32_t>> result;
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "SELECT txid, vout FROM locked_coins;",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return result;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        uint256 txid;
+        const uint8_t* blob = static_cast<const uint8_t*>(
+            sqlite3_column_blob(stmt, 0));
+        if (blob && sqlite3_column_bytes(stmt, 0) >= 32) {
+            std::memcpy(txid.data(), blob, 32);
+        }
+        uint32_t vout = static_cast<uint32_t>(sqlite3_column_int(stmt, 1));
+        result.emplace_back(txid, vout);
+    }
+
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+bool WalletDB::clear_locked_coins() {
+    try {
+        exec_sql(db_, "DELETE FROM locked_coins;");
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+// ===========================================================================
+// Address book persistence
+// ===========================================================================
+
+bool WalletDB::store_address_book_entry(const std::string& address,
+                                         const std::string& label,
+                                         const std::string& purpose) {
+    // Ensure the table exists
+    try {
+        exec_sql(db_,
+            "CREATE TABLE IF NOT EXISTS address_book ("
+            "  address TEXT PRIMARY KEY,"
+            "  label TEXT DEFAULT '',"
+            "  purpose TEXT DEFAULT 'send',"
+            "  created_at INTEGER DEFAULT 0"
+            ");");
+    } catch (...) {}
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "INSERT OR REPLACE INTO address_book (address, label, purpose, created_at) "
+        "VALUES (?, ?, ?, ?);",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return false;
+
+    bind_text(stmt, 1, address);
+    bind_text(stmt, 2, label);
+    bind_text(stmt, 3, purpose);
+    sqlite3_bind_int64(stmt, 4, GetTime());
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
+bool WalletDB::delete_address_book_entry(const std::string& address) {
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "DELETE FROM address_book WHERE address = ?;",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return false;
+
+    bind_text(stmt, 1, address);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
+std::vector<std::tuple<std::string, std::string, std::string>>
+WalletDB::load_address_book() const {
+    std::vector<std::tuple<std::string, std::string, std::string>> result;
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "SELECT address, label, purpose FROM address_book ORDER BY address;",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return result;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* addr = reinterpret_cast<const char*>(
+            sqlite3_column_text(stmt, 0));
+        const char* lbl = reinterpret_cast<const char*>(
+            sqlite3_column_text(stmt, 1));
+        const char* purp = reinterpret_cast<const char*>(
+            sqlite3_column_text(stmt, 2));
+
+        result.emplace_back(
+            addr ? addr : "",
+            lbl ? lbl : "",
+            purp ? purp : "send"
+        );
+    }
+
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+// ===========================================================================
+// Scan progress tracking
+// ===========================================================================
+
+bool WalletDB::store_scan_progress(uint64_t current_height,
+                                    uint64_t target_height,
+                                    int found_txs) {
+    try {
+        exec_sql(db_,
+            "CREATE TABLE IF NOT EXISTS scan_progress ("
+            "  id INTEGER PRIMARY KEY DEFAULT 1,"
+            "  current_height INTEGER DEFAULT 0,"
+            "  target_height INTEGER DEFAULT 0,"
+            "  last_scan_time INTEGER DEFAULT 0,"
+            "  found_txs INTEGER DEFAULT 0"
+            ");");
+    } catch (...) {}
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "INSERT OR REPLACE INTO scan_progress "
+        "(id, current_height, target_height, last_scan_time, found_txs) "
+        "VALUES (1, ?, ?, ?, ?);",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return false;
+
+    sqlite3_bind_int64(stmt, 1, static_cast<int64_t>(current_height));
+    sqlite3_bind_int64(stmt, 2, static_cast<int64_t>(target_height));
+    sqlite3_bind_int64(stmt, 3, GetTime());
+    sqlite3_bind_int(stmt, 4, found_txs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
+bool WalletDB::load_scan_progress(uint64_t& current_height,
+                                   uint64_t& target_height,
+                                   int& found_txs) const {
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_,
+        "SELECT current_height, target_height, found_txs "
+        "FROM scan_progress WHERE id = 1;",
+        -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) return false;
+
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        return false;
+    }
+
+    current_height = static_cast<uint64_t>(sqlite3_column_int64(stmt, 0));
+    target_height = static_cast<uint64_t>(sqlite3_column_int64(stmt, 1));
+    found_txs = sqlite3_column_int(stmt, 2);
+
+    sqlite3_finalize(stmt);
+    return true;
+}
+
 } // namespace flow

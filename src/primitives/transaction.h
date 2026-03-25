@@ -264,6 +264,81 @@ public:
     bool operator!=(const CTransaction& other) const {
         return !(*this == other);
     }
+
+    // ═══ Transaction analysis ═══
+
+    struct TxAnalysis {
+        uint256 txid;
+        bool is_coinbase;
+        size_t serialized_size;
+        size_t weight;
+        int input_count;
+        int output_count;
+        Amount total_input;
+        Amount total_output;
+        Amount fee;
+        double fee_rate;
+        int sigops;
+        bool is_standard;
+        std::string type;
+        bool is_rbf;
+        bool is_final;
+    };
+
+    TxAnalysis analyze(const std::function<Amount(const COutPoint&)>& utxo_lookup = nullptr) const;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CMutableTransaction — modifiable transaction for building
+// ═══════════════════════════════════════════════════════════════════════════
+
+class CMutableTransaction {
+public:
+    int32_t version = 1;
+    std::vector<CTxIn> vin;
+    std::vector<CTxOut> vout;
+    int64_t locktime = 0;
+
+    CTransaction to_tx() const;
+    static CMutableTransaction from_tx(const CTransaction& tx);
+
+    void add_input(const uint256& txid, uint32_t vout);
+    void add_output(const std::vector<uint8_t>& pubkey_hash, Amount value);
+    void add_op_return(const std::vector<uint8_t>& data);
+
+    bool sign_input(uint32_t index, const uint8_t* privkey,
+                    const uint8_t* pubkey, const uint256& prevout_hash);
+
+    size_t estimated_size() const;
+    Amount compute_fee(const std::vector<Amount>& input_values) const;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PartiallySignedTx — PSBT-like partially signed transaction
+// ═══════════════════════════════════════════════════════════════════════════
+
+class PartiallySignedTx {
+public:
+    CMutableTransaction tx;
+
+    struct InputInfo {
+        bool signed_ = false;
+        std::array<uint8_t, 64> signature{};
+        std::array<uint8_t, 32> pubkey{};
+        Amount value = 0;
+        uint256 prev_txid;
+        uint32_t prev_vout = 0;
+    };
+    std::vector<InputInfo> inputs;
+
+    bool add_signature(uint32_t index, const std::array<uint8_t, 64>& sig,
+                       const std::array<uint8_t, 32>& pubkey);
+    bool is_complete() const;
+    CTransaction finalize() const;
+    static PartiallySignedTx combine(const PartiallySignedTx& a,
+                                      const PartiallySignedTx& b);
+    std::vector<uint8_t> serialize() const;
+    static PartiallySignedTx deserialize(const std::vector<uint8_t>& data);
 };
 
 // ---------------------------------------------------------------------------

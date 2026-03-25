@@ -50,6 +50,18 @@ TESTS = [
 
     # FlowCoin-specific
     "feature_training.py",
+    "feature_model.py",
+    "feature_supply.py",
+    "rpc_training.py",
+
+    # Advanced wallet
+    "wallet_advanced.py",
+
+    # REST API
+    "feature_rest.py",
+
+    # P2P relay
+    "p2p_block_relay.py",
 
     # Mempool
     "mempool_basic.py",

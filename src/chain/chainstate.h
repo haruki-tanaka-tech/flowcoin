@@ -276,6 +276,72 @@ public:
         uint64_t max_height;
     };
     UTXOStatistics get_utxo_stats() const;
+
+    // ═══ Coin age and priority ═══
+
+    /// Compute priority for a transaction (sum of coin_age for all inputs).
+    double compute_tx_priority(const CTransaction& tx, uint64_t current_height) const;
+
+    // ═══ Chain statistics ═══
+
+    struct ChainStats {
+        uint64_t height;
+        uint256 tip_hash;
+        size_t utxo_count;
+        Amount total_supply;
+        Amount total_fees_collected;
+        double difficulty;
+        arith_uint256 chain_work;
+        size_t total_transactions;
+        size_t total_blocks;
+        size_t blocks_disk_bytes;
+        float current_val_loss;
+        size_t model_params;
+        uint256 model_hash;
+        int64_t median_time_past;
+        double avg_block_time_last_100;
+        double avg_tx_per_block_last_100;
+    };
+    ChainStats get_chain_stats() const;
+
+    // ═══ Block verification with detailed results ═══
+
+    struct VerifyResult {
+        bool valid;
+        int checks_passed;
+        int checks_total;
+        std::vector<std::string> errors;
+        std::vector<std::string> warnings;
+        int64_t verify_time_ms;
+    };
+    VerifyResult verify_block_detailed(const CBlock& block) const;
+
+    // ═══ UTXO snapshot ═══
+
+    struct UTXOSnapshot {
+        uint64_t height;
+        uint256 block_hash;
+        uint256 utxo_set_hash;
+        size_t utxo_count;
+        Amount total_value;
+        std::vector<uint8_t> serialized_utxos;
+    };
+    UTXOSnapshot create_utxo_snapshot() const;
+    bool load_utxo_snapshot(const UTXOSnapshot& snapshot);
+    uint256 compute_utxo_set_hash() const;
+
+    // ═══ Chain traversal helpers ═══
+
+    std::vector<CBlockHeader> get_headers_range(uint64_t start, uint64_t end) const;
+    std::vector<uint256> get_hashes_range(uint64_t start, uint64_t end) const;
+    uint64_t find_common_ancestor_height(const uint256& hash_a,
+                                           const uint256& hash_b) const;
+
+    // ═══ Mempool interaction ═══
+
+    /// Check which mempool transactions would be valid in next block.
+    std::vector<uint256> get_valid_mempool_txids(
+        const std::vector<CTransaction>& mempool_txs) const;
 };
 
 } // namespace flow

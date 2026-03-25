@@ -18,6 +18,8 @@
 #include "../util/arith_uint256.h"
 #include "../util/types.h"
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace flow::consensus {
 
@@ -93,6 +95,64 @@ int compare_difficulty(uint32_t nbits_a, uint32_t nbits_b);
 /// @param last_time   Timestamp of last block in retarget period.
 /// @return            Timespan ratio (clamped to valid range).
 double compute_timespan_ratio(int64_t first_time, int64_t last_time);
+
+// ═══ Difficulty analysis ═══
+
+/// Estimate time (seconds) to find a block at given hashrate.
+int64_t estimate_time_to_block(uint32_t nbits, double steps_per_second);
+
+/// Compute expected number of training steps for current difficulty.
+uint64_t expected_steps(uint32_t nbits);
+
+/// Retarget period information.
+struct RetargetInfo {
+    uint64_t height;
+    uint32_t old_nbits;
+    uint32_t new_nbits;
+    double old_difficulty;
+    double new_difficulty;
+    int64_t actual_timespan;
+    int64_t target_timespan;
+    double adjustment_factor;
+    bool clamped;
+};
+
+} // namespace flow::consensus
+
+// Forward declare CBlockIndex in the flow namespace
+namespace flow { struct CBlockIndex; }
+
+namespace flow::consensus {
+
+/// Get difficulty retarget history for last N periods.
+std::vector<RetargetInfo> get_retarget_history(const flow::CBlockIndex* tip,
+                                                 int count = 10);
+
+/// Predict next difficulty adjustment.
+struct DifficultyPrediction {
+    double current_difficulty;
+    double predicted_difficulty;
+    double adjustment_factor;
+    int64_t blocks_until_retarget;
+    int64_t estimated_time_until_retarget;
+    double avg_block_time_current_period;
+};
+
+DifficultyPrediction predict_next_difficulty(const flow::CBlockIndex* tip);
+
+// ═══ Difficulty encoding utilities ═══
+
+double nbits_to_difficulty(uint32_t nbits);
+uint32_t difficulty_to_nbits(double difficulty);
+std::string format_difficulty(double difficulty);
+std::string format_target(const arith_uint256& target);
+std::string format_hashrate(double steps_per_second);
+
+// ═══ Difficulty validation helpers ═══
+
+bool is_valid_nbits(uint32_t nbits);
+bool is_min_difficulty(uint32_t nbits);
+uint32_t get_min_difficulty_nbits();
 
 } // namespace flow::consensus
 

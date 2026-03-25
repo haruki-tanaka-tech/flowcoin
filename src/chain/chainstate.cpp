@@ -2126,5 +2126,689 @@ ChainState::UTXOStatistics ChainState::get_utxo_stats() const {
     return stats;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Coin age and priority computation
+// ═══════════════════════════════════════════════════════════════════════════
+
+double ChainState::compute_tx_priority(const CTransaction& tx,
+                                         uint64_t current_height) const {
+    if (tx.is_coinbase()) return 0.0;
+
+    double total_priority = 0.0;
+
+    for (const auto& in : tx.vin) {
+        UTXOEntry entry;
+        if (!utxo_.get(in.prevout.txid, in.prevout.index, entry)) {
+            continue;  // UTXO not found, skip
+        }
+
+        // Coin age = current_height - creation_height
+        uint64_t age = 0;
+        if (current_height > entry.height) {
+            age = current_height - entry.height;
+        }
+
+        // Priority contribution = value * age
+        double value_d = static_cast<double>(entry.value);
+        double age_d = static_cast<double>(age);
+        total_priority += value_d * age_d;
+    }
+
+    // Normalize by transaction size for fair comparison
+    size_t tx_size = tx.get_serialize_size();
+    if (tx_size > 0) {
+        total_priority /= static_cast<double>(tx_size);
+    }
+
+    return total_priority;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Chain statistics
+// ═══════════════════════════════════════════════════════════════════════════
+
+ChainState::ChainStats ChainState::get_chain_stats() const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    ChainStats stats;
+    std::memset(&stats, 0, sizeof(stats));
+
+    CBlockIndex* t = tip();
+    if (!t) {
+        return stats;
+    }
+
+    stats.height = t->height;
+    stats.tip_hash = t->hash;
+    stats.utxo_count = utxo_.size();
+
+    // Compute total supply from UTXO set
+    UTXOStatistics utxo_stats = get_utxo_stats();
+    stats.total_supply = utxo_stats.total_value;
+
+    // Compute cumulative fees: total_minted - current_supply
+    Amount total_minted = consensus::compute_total_supply(t->height);
+    if (total_minted > stats.total_supply) {
+        stats.total_fees_collected = total_minted - stats.total_supply;
+    } else {
+        stats.total_fees_collected = 0;
+    }
+
+    // Difficulty from current tip
+    arith_uint256 target;
+    if (consensus::derive_target(t->nbits, target)) {
+        // difficulty = powLimit / target
+        arith_uint256 pow_limit;
+        pow_limit.SetCompact(consensus::INITIAL_NBITS);
+        if (!target.IsNull()) {
+            // Approximate difficulty as ratio
+            // For display: difficulty = powLimit_mantissa / target_mantissa * 2^(exp_diff*8)
+            stats.difficulty = static_cast<double>(pow_limit.GetCompact() >> 24) /
+                              static_cast<double>((t->nbits >> 24) > 0 ? (t->nbits >> 24) : 1);
+        }
+    }
+
+    // Chain work
+    stats.chain_work = compute_chain_work(t);
+
+    // Block tree stats
+    stats.total_blocks = tree_.size();
+
+    // Transaction count from tip
+    stats.total_transactions = 0;
+
+    // Model info from tip
+    stats.current_val_loss = t->val_loss;
+    stats.model_params = consensus::estimate_param_count(
+        t->d_model, t->n_layers, t->d_ff, t->n_slots);
+    stats.model_hash = model_state_.engine().model().get_weights_hash();
+
+    // Median time past: median of last 11 block timestamps
+    {
+        std::vector<int64_t> timestamps;
+        CBlockIndex* walk = t;
+        for (int i = 0; i < 11 && walk; i++) {
+            timestamps.push_back(walk->timestamp);
+            walk = walk->prev;
+        }
+        if (!timestamps.empty()) {
+            std::sort(timestamps.begin(), timestamps.end());
+            stats.median_time_past = timestamps[timestamps.size() / 2];
+        }
+    }
+
+    // Average block time and tx count for last 100 blocks
+    {
+        double total_time = 0.0;
+        double total_txs = 0.0;
+        int block_count = 0;
+
+        CBlockIndex* walk = t;
+        CBlockIndex* prev_walk = nullptr;
+
+        while (walk && block_count < 100) {
+            if (prev_walk) {
+                int64_t delta = prev_walk->timestamp - walk->timestamp;
+                if (delta > 0) {
+                    total_time += static_cast<double>(delta);
+                }
+            }
+            total_txs += static_cast<double>(walk->n_tx);
+            prev_walk = walk;
+            walk = walk->prev;
+            block_count++;
+        }
+
+        if (block_count > 1) {
+            stats.avg_block_time_last_100 = total_time / static_cast<double>(block_count - 1);
+        }
+        if (block_count > 0) {
+            stats.avg_tx_per_block_last_100 = total_txs / static_cast<double>(block_count);
+        }
+    }
+
+    // Estimate blocks disk bytes from block store
+    stats.blocks_disk_bytes = 0;
+    {
+        // Approximate: walk the chain and sum the block sizes
+        // For efficiency, only check the last 100 blocks and extrapolate
+        CBlockIndex* walk = t;
+        size_t sampled_bytes = 0;
+        int sampled_count = 0;
+
+        while (walk && sampled_count < 100) {
+            if (!walk->pos.is_null()) {
+                CBlock blk;
+                if (store_.read_block(walk->pos, blk)) {
+                    sampled_bytes += blk.get_block_size();
+                    sampled_count++;
+                }
+            }
+            walk = walk->prev;
+        }
+
+        if (sampled_count > 0) {
+            double avg_block_size = static_cast<double>(sampled_bytes) /
+                                     static_cast<double>(sampled_count);
+            stats.blocks_disk_bytes = static_cast<size_t>(
+                avg_block_size * static_cast<double>(stats.total_blocks));
+        }
+    }
+
+    return stats;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Block verification with detailed results
+// ═══════════════════════════════════════════════════════════════════════════
+
+ChainState::VerifyResult ChainState::verify_block_detailed(
+        const CBlock& block) const {
+
+    auto t0 = std::chrono::steady_clock::now();
+
+    VerifyResult result;
+    result.valid = true;
+    result.checks_passed = 0;
+    result.checks_total = 0;
+
+    auto check = [&](bool condition, const std::string& name,
+                     const std::string& err_msg) {
+        result.checks_total++;
+        if (condition) {
+            result.checks_passed++;
+        } else {
+            result.valid = false;
+            result.errors.push_back(name + ": " + err_msg);
+        }
+    };
+
+    auto warn = [&](bool condition, const std::string& msg) {
+        if (!condition) {
+            result.warnings.push_back(msg);
+        }
+    };
+
+    // Check 1: Block has transactions
+    check(!block.vtx.empty(), "check-txs", "block has no transactions");
+
+    // Check 2: First transaction is coinbase
+    if (!block.vtx.empty()) {
+        check(block.vtx[0].is_coinbase(), "check-coinbase",
+              "first transaction is not a coinbase");
+    }
+
+    // Check 3: No other transaction is coinbase
+    {
+        bool no_extra_coinbase = true;
+        for (size_t i = 1; i < block.vtx.size(); i++) {
+            if (block.vtx[i].is_coinbase()) {
+                no_extra_coinbase = false;
+                break;
+            }
+        }
+        check(no_extra_coinbase, "check-single-coinbase",
+              "multiple coinbase transactions found");
+    }
+
+    // Check 4: Block size within limits
+    size_t block_size = block.get_block_size();
+    check(block_size <= consensus::MAX_BLOCK_SIZE, "check-block-size",
+          "block size " + std::to_string(block_size) + " exceeds limit " +
+          std::to_string(consensus::MAX_BLOCK_SIZE));
+
+    // Check 5: Each transaction passes basic checks
+    {
+        bool all_txs_valid = true;
+        for (size_t i = 0; i < block.vtx.size(); i++) {
+            if (!block.vtx[i].check_transaction()) {
+                all_txs_valid = false;
+                result.errors.push_back("check-tx-" + std::to_string(i) +
+                                        ": transaction failed basic validity");
+            }
+        }
+        result.checks_total++;
+        if (all_txs_valid) result.checks_passed++;
+        else result.valid = false;
+    }
+
+    // Check 6: Merkle root
+    check(block.verify_merkle_root(), "check-merkle-root",
+          "merkle root does not match computed root");
+
+    // Check 7: No duplicate transactions
+    {
+        bool no_dupes = true;
+        std::vector<uint256> txids;
+        txids.reserve(block.vtx.size());
+        for (const auto& tx : block.vtx) {
+            uint256 txid = tx.get_txid();
+            for (const auto& existing : txids) {
+                if (txid == existing) {
+                    no_dupes = false;
+                    break;
+                }
+            }
+            if (!no_dupes) break;
+            txids.push_back(txid);
+        }
+        check(no_dupes, "check-dup-txids", "duplicate transaction found");
+    }
+
+    // Check 8: Height consistency
+    if (block.height > 0) {
+        CBlockIndex* parent = tree_.find(block.prev_hash);
+        if (parent) {
+            check(block.height == parent->height + 1, "check-height",
+                  "height does not follow parent");
+        } else {
+            result.warnings.push_back("parent block not found for height check");
+        }
+    }
+
+    // Check 9: Timestamp validation
+    {
+        int64_t now = get_adjusted_time();
+        check(block.timestamp <= now + consensus::MAX_FUTURE_TIME,
+              "check-timestamp-future",
+              "block timestamp too far in the future");
+    }
+
+    // Check 10: Version
+    check(block.version >= 1, "check-version",
+          "block version is zero");
+
+    // Check 11: Difficulty target validity
+    {
+        arith_uint256 target;
+        check(consensus::derive_target(block.nbits, target), "check-nbits",
+              "invalid difficulty target encoding");
+    }
+
+    // Check 12: val_loss bounds
+    check(block.val_loss >= 0.0f && block.val_loss <= consensus::MAX_VAL_LOSS,
+          "check-val-loss", "val_loss out of bounds");
+
+    // Check 13: Delta payload size
+    if (!block.delta_payload.empty()) {
+        check(block.delta_payload.size() <= consensus::MAX_DELTA_SIZE,
+              "check-delta-size",
+              "delta payload exceeds maximum size");
+    }
+
+    // Check 14: Architecture dimensions validity
+    check(consensus::is_valid_d_model(block.d_model), "check-d-model",
+          "d_model out of valid range");
+    check(consensus::is_valid_n_layers(block.n_layers), "check-n-layers",
+          "n_layers out of valid range");
+
+    // Check 15: Coinbase reward
+    if (!block.vtx.empty() && block.vtx[0].is_coinbase()) {
+        Amount reward = consensus::compute_block_reward(block.height);
+        Amount coinbase_value = block.vtx[0].get_value_out();
+        // Coinbase can include fees, so it should be >= reward (but we
+        // can only check upper bound with context)
+        warn(coinbase_value >= reward,
+             "coinbase output less than expected block reward");
+    }
+
+    // Warnings for suboptimal blocks
+    warn(block.vtx.size() > 1, "block contains only the coinbase transaction");
+    warn(block.delta_payload.size() >= consensus::MIN_DELTA_SIZE,
+         "empty or minimal delta payload");
+
+    auto t1 = std::chrono::steady_clock::now();
+    result.verify_time_ms = std::chrono::duration_cast<
+        std::chrono::milliseconds>(t1 - t0).count();
+
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UTXO snapshot creation and loading
+// ═══════════════════════════════════════════════════════════════════════════
+
+ChainState::UTXOSnapshot ChainState::create_utxo_snapshot() const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    UTXOSnapshot snapshot;
+    CBlockIndex* t = tip();
+    if (!t) {
+        snapshot.height = 0;
+        snapshot.utxo_count = 0;
+        snapshot.total_value = 0;
+        return snapshot;
+    }
+
+    snapshot.height = t->height;
+    snapshot.block_hash = t->hash;
+    snapshot.utxo_count = 0;
+    snapshot.total_value = 0;
+
+    // Serialize all UTXOs
+    std::vector<uint8_t> serialized;
+    serialized.reserve(utxo_.size() * 85);  // approximate entry size
+
+    utxo_.for_each([&](const uint256& txid, uint32_t vout, const UTXOEntry& entry) {
+        // txid (32 bytes)
+        serialized.insert(serialized.end(), txid.begin(), txid.end());
+
+        // vout (4 bytes LE)
+        serialized.push_back(static_cast<uint8_t>(vout));
+        serialized.push_back(static_cast<uint8_t>(vout >> 8));
+        serialized.push_back(static_cast<uint8_t>(vout >> 16));
+        serialized.push_back(static_cast<uint8_t>(vout >> 24));
+
+        // value (8 bytes LE)
+        int64_t val = entry.value;
+        for (int i = 0; i < 8; i++) {
+            serialized.push_back(static_cast<uint8_t>(val >> (i * 8)));
+        }
+
+        // pubkey_hash (32 bytes)
+        serialized.insert(serialized.end(),
+                           entry.pubkey_hash.begin(), entry.pubkey_hash.end());
+
+        // height (8 bytes LE)
+        uint64_t h = entry.height;
+        for (int i = 0; i < 8; i++) {
+            serialized.push_back(static_cast<uint8_t>(h >> (i * 8)));
+        }
+
+        // is_coinbase (1 byte)
+        serialized.push_back(entry.is_coinbase ? 1 : 0);
+
+        snapshot.utxo_count++;
+        snapshot.total_value += entry.value;
+    });
+
+    snapshot.serialized_utxos = std::move(serialized);
+    snapshot.utxo_set_hash = compute_utxo_set_hash();
+
+    return snapshot;
+}
+
+bool ChainState::load_utxo_snapshot(const UTXOSnapshot& snapshot) {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    if (snapshot.serialized_utxos.empty()) {
+        return false;
+    }
+
+    // Each entry: 32 (txid) + 4 (vout) + 8 (value) + 32 (pkh) + 8 (height) + 1 (cb) = 85
+    static constexpr size_t ENTRY_SIZE = 85;
+
+    if (snapshot.serialized_utxos.size() % ENTRY_SIZE != 0) {
+        fprintf(stderr, "load_utxo_snapshot: invalid serialized size %zu "
+                "(not a multiple of %zu)\n",
+                snapshot.serialized_utxos.size(), ENTRY_SIZE);
+        return false;
+    }
+
+    size_t expected_count = snapshot.serialized_utxos.size() / ENTRY_SIZE;
+    if (expected_count != snapshot.utxo_count) {
+        fprintf(stderr, "load_utxo_snapshot: count mismatch: header says %zu, "
+                "data has %zu entries\n",
+                snapshot.utxo_count, expected_count);
+        return false;
+    }
+
+    utxo_.begin_transaction();
+
+    const uint8_t* data = snapshot.serialized_utxos.data();
+    size_t pos = 0;
+    size_t loaded = 0;
+
+    for (size_t i = 0; i < expected_count; i++) {
+        uint256 txid;
+        std::memcpy(txid.data(), data + pos, 32);
+        pos += 32;
+
+        uint32_t vout = static_cast<uint32_t>(data[pos])
+                      | (static_cast<uint32_t>(data[pos + 1]) << 8)
+                      | (static_cast<uint32_t>(data[pos + 2]) << 16)
+                      | (static_cast<uint32_t>(data[pos + 3]) << 24);
+        pos += 4;
+
+        UTXOEntry entry;
+
+        int64_t val = 0;
+        for (int j = 0; j < 8; j++) {
+            val |= static_cast<int64_t>(data[pos + j]) << (j * 8);
+        }
+        entry.value = val;
+        pos += 8;
+
+        std::memcpy(entry.pubkey_hash.data(), data + pos, 32);
+        pos += 32;
+
+        uint64_t h = 0;
+        for (int j = 0; j < 8; j++) {
+            h |= static_cast<uint64_t>(data[pos + j]) << (j * 8);
+        }
+        entry.height = h;
+        pos += 8;
+
+        entry.is_coinbase = (data[pos] != 0);
+        pos += 1;
+
+        utxo_.add(txid, vout, entry);
+        loaded++;
+    }
+
+    utxo_.commit_transaction();
+
+    fprintf(stderr, "load_utxo_snapshot: loaded %zu UTXOs at height %lu\n",
+            loaded, static_cast<unsigned long>(snapshot.height));
+
+    return true;
+}
+
+uint256 ChainState::compute_utxo_set_hash() const {
+    // Compute a hash over the entire UTXO set for snapshot verification.
+    // We concatenate (txid || vout || value || height) for each UTXO in
+    // lexicographic order of (txid, vout), then hash the result.
+
+    // Collect all entries
+    struct UTXOKey {
+        uint256 txid;
+        uint32_t vout;
+        Amount value;
+        uint64_t height;
+    };
+
+    std::vector<UTXOKey> entries;
+    entries.reserve(utxo_.size());
+
+    utxo_.for_each([&](const uint256& txid, uint32_t vout, const UTXOEntry& entry) {
+        UTXOKey key;
+        key.txid = txid;
+        key.vout = vout;
+        key.value = entry.value;
+        key.height = entry.height;
+        entries.push_back(key);
+    });
+
+    // Sort by (txid, vout) for deterministic ordering
+    std::sort(entries.begin(), entries.end(),
+              [](const UTXOKey& a, const UTXOKey& b) {
+                  if (a.txid < b.txid) return true;
+                  if (b.txid < a.txid) return false;
+                  return a.vout < b.vout;
+              });
+
+    // Serialize and hash
+    std::vector<uint8_t> hash_input;
+    hash_input.reserve(entries.size() * 52);  // 32 + 4 + 8 + 8 = 52 per entry
+
+    for (const auto& e : entries) {
+        hash_input.insert(hash_input.end(), e.txid.begin(), e.txid.end());
+
+        hash_input.push_back(static_cast<uint8_t>(e.vout));
+        hash_input.push_back(static_cast<uint8_t>(e.vout >> 8));
+        hash_input.push_back(static_cast<uint8_t>(e.vout >> 16));
+        hash_input.push_back(static_cast<uint8_t>(e.vout >> 24));
+
+        int64_t val = e.value;
+        for (int i = 0; i < 8; i++) {
+            hash_input.push_back(static_cast<uint8_t>(val >> (i * 8)));
+        }
+
+        uint64_t h = e.height;
+        for (int i = 0; i < 8; i++) {
+            hash_input.push_back(static_cast<uint8_t>(h >> (i * 8)));
+        }
+    }
+
+    return keccak256(hash_input.data(), hash_input.size());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Chain traversal helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+std::vector<CBlockHeader> ChainState::get_headers_range(
+        uint64_t start, uint64_t end) const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    std::vector<CBlockHeader> headers;
+
+    CBlockIndex* t = tip();
+    if (!t || start > t->height) return headers;
+
+    if (end > t->height) end = t->height;
+
+    // Walk from tip to end, collecting blocks
+    // First build path from tip to start
+    std::vector<CBlockIndex*> path;
+    CBlockIndex* walk = t;
+    while (walk && walk->height >= start) {
+        if (walk->height <= end) {
+            path.push_back(walk);
+        }
+        if (walk->height == 0) break;
+        walk = walk->prev;
+    }
+
+    std::reverse(path.begin(), path.end());
+
+    headers.reserve(path.size());
+    for (CBlockIndex* idx : path) {
+        CBlock blk;
+        if (!idx->pos.is_null() && store_.read_block(idx->pos, blk)) {
+            headers.push_back(blk.get_header());
+        }
+    }
+
+    return headers;
+}
+
+std::vector<uint256> ChainState::get_hashes_range(
+        uint64_t start, uint64_t end) const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    std::vector<uint256> hashes;
+
+    CBlockIndex* t = tip();
+    if (!t || start > t->height) return hashes;
+
+    if (end > t->height) end = t->height;
+
+    // Collect hashes by walking backwards from tip
+    std::vector<std::pair<uint64_t, uint256>> collected;
+    CBlockIndex* walk = t;
+    while (walk && walk->height >= start) {
+        if (walk->height <= end) {
+            collected.emplace_back(walk->height, walk->hash);
+        }
+        if (walk->height == 0) break;
+        walk = walk->prev;
+    }
+
+    // Reverse to get ascending order
+    std::reverse(collected.begin(), collected.end());
+
+    hashes.reserve(collected.size());
+    for (const auto& pair : collected) {
+        hashes.push_back(pair.second);
+    }
+
+    return hashes;
+}
+
+uint64_t ChainState::find_common_ancestor_height(
+        const uint256& hash_a, const uint256& hash_b) const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    CBlockIndex* idx_a = tree_.find(hash_a);
+    CBlockIndex* idx_b = tree_.find(hash_b);
+
+    if (!idx_a || !idx_b) return 0;
+
+    const CBlockIndex* fork = find_fork(idx_a, idx_b);
+    return fork ? fork->height : 0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Mempool interaction — valid transaction selection for next block
+// ═══════════════════════════════════════════════════════════════════════════
+
+std::vector<uint256> ChainState::get_valid_mempool_txids(
+        const std::vector<CTransaction>& mempool_txs) const {
+    std::lock_guard<std::mutex> lock(cs_main_);
+
+    std::vector<uint256> valid_txids;
+    valid_txids.reserve(mempool_txs.size());
+
+    CBlockIndex* t = tip();
+    if (!t) return valid_txids;
+
+    uint64_t next_height = t->height + 1;
+    int64_t next_time = get_adjusted_time();
+
+    for (const auto& tx : mempool_txs) {
+        // Skip coinbase transactions
+        if (tx.is_coinbase()) continue;
+
+        // Check basic transaction validity
+        if (!tx.check_transaction()) continue;
+
+        // Check locktime finality
+        if (!tx.is_final(next_height, next_time)) continue;
+
+        // Check that all inputs exist in the UTXO set
+        bool all_inputs_available = true;
+        Amount input_sum = 0;
+
+        for (const auto& in : tx.vin) {
+            UTXOEntry entry;
+            if (!utxo_.get(in.prevout.txid, in.prevout.index, entry)) {
+                all_inputs_available = false;
+                break;
+            }
+
+            // Check coinbase maturity
+            if (entry.is_coinbase) {
+                if (next_height < entry.height + consensus::COINBASE_MATURITY) {
+                    all_inputs_available = false;
+                    break;
+                }
+            }
+
+            input_sum += entry.value;
+        }
+
+        if (!all_inputs_available) continue;
+
+        // Check that inputs >= outputs (no negative fees)
+        Amount output_sum = tx.get_value_out();
+        if (input_sum < output_sum) continue;
+
+        valid_txids.push_back(tx.get_txid());
+    }
+
+    return valid_txids;
+}
+
 } // namespace flow
 
