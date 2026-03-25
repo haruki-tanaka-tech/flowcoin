@@ -15,9 +15,12 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "util/types.h"
 
 #include <json.hpp>
 #include <uv.h>
@@ -25,6 +28,96 @@
 namespace flow {
 
 using json = nlohmann::json;
+
+// ---------------------------------------------------------------------------
+// HttpRequest — parsed HTTP request
+// ---------------------------------------------------------------------------
+
+struct HttpRequest {
+    std::string method;
+    std::string path;
+    std::string query;
+    std::string http_version;
+    std::string client_ip;
+    std::map<std::string, std::string> headers;
+    std::vector<uint8_t> body;
+
+    std::string get_header(const std::string& name) const;
+    bool has_header(const std::string& name) const;
+    std::string content_type() const;
+    size_t content_length() const;
+    bool keep_alive() const;
+    std::string auth_user() const;
+    std::string auth_password() const;
+};
+
+// ---------------------------------------------------------------------------
+// HttpResponse — HTTP response builder
+// ---------------------------------------------------------------------------
+
+class HttpResponse {
+public:
+    explicit HttpResponse(int status_code = 200);
+
+    HttpResponse& set_status(int code);
+    HttpResponse& set_header(const std::string& name, const std::string& value);
+    HttpResponse& set_body(const std::string& body);
+    HttpResponse& set_body(const std::vector<uint8_t>& body);
+    HttpResponse& set_json(const nlohmann::json& j);
+    HttpResponse& set_content_type(const std::string& type);
+    HttpResponse& enable_cors();
+    HttpResponse& set_keep_alive(bool enabled);
+
+    std::vector<uint8_t> serialize() const;
+
+    static HttpResponse ok(const nlohmann::json& j);
+    static HttpResponse error(int code, const std::string& message);
+    static HttpResponse not_found();
+    static HttpResponse unauthorized();
+    static HttpResponse method_not_allowed();
+    static HttpResponse too_many_requests();
+    static HttpResponse internal_error(const std::string& msg);
+    static std::string status_text(int code);
+
+private:
+    int status_;
+    std::map<std::string, std::string> headers_;
+    std::vector<uint8_t> body_;
+};
+
+// ---------------------------------------------------------------------------
+// HttpParser — stateful HTTP/1.1 parser for keep-alive connections
+// ---------------------------------------------------------------------------
+
+class HttpParser {
+public:
+    enum class State {
+        READING_REQUEST_LINE,
+        READING_HEADERS,
+        READING_BODY,
+        COMPLETE,
+        ERROR
+    };
+
+    size_t feed(const uint8_t* data, size_t len);
+    State state() const;
+    bool is_complete() const;
+    bool has_error() const;
+    std::string error_message() const;
+    HttpRequest get_request() const;
+    void reset();
+
+private:
+    State state_ = State::READING_REQUEST_LINE;
+    HttpRequest req_;
+    std::string line_buffer_;
+    size_t body_received_ = 0;
+    size_t body_expected_ = 0;
+    std::string error_;
+
+    bool parse_request_line(const std::string& line);
+    bool parse_header_line(const std::string& line);
+};
 
 /// RPC method signature: takes JSON params, returns JSON result.
 /// On error, throw std::runtime_error with a descriptive message.
@@ -58,7 +151,7 @@ public:
     void stop();
 
     /// Check if the server is running.
-    bool is_running() const { return running_; }
+    bool is_running() const { return running_.load(); }
 
     /// Get the port the server is listening on.
     uint16_t port() const { return port_; }
@@ -68,19 +161,19 @@ public:
     // -------------------------------------------------------------------
 
     /// Set the request timeout in seconds (default 30).
-    void set_timeout(int seconds) { timeout_seconds_ = seconds; }
+    void set_timeout(int seconds);
 
     /// Set the maximum request body size in bytes (default 8MB).
-    void set_max_body_size(size_t bytes) { max_body_size_ = bytes; }
+    void set_max_body_size(size_t bytes);
 
     /// Enable or disable CORS headers (default disabled).
     void set_cors_enabled(bool enabled) { cors_enabled_ = enabled; }
 
     /// Set allowed CORS origin (default "*").
-    void set_cors_origin(const std::string& origin) { cors_origin_ = origin; }
+    void set_cors_origin(const std::string& origin);
 
     /// Set rate limit: max requests per second per IP (0 = no limit).
-    void set_rate_limit(int max_per_second) { rate_limit_ = max_per_second; }
+    void set_rate_limit(int max_per_second);
 
     /// Enable cookie-based authentication from a file.
     void set_cookie_auth(const std::string& cookie_path);
@@ -104,7 +197,7 @@ private:
     std::string cookie_auth_;  // Cookie-based auth string
 
     uv_tcp_t server_;
-    bool running_ = false;
+    std::atomic<bool> running_{false};
     std::unordered_map<std::string, RpcMethod> methods_;
     mutable std::mutex methods_mutex_;
 
@@ -182,6 +275,61 @@ private:
 
     /// Extract the client IP address from a libuv stream handle.
     static std::string get_client_ip(uv_stream_t* client);
+
+    // --- Request routing ---
+    void route_request(const HttpRequest& req, HttpResponse& resp);
+    void handle_rest_request(const HttpRequest& req, HttpResponse& resp);
+
+    // --- Connection tracking ---
+    struct RpcConnection {
+        uint64_t id;
+        std::string client_ip;
+        int64_t connected_at;
+        int requests_served;
+        int64_t last_request_at;
+        bool authenticated;
+        bool keep_alive;
+    };
+
+    mutable std::mutex conn_mutex_;
+    std::map<uint64_t, RpcConnection> active_connections_;
+    int max_connections_ = 100;
+
+    void track_connection(uint64_t id, const std::string& client_ip);
+    void untrack_connection(uint64_t id);
+    void update_connection(uint64_t id);
+    std::vector<RpcConnection> get_connections() const;
+    void set_max_connections(int max_conn);
+
+    // --- Long polling ---
+    struct LongPollContext {
+        uint64_t target_height = 0;
+        uint256 target_hash;
+        int64_t timeout = 0;
+        std::function<void(const json&)> callback;
+    };
+
+    mutable std::mutex poll_mutex_;
+    std::vector<LongPollContext> long_polls_;
+
+    void add_long_poll(LongPollContext ctx);
+    void notify_new_block(uint64_t height, const uint256& hash);
+    void expire_long_polls();
+
+    // --- Whitelist / blacklist ---
+    mutable std::mutex acl_mutex_;
+    std::set<std::string> whitelist_;
+    std::set<std::string> blacklist_;
+
+    void add_whitelist(const std::string& ip);
+    void remove_whitelist(const std::string& ip);
+    void add_blacklist(const std::string& ip);
+    void remove_blacklist(const std::string& ip);
+    bool is_allowed(const std::string& ip) const;
+
+    // --- Method introspection ---
+    json build_help_text() const;
+    json get_server_info() const;
 };
 
 } // namespace flow

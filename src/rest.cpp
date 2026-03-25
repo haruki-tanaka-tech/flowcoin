@@ -8,7 +8,7 @@
 #include "hash/keccak.h"
 #include "util/strencodings.h"
 
-#include <nlohmann/json.hpp>
+#include "json/json.hpp"
 
 #include <algorithm>
 #include <cassert>

@@ -111,6 +111,9 @@ public:
     /// Total database file size on disk (bytes).
     size_t disk_usage() const;
 
+    /// Compact the database (SQLite incremental vacuum).
+    void compact();
+
 private:
     sqlite3* db_ = nullptr;
     std::string db_path_;

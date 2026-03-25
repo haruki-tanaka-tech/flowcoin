@@ -9,6 +9,7 @@
 #include "mempool/mempool.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 
 namespace flow::interfaces {

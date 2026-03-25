@@ -7,6 +7,7 @@
 
 #include "net/peer.h"
 #include "util/time.h"
+#include "json/json.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -546,9 +547,7 @@ Peer::PeerPreferences Peer::get_preferences() const {
 // Misbehavior management
 // ===========================================================================
 
-void Peer::add_misbehavior(int howmuch) {
-    misbehavior_ += howmuch;
-}
+// add_misbehavior is defined inline in peer.h
 
 int Peer::misbehavior() const {
     return misbehavior_;
@@ -648,9 +647,7 @@ nlohmann::json Peer::ConnectionQuality::to_json() const {
 // Service flag helpers
 // ===========================================================================
 
-bool Peer::has_service(uint32_t flag) const {
-    return (services_ & flag) != 0;
-}
+// has_service(uint64_t) is defined inline in peer.h
 
 bool Peer::is_full_node() const {
     return has_service(PEER_NODE_NETWORK);
@@ -772,9 +769,7 @@ void Peer::set_addr(const CNetAddr& addr) {
     addr_ = addr;
 }
 
-CNetAddr Peer::addr() const {
-    return addr_;
-}
+// addr() is defined inline in peer.h (returns const ref)
 
 std::string Peer::addr_string() const {
     return addr_.to_string();
@@ -784,21 +779,8 @@ std::string Peer::addr_string() const {
 // Synced state tracking
 // ===========================================================================
 
-void Peer::set_synced_headers(uint64_t height) {
-    synced_headers_ = height;
-}
-
-void Peer::set_synced_blocks(uint64_t height) {
-    synced_blocks_ = height;
-}
-
-uint64_t Peer::synced_headers() const {
-    return synced_headers_;
-}
-
-uint64_t Peer::synced_blocks() const {
-    return synced_blocks_;
-}
+// set_synced_headers, set_synced_blocks, synced_headers, synced_blocks
+// are defined inline in peer.h
 
 bool Peer::is_synced_to(uint64_t height) const {
     return synced_blocks_ >= height;

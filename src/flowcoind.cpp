@@ -9,6 +9,7 @@
 
 #include "init.h"
 #include "logging.h"
+#include "net/net.h"
 #include "node/context.h"
 #include "version.h"
 
@@ -130,13 +131,13 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Log startup info ----
-    flow::LogInfo("main", "FlowCoin daemon started successfully (pid=%d)",
+    LogInfo("main", "FlowCoin daemon started successfully (pid=%d)",
                   flow::sys::get_pid());
-    flow::LogInfo("main", "Network: %s | P2P port: %u | RPC port: %u",
+    LogInfo("main", "Network: %s | P2P port: %u | RPC port: %u",
                   node.get_network_name(),
                   static_cast<unsigned>(node.config.get_int("port", node.get_port())),
                   static_cast<unsigned>(node.config.get_int("rpcport", node.get_rpc_port())));
-    flow::LogInfo("main", "Data directory: %s", node.datadir.c_str());
+    LogInfo("main", "Data directory: %s", node.datadir.c_str());
 
     // ---- Run the event loop ----
     // The RPC server runs on the main thread's libuv loop.
@@ -151,16 +152,16 @@ int main(int argc, char* argv[]) {
 
     // Run the main libuv event loop (blocks until uv_stop is called)
     if (node.loop) {
-        flow::LogInfo("main", "Entering main event loop");
+        LogInfo("main", "Entering main event loop");
         uv_run(node.loop, UV_RUN_DEFAULT);
     } else {
         // No libuv loop (RPC disabled) — wait for shutdown signal
-        flow::LogInfo("main", "Waiting for shutdown signal (no RPC server)");
+        LogInfo("main", "Waiting for shutdown signal (no RPC server)");
         flow::get_shutdown_state().wait_for_shutdown();
     }
 
     // ---- Graceful shutdown ----
-    flow::LogInfo("main", "Main loop exited, beginning shutdown...");
+    LogInfo("main", "Main loop exited, beginning shutdown...");
 
     // Stop the network thread
     if (node.net) {
@@ -173,7 +174,7 @@ int main(int argc, char* argv[]) {
     // Run full shutdown sequence
     flow::init::app_shutdown(node);
 
-    flow::LogInfo("main", "Shutdown complete. Goodbye.");
+    LogInfo("main", "Shutdown complete. Goodbye.");
 
     g_node = nullptr;
     return EXIT_SUCCESS;

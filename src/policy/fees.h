@@ -144,6 +144,7 @@ private:
         int bucket_index = -1;
     };
 
+public:
     // ---- Bucket statistics -------------------------------------------------
 
     struct BucketStats {

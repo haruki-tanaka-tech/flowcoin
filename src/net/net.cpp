@@ -355,6 +355,10 @@ std::vector<Peer*> NetManager::get_peers() const {
     return result;
 }
 
+std::vector<Peer*> NetManager::connected_peers() const {
+    return get_peers();
+}
+
 size_t NetManager::peer_count() const {
     std::lock_guard<std::mutex> lock(peers_mutex_);
     size_t count = 0;
@@ -1371,7 +1375,7 @@ void NetManager::on_new_inbound(uv_stream_t* server) {
 // Bandwidth management
 // ===========================================================================
 
-BandwidthStats NetManager::get_bandwidth_stats() const {
+NetManager::BandwidthStats NetManager::get_bandwidth_stats() const {
     BandwidthStats stats;
     stats.total_sent = static_cast<int64_t>(total_bytes_sent_.load());
     stats.total_received = static_cast<int64_t>(total_bytes_recv_.load());
@@ -1700,6 +1704,11 @@ NetManager::NetworkInfo NetManager::get_network_info() const {
     info.banned_count = banman_.count();
 
     return info;
+}
+
+void NetManager::save_peers(const std::string& path) {
+    (void)path;
+    // AddrMan serialization would go here
 }
 
 } // namespace flow

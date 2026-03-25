@@ -106,11 +106,16 @@ public:
         uint256 txid;
         int64_t timestamp;
         int64_t amount;           // positive = received, negative = sent
+        int64_t fee = 0;          // transaction fee paid
         uint64_t block_height;    // 0 if unconfirmed
+        int confirmations = 0;   // number of confirmations
         uint256 block_hash;
         std::string from_address;
         std::string to_address;
+        std::string address;      // primary address (to_address or from_address)
         std::string label;
+        bool is_send = false;     // whether this is a send transaction
+        bool is_coinbase = false; // whether this is a coinbase transaction
     };
 
     bool store_tx(const WalletTx& tx);
@@ -163,6 +168,87 @@ public:
 
     std::string db_path() const { return db_path_; }
     int64_t db_size_bytes() const;
+
+    // -------------------------------------------------------------------
+    // Schema migration
+    // -------------------------------------------------------------------
+
+    bool migrate_schema(int from_version, int to_version);
+    bool check_and_migrate();
+
+    // -------------------------------------------------------------------
+    // Integrity verification
+    // -------------------------------------------------------------------
+
+    struct IntegrityResult {
+        bool passed;
+        int orphan_keys;
+        int orphan_addrs;
+        int missing_txids;
+        int duplicate_entries;
+        std::vector<std::string> errors;
+        std::vector<std::string> warnings;
+    };
+
+    IntegrityResult verify_integrity() const;
+    int repair();
+
+    // -------------------------------------------------------------------
+    // Database statistics
+    // -------------------------------------------------------------------
+
+    struct DBStats {
+        size_t file_size;
+        int key_count;
+        int address_count;
+        int tx_count;
+        int label_count;
+        int locked_coin_count;
+        int address_book_count;
+        int schema_version;
+        int page_size;
+        int page_count;
+        int freelist_count;
+        std::string sqlite_version;
+        bool wal_mode = false;
+    };
+
+    DBStats get_db_stats() const;
+
+    // -------------------------------------------------------------------
+    // Secure key erasure
+    // -------------------------------------------------------------------
+
+    bool secure_erase_key(uint32_t index);
+    bool secure_erase_all_keys();
+
+    // -------------------------------------------------------------------
+    // Locked coins
+    // -------------------------------------------------------------------
+
+    bool store_locked_coin(const uint256& txid, uint32_t vout,
+                            const std::string& reason = "");
+    bool remove_locked_coin(const uint256& txid, uint32_t vout);
+    std::vector<std::pair<uint256, uint32_t>> load_locked_coins() const;
+    bool clear_locked_coins();
+
+    // -------------------------------------------------------------------
+    // Address book
+    // -------------------------------------------------------------------
+
+    bool store_address_book_entry(const std::string& addr,
+                                   const std::string& label,
+                                   const std::string& purpose);
+    bool delete_address_book_entry(const std::string& addr);
+    std::vector<std::tuple<std::string, std::string, std::string>>
+        load_address_book() const;
+
+    // -------------------------------------------------------------------
+    // Scan progress tracking
+    // -------------------------------------------------------------------
+
+    bool store_scan_progress(uint64_t height, uint64_t total, int found);
+    bool load_scan_progress(uint64_t& height, uint64_t& total, int& found) const;
 
 private:
     sqlite3* db_ = nullptr;

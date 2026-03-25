@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "../json/json.hpp"
+
 namespace flow {
 
 enum class PeerState {
@@ -255,6 +257,162 @@ public:
     // Get /16 subnet identifier for IPv4 (first 2 octets)
     uint16_t get_subnet_id() const;
 
+    // -----------------------------------------------------------------------
+    // Peer scoring system
+    // -----------------------------------------------------------------------
+
+    struct PeerScore {
+        double avg_latency_ms = -1.0;
+        double bandwidth_kbps = 0.0;
+        int blocks_served = 0;
+        int txs_served = 0;
+        int headers_served = 0;
+        int successful_connections = 0;
+        int failed_connections = 0;
+        int timeouts = 0;
+        int stalls = 0;
+        double uptime_ratio = 1.0;
+        int misbehavior_score = 0;
+        int invalid_blocks_sent = 0;
+        int invalid_txs_sent = 0;
+        int addr_spam_count = 0;
+
+        double overall_score() const;
+        bool is_good_peer() const;
+        bool should_evict() const;
+        bool should_ban() const;
+        std::string format() const;
+    };
+
+    PeerScore compute_score() const;
+
+    // -----------------------------------------------------------------------
+    // Full peer statistics
+    // -----------------------------------------------------------------------
+
+    struct PeerStats {
+        int64_t connect_time = 0;
+        int64_t last_send = 0;
+        int64_t last_recv = 0;
+        int64_t last_block = 0;
+        int64_t last_tx = 0;
+        int64_t bytes_sent = 0;
+        int64_t bytes_received = 0;
+        int64_t avg_bandwidth = 0;
+        std::map<std::string, int64_t> msgs_sent;
+        std::map<std::string, int64_t> msgs_received;
+        uint64_t synced_headers = 0;
+        uint64_t synced_blocks = 0;
+        uint64_t start_height = 0;
+        double ping_time_ms = 0.0;
+        double ping_wait_ms = 0.0;
+        int misbehavior = 0;
+
+        nlohmann::json to_json() const;
+    };
+
+    PeerStats get_full_stats() const;
+
+    // -----------------------------------------------------------------------
+    // Peer preferences
+    // -----------------------------------------------------------------------
+
+    struct PeerPreferences {
+        bool wants_headers = false;
+        bool wants_compact_blocks = false;
+        bool high_bandwidth_mode = false;
+        int64_t fee_filter = 0;
+        uint64_t services = 0;
+        int protocol_version = 0;
+        std::string user_agent;
+        int start_height = 0;
+        bool relay_txs = true;
+    };
+
+    PeerPreferences get_preferences() const;
+
+    // -----------------------------------------------------------------------
+    // Connection quality assessment
+    // -----------------------------------------------------------------------
+
+    struct ConnectionQuality {
+        std::string stability;
+        int stability_score = 0;
+        std::string latency;
+        int latency_score = 0;
+        std::string throughput;
+        int throughput_score = 0;
+        int overall_score = 0;
+
+        nlohmann::json to_json() const;
+    };
+
+    ConnectionQuality assess_connection() const;
+
+    // -----------------------------------------------------------------------
+    // Extended misbehavior management
+    // -----------------------------------------------------------------------
+
+    int misbehavior() const;
+    bool should_disconnect() const;
+    void reset_misbehavior();
+
+    // -----------------------------------------------------------------------
+    // Extended service flag helpers
+    // -----------------------------------------------------------------------
+
+    bool is_full_node() const;
+    std::string services_string() const;
+
+    // -----------------------------------------------------------------------
+    // Peer address management
+    // -----------------------------------------------------------------------
+
+    void set_addr(const CNetAddr& addr);
+    std::string addr_string() const;
+
+    // -----------------------------------------------------------------------
+    // Sync helpers
+    // -----------------------------------------------------------------------
+
+    bool is_synced_to(uint64_t height) const;
+
+    // -----------------------------------------------------------------------
+    // Transaction-specific inventory tracking
+    // -----------------------------------------------------------------------
+
+    bool has_announced_tx(const uint256& txid) const { return announced_txs_.count(txid) > 0; }
+    void mark_announced_tx(const uint256& txid) { announced_txs_.insert(txid); }
+    bool has_requested_tx(const uint256& txid) const { return requested_txs_.count(txid) > 0; }
+    void mark_requested_tx(const uint256& txid) { requested_txs_.insert(txid); }
+    void clear_requested_tx() { requested_txs_.clear(); }
+    void clear_requested_tx(const uint256& txid) { requested_txs_.erase(txid); }
+
+    // Block-specific inventory tracking
+    bool has_announced_block(const uint256& hash) const { return announced_blocks_.count(hash) > 0; }
+    void mark_announced_block(const uint256& hash) { announced_blocks_.insert(hash); }
+
+    // Trickle relay queue
+    void add_to_trickle_queue(const uint256& txid) { trickle_queue_.push_back(txid); }
+    int64_t last_trickle_time() const { return last_trickle_time_; }
+    void set_last_trickle_time(int64_t t) { last_trickle_time_ = t; }
+    std::vector<uint256> drain_trickle_queue() {
+        std::vector<uint256> q = std::move(trickle_queue_);
+        trickle_queue_.clear();
+        return q;
+    }
+
+    // Minimum ping tracking
+    void set_min_ping_us(int64_t us) {
+        if (us < min_ping_us_) min_ping_us_ = us;
+    }
+
+    // -----------------------------------------------------------------------
+    // JSON serialization
+    // -----------------------------------------------------------------------
+
+    nlohmann::json to_json() const;
+
 private:
     uint64_t id_;
     CNetAddr addr_;
@@ -319,6 +477,15 @@ private:
 
     // Feeler connection flag
     bool is_feeler_ = false;
+
+    // Transaction-specific inventory
+    std::set<uint256> announced_txs_;
+    std::set<uint256> requested_txs_;
+    std::set<uint256> announced_blocks_;
+
+    // Trickle relay queue
+    std::vector<uint256> trickle_queue_;
+    int64_t last_trickle_time_ = 0;
 };
 
 } // namespace flow

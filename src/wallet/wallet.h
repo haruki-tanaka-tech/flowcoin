@@ -21,11 +21,13 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <set>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 namespace flow {
@@ -155,6 +157,140 @@ public:
     /// Access the key pool.
     KeyPool& key_pool() { return keypool_; }
 
+    // ---- Multi-recipient sending ----
+
+    struct Recipient {
+        std::string address;
+        Amount amount;
+        bool subtract_fee = false;
+    };
+
+    struct SendManyResult {
+        bool success;
+        CTransaction tx;
+        uint256 txid;
+        std::string error;
+        Amount total_amount;
+        Amount fee;
+        int inputs_used;
+    };
+
+    SendManyResult send_many(const std::vector<Recipient>& recipients,
+                              int target_conf = 6);
+
+    // ---- Create transaction without broadcasting ----
+
+    struct CreateTxResult {
+        bool success;
+        CTransaction tx;
+        std::string error;
+        Amount fee;
+        Amount change;
+        std::vector<CoinToSpend> inputs_used;
+    };
+
+    CreateTxResult create_transaction(const std::vector<Recipient>& recipients,
+                                       int target_conf = 6);
+
+    // ---- Fee bumping (RBF) ----
+
+    struct BumpFeeResult {
+        bool success;
+        CTransaction tx;
+        std::string error;
+        Amount old_fee;
+        Amount new_fee;
+    };
+
+    BumpFeeResult bump_fee(const uint256& txid, Amount new_fee_rate);
+
+    // ---- Address book ----
+
+    struct AddressBookEntry {
+        std::string address;
+        std::string label;
+        std::string purpose;
+        bool is_mine;
+        Amount total_received;
+        Amount total_sent;
+        int tx_count;
+        int64_t created_at;
+    };
+
+    std::vector<AddressBookEntry> get_address_book() const;
+    void set_address_book_entry(const std::string& addr,
+                                 const std::string& label,
+                                 const std::string& purpose);
+    void delete_address_book_entry(const std::string& addr);
+
+    // ---- Wallet notifications ----
+
+    struct WalletNotification {
+        enum class Type { TX_ADDED, TX_CONFIRMED, TX_REMOVED, BALANCE_CHANGED };
+        Type type;
+        uint256 txid;
+        Amount amount;
+        int confirmations;
+        int64_t timestamp;
+        std::string address;
+    };
+
+    using NotifyCallback = std::function<void(const WalletNotification&)>;
+
+    void subscribe(NotifyCallback callback);
+    void unsubscribe_all();
+    void emit_notification(const WalletNotification& notif);
+    void notify_transaction_event(const CTransaction& tx,
+                                   uint64_t block_height,
+                                   WalletNotification::Type type);
+
+    // ---- Coin control ----
+
+    void lock_unspent(const uint256& txid, uint32_t vout);
+    void unlock_unspent(const uint256& txid, uint32_t vout);
+    bool is_locked(const uint256& txid, uint32_t vout) const;
+    std::vector<COutPoint> list_locked_unspent() const;
+    void unlock_all();
+
+    // ---- Wallet statistics ----
+
+    struct WalletStats {
+        Amount balance;
+        Amount unconfirmed_balance;
+        Amount immature_balance;
+        Amount total_received;
+        Amount total_sent;
+        int tx_count;
+        int address_count;
+        int keypool_size;
+        uint32_t hd_index;
+        int utxo_count;
+        int64_t oldest_key_time;
+        int64_t wallet_created;
+        size_t wallet_file_size;
+        bool encrypted;
+        bool locked;
+    };
+
+    WalletStats get_stats() const;
+
+    // ---- Blockchain rescan with progress ----
+
+    struct RescanProgress {
+        uint64_t current_height;
+        uint64_t target_height;
+        double progress;
+        int found_txs;
+        Amount found_amount;
+    };
+
+    using RescanCallback = std::function<void(const RescanProgress&)>;
+    bool rescan_blockchain(uint64_t from_height, RescanCallback cb = nullptr);
+
+    // ---- Gap scanning ----
+
+    int scan_gap(int gap_limit = 20);
+
 private:
     WalletDB db_;
     HDChain hd_;
@@ -174,6 +310,13 @@ private:
 
     // Map: address -> label
     std::map<std::string, std::string> labels_;
+
+    // Locked outpoints (coin control)
+    std::set<COutPoint> locked_outpoints_;
+
+    // Notification callbacks
+    mutable std::mutex notify_mu_;
+    std::vector<NotifyCallback> notify_callbacks_;
 
     // Encryption state
     bool encrypted_ = false;

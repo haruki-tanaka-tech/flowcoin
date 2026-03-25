@@ -226,4 +226,11 @@ uint64_t TxIndex::get_best_height() const {
     return 0;
 }
 
+void TxIndex::compact() {
+    if (!db_) return;
+    char* errmsg = nullptr;
+    sqlite3_exec(db_, "PRAGMA incremental_vacuum;", nullptr, nullptr, &errmsg);
+    if (errmsg) sqlite3_free(errmsg);
+}
+
 } // namespace flow

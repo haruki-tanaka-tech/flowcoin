@@ -3,6 +3,7 @@
 
 #include "mining/difficulty.h"
 #include "chain/chainstate.h"
+#include "util/time.h"
 #include "chain/blockindex.h"
 #include "consensus/params.h"
 #include "util/arith_uint256.h"

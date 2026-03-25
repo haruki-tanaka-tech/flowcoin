@@ -24,6 +24,8 @@
 
 #include "../util/types.h"
 #include <cstdint>
+#include <vector>
+#include <string>
 
 namespace flow::consensus {
 

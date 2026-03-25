@@ -3,6 +3,7 @@
 
 #include "rpc/server.h"
 #include "logging.h"
+#include "util/strencodings.h"
 
 #include <algorithm>
 #include <cctype>

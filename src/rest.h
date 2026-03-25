@@ -30,14 +30,7 @@
 #include <string>
 #include <vector>
 
-// Forward declaration for nlohmann/json
-namespace nlohmann {
-template <typename, typename, typename, typename>
-class basic_json;
-using json = basic_json<std::map, std::vector, std::string, bool,
-                         std::int64_t, std::uint64_t, double,
-                         std::allocator, void, void>;
-}
+#include "json/json.hpp"
 
 namespace flow {
 

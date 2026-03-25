@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <map>
+#include <set>
 
 namespace flow {
 namespace policy {

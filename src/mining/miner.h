@@ -20,6 +20,7 @@
 #define FLOWCOIN_MINING_MINER_H
 
 #include "mining/blocktemplate.h"
+#include "mining/submitblock.h"
 #include "primitives/block.h"
 #include "primitives/delta.h"
 #include "util/types.h"
@@ -40,6 +41,9 @@ namespace flow {
 class ChainState;
 class Mempool;
 class Wallet;
+struct TrainingConfig;
+struct MiningSession;
+class RewardTracker;
 
 // ---------------------------------------------------------------------------
 // MinerConfig -- configuration for the mining engine

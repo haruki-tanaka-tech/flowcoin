@@ -150,7 +150,7 @@ public:
                                    Amount amount) override {
         // Same as send for now -- wallet doesn't have a separate
         // create-without-broadcast API
-        return send(address, amount);
+        return send(address, amount, "");
     }
 
     // ---- UTXOs -------------------------------------------------------------

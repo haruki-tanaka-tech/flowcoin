@@ -14,6 +14,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <functional>
 #include <vector>
 
 struct sqlite3;
@@ -132,6 +133,21 @@ public:
     /// Get a cursor for iterating the entire UTXO set.
     /// Useful for computing gettxoutsetinfo hash.
     UTXOCursor get_cursor() const;
+
+    /// Alias for total_count() — convenience for generic code.
+    size_t size() const { return total_count(); }
+
+    /// Flush all pending data (alias for flush_cache).
+    void flush() { flush_cache(); }
+
+    /// Compact the underlying SQLite database (VACUUM).
+    void compact();
+
+    /// Iterate all UTXOs, calling fn(txid, vout, entry) for each.
+    void for_each(std::function<void(const uint256&, uint32_t, const UTXOEntry&)> fn) const;
+
+    /// Get all UTXOs as a vector of ((txid, vout), entry) pairs.
+    std::vector<std::pair<std::pair<uint256, uint32_t>, UTXOEntry>> get_all() const;
 
 private:
     sqlite3* db_ = nullptr;

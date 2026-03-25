@@ -2,6 +2,7 @@
 // Distributed under the MIT software license.
 
 #include "wallet/wallet.h"
+#include "wallet/coinselect.h"
 
 #include "chain/blockindex.h"
 #include "chain/blockstore.h"
@@ -18,8 +19,7 @@
 
 namespace flow {
 
-// Dust threshold: outputs below this value are uneconomical to spend.
-static constexpr Amount DUST_THRESHOLD = 546;
+// DUST_THRESHOLD is defined in primitives/transaction.h
 
 // ---------------------------------------------------------------------------
 // Construction

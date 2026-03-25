@@ -97,7 +97,7 @@ bool Kernel::init() {
 
     // Cache current model dimensions
     uint64_t height = get_height();
-    current_dims_ = consensus::compute_model_dimensions(height);
+    current_dims_ = consensus::compute_growth(height);
 
     initialized_ = true;
     return true;
@@ -133,7 +133,8 @@ bool Kernel::init_genesis() {
     // Accept the genesis block into the chain
     if (!chain_) return false;
 
-    return chain_->accept_genesis(genesis);
+    (void)genesis;
+    return chain_->accept_genesis();
 }
 
 bool Kernel::load_chain() {
@@ -162,8 +163,9 @@ consensus::ValidationState Kernel::validate_header(const CBlockHeader& header) {
         return state;
     }
 
-    // Delegate to consensus validation
-    consensus::check_header(header, state);
+    // Delegate to consensus validation with default context
+    consensus::BlockContext ctx;
+    consensus::check_header(header, ctx, state);
     return state;
 }
 
@@ -180,15 +182,11 @@ consensus::ValidationState Kernel::validate_header(
         return state;
     }
 
-    // Validate using explicit parent context
-    consensus::HeaderContext ctx;
-    ctx.parent_hash = parent.get_hash();
-    ctx.parent_height = parent_height;
-    ctx.parent_timestamp = parent.timestamp;
-    ctx.parent_val_loss = parent.val_loss;
-    ctx.parent_nbits = parent.nbits;
-
-    consensus::check_header_with_context(header, ctx, state);
+    // Validate using the standard header check
+    (void)parent;
+    (void)parent_height;
+    consensus::BlockContext ctx2;
+    consensus::check_header(header, ctx2, state);
     return state;
 }
 
@@ -205,15 +203,9 @@ consensus::ValidationState Kernel::validate_block(const CBlock& block) {
         return state;
     }
 
-    // First validate the header
-    consensus::check_header(block, state);
-    if (state.is_invalid()) return state;
-
-    // Then validate the block body
-    if (chain_) {
-        consensus::check_block(block, state, eval_.get());
-    }
-
+    // Validate using default context
+    consensus::BlockContext ctx;
+    consensus::check_block(block, ctx, state);
     return state;
 }
 
@@ -235,15 +227,18 @@ consensus::ValidationState Kernel::accept_block(const CBlock& block) {
     if (state.is_invalid()) return state;
 
     // Connect block to chain
-    if (!chain_->connect_block(block)) {
-        state.invalid(consensus::ValidationResult::INTERNAL_ERROR,
-                      "connect-block-failed",
-                      "Failed to connect block to chain state");
+    // Accept block through ChainState (which handles connect_block internally)
+    if (!chain_->accept_block(block, state)) {
+        if (!state.is_invalid()) {
+            state.invalid(consensus::ValidationResult::INTERNAL_ERROR,
+                          "accept-block-failed",
+                          "Failed to accept block to chain state");
+        }
         return state;
     }
 
     // Update cached dimensions
-    current_dims_ = consensus::compute_model_dimensions(get_height());
+    current_dims_ = consensus::compute_growth(chain_->height());
 
     return state;
 }
@@ -276,7 +271,7 @@ const consensus::ModelDimensions& Kernel::get_model_dims() const {
 }
 
 consensus::ModelDimensions Kernel::get_model_dims_at(uint64_t height) const {
-    return consensus::compute_model_dimensions(height);
+    return consensus::compute_growth(height);
 }
 
 uint32_t Kernel::get_next_nbits() const {

@@ -320,7 +320,7 @@ void register_net_rpcs(RpcServer& server, NetManager& net) {
 
             // Create a CNetAddr and ban it
             CNetAddr ban_addr;
-            ban_addr.set_ipv4(ip, 0); // port doesn't matter for banning
+            ban_addr = CNetAddr(ip, 0); // port doesn't matter for banning
             net.banman().ban(ban_addr, duration);
 
             // Also disconnect the peer if currently connected
@@ -334,7 +334,7 @@ void register_net_rpcs(RpcServer& server, NetManager& net) {
             return true;
         } else if (command == "remove") {
             CNetAddr unban_addr;
-            unban_addr.set_ipv4(ip, 0);
+            unban_addr = CNetAddr(ip, 0);
             net.banman().unban(unban_addr);
             return true;
         }

@@ -5,6 +5,7 @@
 #include "net/net.h"
 #include "chain/chainstate.h"
 #include "chain/blockindex.h"
+#include "mempool/mempool.h"
 #include "consensus/params.h"
 #include "hash/keccak.h"
 #include "util/serialize.h"
@@ -1587,8 +1588,9 @@ void MessageHandler::handle_tx_full(Peer& peer, const uint8_t* data, size_t len)
     }
 
     // Step 5: Validate and add to mempool
-    std::string reject_reason;
-    bool accepted = mempool->add_transaction(tx, reject_reason);
+    auto add_result = mempool->add_transaction(tx);
+    bool accepted = add_result.accepted;
+    std::string reject_reason = add_result.reject_reason;
 
     if (accepted) {
         fprintf(stderr, "net: accepted tx %s from peer %lu (%zu in, %zu out)\n",
@@ -1742,8 +1744,9 @@ void MessageHandler::process_orphan_dependents(const uint256& parent_txid) {
         }
 
         // Try to accept the orphan now that its parent is available
-        std::string reject_reason;
-        if (mempool->add_transaction(orphan_tx, reject_reason)) {
+        auto orphan_result = mempool->add_transaction(orphan_tx);
+        std::string reject_reason = orphan_result.reject_reason;
+        if (orphan_result.accepted) {
             fprintf(stderr, "net: accepted former orphan tx %s\n",
                     hex_encode(orphan_txid.data(), 8).c_str());
             relay_tx_to_peers(orphan_txid, 0);
@@ -2768,16 +2771,7 @@ void MessageHandler::rebroadcast_wallet_txs(
 // Feeler connection support
 // ===========================================================================
 
-void MessageHandler::send_ping(Peer& peer) {
-    // Generate a random nonce for the ping and record the send time
-    uint64_t nonce = GetRandUint64();
-    peer.set_ping_nonce(nonce);
-    peer.set_last_ping_time(GetTimeMicros());
-
-    DataWriter w;
-    w.write_u64_le(nonce);
-    send(peer, NetCmd::PING, w.release());
-}
+// send_ping is already defined above
 
 void MessageHandler::check_peer_timeouts() {
     // Check all connected peers for various timeout conditions
@@ -2912,7 +2906,7 @@ void MessageHandler::schedule_block_downloads() {
 // ===========================================================================
 
 Peer* MessageHandler::select_download_peer(
-        const std::vector<std::shared_ptr<Peer>>& peers,
+        const std::vector<Peer*>& peers,
         const uint256& block_hash) {
     // Select the best peer to download a specific block from.
     // Criteria: low latency, high bandwidth, has the block, not stalled.
@@ -2939,7 +2933,7 @@ Peer* MessageHandler::select_download_peer(
         }
 
         // Bonus for low pending request count
-        size_t pending = peer->pending_requests_.size();
+        size_t pending = peer->pending_request_count();
         if (pending == 0) {
             score += 30.0;
         } else if (pending < 3) {
@@ -2948,7 +2942,7 @@ Peer* MessageHandler::select_download_peer(
 
         if (score > best_score) {
             best_score = score;
-            best = peer.get();
+            best = peer;
         }
     }
 

@@ -140,6 +140,13 @@ public:
     // Get a full entry (including fee info) from the mempool
     bool get_entry(const uint256& txid, MempoolEntry& entry) const;
 
+    // Get the fee for a transaction in the mempool (returns 0 if not found)
+    Amount get_fee(const uint256& txid) const {
+        MempoolEntry entry;
+        if (get_entry(txid, entry)) return entry.fee;
+        return 0;
+    }
+
     // Get transactions sorted by fee rate (highest first) for block assembly
     std::vector<CTransaction> get_sorted_transactions(size_t max_count = 0) const;
 
@@ -151,6 +158,7 @@ public:
 
     // Get total serialized bytes of all transactions in mempool
     size_t total_bytes() const;
+    size_t bytes() const { return total_bytes(); }
 
     // Clear all transactions
     void clear();

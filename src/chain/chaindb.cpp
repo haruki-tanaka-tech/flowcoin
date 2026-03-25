@@ -496,4 +496,11 @@ size_t ChainDB::disk_usage() const {
     return 0;
 }
 
+void ChainDB::compact() {
+    if (!db_) return;
+    char* errmsg = nullptr;
+    sqlite3_exec(db_, "PRAGMA incremental_vacuum;", nullptr, nullptr, &errmsg);
+    if (errmsg) sqlite3_free(errmsg);
+}
+
 } // namespace flow

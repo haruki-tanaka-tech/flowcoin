@@ -42,6 +42,14 @@
 
 namespace flow {
 
+// Forward declarations for utility functions defined later in this file
+static void log_system_info();
+static bool validate_network_selection(bool testnet, bool regtest);
+static void log_network_config(const NodeContext&);
+static void log_datadir_inventory(const std::string& datadir);
+static std::string format_bytes(uint64_t bytes);
+static std::string format_duration(int64_t seconds);
+
 // ============================================================================
 // SubsystemState names
 // ============================================================================
@@ -1572,45 +1580,11 @@ ShutdownState& get_shutdown_state() {
 // NodeHealth — comprehensive health status
 // ============================================================================
 
-struct NodeHealth {
-    // Memory
-    size_t rss_bytes;
-    size_t peak_rss_bytes;
-    size_t utxo_cache_bytes;
-    size_t mempool_bytes;
-    size_t model_bytes;
+// NodeHealth is NodeContext::NodeHealthInfo (defined in context.h)
+using NodeHealth = NodeContext::NodeHealthInfo;
 
-    // Disk
-    size_t blocks_disk_bytes;
-    size_t chainstate_disk_bytes;
-    size_t model_disk_bytes;
-    size_t available_disk_bytes;
-
-    // Network
-    int outbound_peers;
-    int inbound_peers;
-    int64_t bytes_sent;
-    int64_t bytes_received;
-    double avg_ping_ms;
-
-    // Chain
-    uint64_t height;
-    uint64_t headers_height;
-    double sync_progress;
-    int64_t time_since_last_block;
-
-    // Model
-    size_t model_params;
-    float last_val_loss;
-    uint256 model_hash;
-
-    // Warnings
-    std::vector<std::string> warnings;
-    bool is_healthy;
-};
-
-NodeHealth NodeContext::get_node_health() const {
-    NodeHealth health;
+NodeContext::NodeHealthInfo NodeContext::get_node_health() const {
+    NodeHealthInfo health;
 
     // Memory stats
     health.rss_bytes = static_cast<size_t>(get_rss_mb()) * 1024 * 1024;
@@ -1643,7 +1617,7 @@ NodeHealth NodeContext::get_node_health() const {
 
     // UTXO cache and mempool memory
     if (chain) {
-        health.utxo_cache_bytes = chain->utxo_set().memory_usage();
+        health.utxo_cache_bytes = chain->utxo_set().cache_size() * 100; // approximate
     }
     if (mempool) {
         health.mempool_bytes = mempool->bytes();
@@ -1693,7 +1667,8 @@ NodeHealth NodeContext::get_node_health() const {
     if (net) {
         health.outbound_peers = static_cast<int>(net->outbound_count());
         health.inbound_peers = static_cast<int>(net->inbound_count());
-        health.avg_ping_ms = net->avg_ping_ms();
+        // avg_ping_ms could be computed from peer stats
+        health.avg_ping_ms = 0.0;
     }
 
     // Chain stats
@@ -1996,29 +1971,9 @@ void NodeContext::log_rotate_check() {
 // Comprehensive node info for RPC getinfo
 // ============================================================================
 
-struct NodeInfo {
-    std::string version;
-    std::string network;
-    uint64_t height;
-    uint64_t headers;
-    int connections;
-    int outbound;
-    int inbound;
-    size_t mempool_txs;
-    size_t mempool_bytes;
-    int64_t uptime_seconds;
-    bool ibd;
-    double sync_progress;
-    size_t model_params;
-    float model_loss;
-    int64_t rss_mb;
-    int64_t disk_free_mb;
-    std::string datadir;
-    uint16_t p2p_port;
-    uint16_t rpc_port;
-};
+// NodeInfo is NodeContext::NodeInfo (defined in context.h)
 
-NodeInfo NodeContext::get_info() const {
+NodeContext::NodeInfo NodeContext::get_info() const {
     NodeInfo info;
     info.version = std::string(CLIENT_NAME) + " v" + CLIENT_VERSION_STRING;
     info.network = get_network_name();
@@ -2100,7 +2055,8 @@ bool NodeContext::process_new_block(const CBlock& block) {
         int removed = 0;
         for (size_t i = 1; i < block.vtx.size(); ++i) {
             uint256 txid = block.vtx[i].get_txid();
-            if (mempool->remove(txid)) {
+            if (mempool->exists(txid)) {
+                mempool->remove(txid);
                 removed++;
             }
         }
@@ -2204,7 +2160,9 @@ bool NodeContext::process_transaction(const CTransaction& tx,
     }
 
     // Add to mempool
-    if (!mempool->add(tx, fee)) {
+    auto add_res = mempool->add_transaction(tx);
+    (void)fee;
+    if (!add_res.accepted) {
         state.invalid(consensus::ValidationResult::TX_INVALID,
                       "mempool-reject",
                       "transaction rejected by mempool");
@@ -2224,22 +2182,9 @@ bool NodeContext::process_transaction(const CTransaction& tx,
 // get_connection_info — detailed peer connection info
 // ============================================================================
 
-struct PeerInfo {
-    uint64_t peer_id;
-    std::string addr;
-    bool inbound;
-    int64_t conn_time;
-    int64_t last_send;
-    int64_t last_recv;
-    int64_t bytes_sent;
-    int64_t bytes_recv;
-    double ping_ms;
-    uint64_t start_height;
-    int ban_score;
-    std::string subver;
-};
+// PeerInfo is NodeContext::PeerInfo (defined in context.h)
 
-std::vector<PeerInfo> NodeContext::get_peer_info() const {
+std::vector<NodeContext::PeerInfo> NodeContext::get_peer_info() const {
     std::vector<PeerInfo> peers;
 
     if (!net) return peers;

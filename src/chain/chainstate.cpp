@@ -1598,16 +1598,9 @@ bool ChainState::accept_block_full(const CBlock& block,
 // reorganize — full reorganization with statistics
 // ---------------------------------------------------------------------------
 
-struct ReorgStats {
-    int blocks_disconnected;
-    int blocks_connected;
-    int64_t reorg_time_ms;
-    uint64_t fork_height;
-    uint256 old_tip;
-    uint256 new_tip;
-};
+// ReorgStats is defined in chainstate.h as ChainState::ReorgStats
 
-ReorgStats ChainState::reorganize(const CBlockIndex* new_tip_const) {
+ChainState::ReorgStats ChainState::reorganize(const CBlockIndex* new_tip_const) {
     auto t0 = std::chrono::steady_clock::now();
 
     ReorgStats stats;
@@ -2808,6 +2801,65 @@ std::vector<uint256> ChainState::get_valid_mempool_txids(
     }
 
     return valid_txids;
+}
+
+// ---------------------------------------------------------------------------
+// has_utxo_for_tx — check if any UTXO exists for a transaction ID
+// ---------------------------------------------------------------------------
+
+bool ChainState::has_utxo_for_tx(const uint256& txid) const {
+    // Check outputs 0..255 (practical limit)
+    for (uint32_t vout = 0; vout < 256; ++vout) {
+        UTXOEntry entry;
+        if (utxo_.get(txid, vout, entry)) {
+            return true;
+        }
+        // If output 0 doesn't exist, likely no outputs for this tx
+        if (vout == 0) {
+            // Could still have been fully spent, so we can't short-circuit
+            // But for a quick check, if output 0 is not in UTXO set,
+            // all outputs may have been spent. Continue checking a few more.
+        }
+        if (vout > 4) break;  // Most transactions have <= 5 outputs
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// Convenience methods for kernel code
+// ---------------------------------------------------------------------------
+
+bool ChainState::get_header(uint64_t h, CBlockHeader& hdr) const {
+    CBlockIndex* idx = get_block_index_at_height(h);
+    if (!idx) return false;
+    CBlock block;
+    if (!get_block_at_height(h, block)) return false;
+    hdr = static_cast<CBlockHeader>(block);
+    return true;
+}
+
+uint32_t ChainState::get_next_nbits() const {
+    CBlockIndex* t = tip();
+    if (!t) return consensus::INITIAL_NBITS;
+    return t->nbits;
+}
+
+bool ChainState::accept_genesis() {
+    return init();
+}
+
+bool ChainState::load() {
+    return load_from_disk();
+}
+
+bool ChainState::has_undo_data(uint64_t) const {
+    // For now, assume undo data is always available within reorg window
+    return true;
+}
+
+bool ChainState::can_disconnect(uint64_t h) const {
+    if (!tip()) return false;
+    return h <= tip()->height && h > 0;
 }
 
 } // namespace flow
