@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-release:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DDETERMINISTIC_BUILD=ON
+          make -j$(nproc)
+
+      - name: Run tests
+        run: cd build && ./flowcoin_tests
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/flowcoind dist/
+          cp build/flowcoin-cli dist/
+          cp build/flowcoin-tx dist/
+          cp flowcoin.conf.example dist/
+          cp COPYING dist/
+          tar czf flowcoin-${GITHUB_REF_NAME}-linux-x86_64.tar.gz -C dist .
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: flowcoin-*.tar.gz
+          generate_release_notes: true

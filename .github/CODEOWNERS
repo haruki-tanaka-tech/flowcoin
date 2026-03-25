@@ -1,0 +1,4 @@
+# FlowCoin Code Owners
+* @haruki-tanaka-tech
+src/consensus/ @haruki-tanaka-tech
+src/chain/ @haruki-tanaka-tech
