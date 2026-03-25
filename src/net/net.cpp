@@ -915,6 +915,13 @@ void NetManager::start_feeler() {
     CNetAddr addr = addrman_.select_from_new();
     if (addr.port == 0) return;
 
+    // Skip null/unroutable addresses
+    bool all_zero = true;
+    for (int i = 0; i < 16; i++) {
+        if (addr.ip[i] != 0) { all_zero = false; break; }
+    }
+    if (all_zero) return;
+
     // Don't feeler to addresses we're already connected to
     {
         std::lock_guard<std::mutex> lock(peers_mutex_);
@@ -931,7 +938,7 @@ void NetManager::start_feeler() {
     // Don't feeler if we already have too many outbound
     if (outbound_count() >= static_cast<size_t>(consensus::MAX_OUTBOUND_PEERS)) return;
 
-    LogInfo("net", "starting feeler connection to %s",
+    LogDebug("net", "starting feeler connection to %s",
             addr.to_string().c_str());
 
     connect_to(addr);
@@ -1064,19 +1071,22 @@ bool NetManager::has_subnet_diversity(const CNetAddr& addr) const {
 // ===========================================================================
 
 void NetManager::resolve_dns_seeds() {
+    static bool first_resolve = true;
     const auto& dns_seeds = GetDNSSeeds(magic_);
 
     for (const auto& seed_host : dns_seeds) {
-        LogInfo("net", "resolving DNS seed %s", seed_host.c_str());
+        if (first_resolve)
+            LogInfo("net", "resolving DNS seed %s", seed_host.c_str());
 
         auto addrs = LookupHost(seed_host, 256, true);
         if (addrs.empty()) {
-            LogInfo("net", "DNS seed %s returned no results", seed_host.c_str());
+            LogDebug("net", "DNS seed %s returned no results", seed_host.c_str());
             continue;
         }
 
-        LogInfo("net", "DNS seed %s returned %zu addresses",
-                seed_host.c_str(), addrs.size());
+        if (first_resolve)
+            LogInfo("net", "DNS seed %s returned %zu addresses",
+                    seed_host.c_str(), addrs.size());
 
         int64_t now = GetTime();
         for (const auto& net_addr : addrs) {
@@ -1093,6 +1103,7 @@ void NetManager::resolve_dns_seeds() {
             }
         }
     }
+    first_resolve = false;
 }
 
 // ===========================================================================
