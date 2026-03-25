@@ -52,7 +52,7 @@ consensus::BlockContext CBlockIndex::make_child_context(int64_t adjusted_time) c
     uint64_t child_height = height + 1;
 
     // Compute expected model dimensions for the child block
-    ctx.expected_dims = consensus::compute_growth(child_height, improving_blocks);
+    ctx.expected_dims = consensus::compute_growth(child_height);
 
     // Compute minimum training steps for the child block
     ctx.min_train_steps = consensus::compute_min_steps(child_height);

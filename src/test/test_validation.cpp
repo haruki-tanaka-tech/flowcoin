@@ -19,7 +19,7 @@ static flow::CBlockHeader make_signed_genesis() {
     using namespace flow::consensus;
 
     auto kp = flow::generate_keypair();
-    auto dims = compute_growth(0, 0);
+    auto dims = compute_growth(0);
 
     flow::CBlockHeader hdr;
     hdr.height = 0;
@@ -52,7 +52,7 @@ static flow::consensus::BlockContext make_genesis_context() {
 
     BlockContext ctx;
     ctx.is_genesis = true;
-    ctx.expected_dims = compute_growth(0, 0);
+    ctx.expected_dims = compute_growth(0);
     ctx.expected_nbits = INITIAL_NBITS;
     ctx.min_train_steps = compute_min_steps(0);
     ctx.adjusted_time = GENESIS_TIMESTAMP + 100000;
@@ -207,7 +207,7 @@ void test_validation() {
         ctx.prev_timestamp = GENESIS_TIMESTAMP;
         ctx.prev_val_loss = 5.0f;
         ctx.expected_nbits = INITIAL_NBITS;
-        ctx.expected_dims = compute_growth(1, 0);
+        ctx.expected_dims = compute_growth(1);
         ctx.min_train_steps = compute_min_steps(1);
         ctx.adjusted_time = GENESIS_TIMESTAMP + 100000;
 
@@ -219,7 +219,7 @@ void test_validation() {
         hdr.nbits = INITIAL_NBITS;
         hdr.val_loss = 4.8f;
         hdr.prev_val_loss = 5.0f;
-        auto dims = compute_growth(1, 0);
+        auto dims = compute_growth(1);
         hdr.d_model = dims.d_model;
         hdr.n_layers = dims.n_layers;
         hdr.d_ff = dims.d_ff;
@@ -257,7 +257,7 @@ void test_validation() {
         ctx.prev_timestamp = GENESIS_TIMESTAMP;
         ctx.prev_val_loss = 5.0f;
         ctx.expected_nbits = INITIAL_NBITS;
-        ctx.expected_dims = compute_growth(6, 0);
+        ctx.expected_dims = compute_growth(6);
         ctx.adjusted_time = GENESIS_TIMESTAMP + 100000;
 
         auto kp = flow::generate_keypair();
@@ -267,7 +267,7 @@ void test_validation() {
         hdr.nbits = INITIAL_NBITS;
         hdr.val_loss = 4.8f;
         hdr.prev_val_loss = 5.0f;
-        auto dims = compute_growth(6, 0);
+        auto dims = compute_growth(6);
         hdr.d_model = dims.d_model;
         hdr.n_layers = dims.n_layers;
         hdr.d_ff = dims.d_ff;

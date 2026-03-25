@@ -24,7 +24,7 @@ static CBlockHeader make_genesis_header() {
     using namespace consensus;
 
     auto kp = generate_keypair();
-    auto dims = compute_growth(0, 0);
+    auto dims = compute_growth(0);
 
     CBlockHeader hdr;
     hdr.height = 0;
@@ -95,7 +95,7 @@ void test_genesis() {
     // Test 5: Genesis model dimensions match GENESIS_* constants
     // -----------------------------------------------------------------------
     {
-        auto dims = compute_growth(0, 0);
+        auto dims = compute_growth(0);
         assert(dims.d_model == GENESIS_D_MODEL);
         assert(dims.n_layers == GENESIS_N_LAYERS);
         assert(dims.n_heads == GENESIS_N_HEADS);
@@ -142,7 +142,7 @@ void test_genesis() {
 
         BlockContext ctx;
         ctx.is_genesis = true;
-        ctx.expected_dims = compute_growth(0, 0);
+        ctx.expected_dims = compute_growth(0);
         ctx.min_train_steps = compute_min_steps(0);
         ctx.expected_nbits = INITIAL_NBITS;
 
@@ -168,7 +168,7 @@ void test_genesis() {
 
         BlockContext ctx;
         ctx.is_genesis = true;
-        ctx.expected_dims = compute_growth(0, 0);
+        ctx.expected_dims = compute_growth(0);
         ctx.min_train_steps = compute_min_steps(0);
         ctx.expected_nbits = INITIAL_NBITS;
 
@@ -194,7 +194,7 @@ void test_genesis() {
 
         BlockContext ctx;
         ctx.is_genesis = true;
-        ctx.expected_dims = compute_growth(0, 0);
+        ctx.expected_dims = compute_growth(0);
         ctx.min_train_steps = compute_min_steps(0);
         ctx.expected_nbits = INITIAL_NBITS;
 
@@ -219,7 +219,7 @@ void test_genesis() {
 
         BlockContext ctx;
         ctx.is_genesis = true;
-        ctx.expected_dims = compute_growth(0, 0);
+        ctx.expected_dims = compute_growth(0);
         ctx.min_train_steps = compute_min_steps(0);
         ctx.expected_nbits = INITIAL_NBITS;
 
@@ -239,7 +239,7 @@ void test_genesis() {
 
         BlockContext ctx;
         ctx.is_genesis = true;
-        ctx.expected_dims = compute_growth(0, 0);
+        ctx.expected_dims = compute_growth(0);
         ctx.min_train_steps = compute_min_steps(0);
         ctx.expected_nbits = INITIAL_NBITS;
 

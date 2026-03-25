@@ -77,46 +77,44 @@ GENESIS_SEQ_LEN = 256
 GENESIS_GRU_DIM = 512
 GENESIS_SEED = 42
 
-# Growth constants
-GROWTH_PLATEAU_LEN = 100
-NUM_GROWTH_PLATEAUS = 5
-DIM_GROWTH_END = GROWTH_PLATEAU_LEN * NUM_GROWTH_PLATEAUS
+# Growth constants — continuous growth, no phases, no cap
+DIM_FREEZE_HEIGHT = 512
 MAX_D_MODEL = 1024
 MAX_N_LAYERS = 24
-MAX_D_FF = 2048
-MAX_N_SLOTS = 65536
-SLOT_GROWTH_RATE = 4
+SLOT_GROWTH_PER_BLOCK = 4
 
 
 # ════════════════════════════════════════════════════════════════
 # Model growth schedule — mirrors consensus/growth.cpp
 # ════════════════════════════════════════════════════════════════
 
-def compute_growth(height: int, improving_blocks: int = 0) -> dict:
-    """Compute model dimensions at a given block height."""
-    if height < DIM_GROWTH_END:
-        plateau = height // GROWTH_PLATEAU_LEN
-        d_model = GENESIS_D_MODEL + plateau * 128
-        n_layers = GENESIS_N_LAYERS + plateau * 4
-        d_ff = GENESIS_D_FF + plateau * 256
-        n_heads = GENESIS_N_HEADS + plateau * 2
-        n_slots = GENESIS_N_SLOTS
-    else:
-        d_model = MAX_D_MODEL
-        n_layers = MAX_N_LAYERS
-        d_ff = MAX_D_FF
-        n_heads = 16
-        n_slots = min(GENESIS_N_SLOTS + improving_blocks * SLOT_GROWTH_RATE, MAX_N_SLOTS)
+def compute_growth(height: int) -> dict:
+    """Compute model dimensions at a given block height.
 
-    d_head = d_model // n_heads
+    Every block grows the model. No phases, no plateaus, no cap on slots.
+    Dimensions grow linearly then freeze; slots grow forever.
+    """
+    # Dimensions grow linearly, then freeze at max
+    raw_d = 512 + min(height, 512)
+    d_model = min(raw_d, MAX_D_MODEL)
+
+    # Layers grow 1 per 32 blocks, max 24
+    n_layers = min(8 + height // 32, MAX_N_LAYERS)
+
+    # Derived
+    d_ff = 2 * d_model
+    n_heads = d_model // 64  # 8 at 512, 16 at 1024
     gru_dim = d_model
+
+    # Slots grow EVERY block, NO CAP
+    n_slots = GENESIS_N_SLOTS + height * SLOT_GROWTH_PER_BLOCK
 
     return {
         "d_model": d_model,
         "n_layers": n_layers,
         "d_ff": d_ff,
         "n_heads": n_heads,
-        "d_head": d_head,
+        "d_head": 64,  # always 64
         "n_slots": n_slots,
         "top_k": GENESIS_TOP_K,
         "gru_dim": gru_dim,
@@ -127,11 +125,15 @@ def compute_growth(height: int, improving_blocks: int = 0) -> dict:
 
 
 def compute_min_steps(height: int) -> int:
-    """Compute minimum training steps for a block at given height."""
-    if height < DIM_GROWTH_END:
-        return 1000 + 4 * height
-    else:
-        return int(3000.0 * math.sqrt(height / 500.0))
+    """Compute minimum training steps for a block at given height.
+
+    More params -> each step more valuable -> lower min.
+    Floor at 500 steps.
+    """
+    if height <= 500:
+        return 1000
+    ratio = math.sqrt(500.0 / height)
+    return max(500, int(1000.0 * ratio))
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1476,7 +1478,7 @@ def eval_mode(args):
     """
     device = select_device(args.gpu)
 
-    dims = compute_growth(args.eval_height, 0)
+    dims = compute_growth(args.eval_height)
     model = ResonanceNetV5(
         vocab=GENESIS_VOCAB,
         d_model=dims["d_model"],
@@ -1518,7 +1520,7 @@ def benchmark_mode(args):
     """
     device = select_device(args.gpu)
 
-    dims = compute_growth(args.bench_height, 0)
+    dims = compute_growth(args.bench_height)
     model = ResonanceNetV5(
         vocab=GENESIS_VOCAB,
         d_model=dims["d_model"],
@@ -1595,7 +1597,7 @@ def info_mode(args):
         args: Parsed command-line arguments.
     """
     height = args.info_height
-    dims = compute_growth(height, 0)
+    dims = compute_growth(height)
 
     model = ResonanceNetV5(
         vocab=GENESIS_VOCAB,

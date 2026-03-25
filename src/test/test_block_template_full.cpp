@@ -63,7 +63,7 @@ static CBlock tmpl_genesis_block(const KeyPair& kp) {
     block.val_loss = 5.0f;
     block.prev_val_loss = 0.0f;
 
-    auto dims = compute_growth(0, 0);
+    auto dims = compute_growth(0);
     block.d_model = dims.d_model;
     block.n_layers = dims.n_layers;
     block.d_ff = dims.d_ff;
@@ -124,7 +124,7 @@ void test_block_template_full() {
         tmpl.header.nbits = INITIAL_NBITS;
         tmpl.header.version = 1;
 
-        auto dims = compute_growth(1, 0);
+        auto dims = compute_growth(1);
         tmpl.dims = dims;
 
         assert(tmpl.header.height == 1);
@@ -138,7 +138,7 @@ void test_block_template_full() {
     // -----------------------------------------------------------------------
     {
         for (uint64_t h = 0; h < 600; h += 100) {
-            auto dims = compute_growth(h, 0);
+            auto dims = compute_growth(h);
             BlockTemplate tmpl;
             tmpl.dims = dims;
 
@@ -441,8 +441,8 @@ void test_block_template_full() {
     // -----------------------------------------------------------------------
     {
         size_t prev = 0;
-        for (uint32_t p = 0; p < NUM_GROWTH_PLATEAUS; p++) {
-            auto dims = compute_growth(p * GROWTH_PLATEAU_LEN, 0);
+        for (uint64_t h = 0; h <= 512; h += 64) {
+            auto dims = compute_growth(h);
             size_t count = estimate_param_count(dims.d_model, dims.n_layers,
                                                  dims.d_ff, dims.n_slots);
             assert(count > prev);
@@ -483,10 +483,8 @@ void test_block_template_full() {
         for (uint64_t h : {0ULL, 50ULL, 100ULL, 250ULL, 500ULL, 1000ULL}) {
             BlockTemplate tmpl;
             tmpl.min_train_steps = compute_min_steps(h);
-            assert(tmpl.min_train_steps >= MIN_TRAIN_STEPS_BASE);
-            if (h > 0) {
-                assert(tmpl.min_train_steps >= compute_min_steps(0));
-            }
+            assert(tmpl.min_train_steps >= 500);   // floor at 500
+            assert(tmpl.min_train_steps <= 1000);  // max at genesis
         }
     }
 

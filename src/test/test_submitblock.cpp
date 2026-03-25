@@ -61,7 +61,7 @@ static std::vector<uint8_t> serialize_header(const CBlockHeader& hdr) {
 // Helper: create a signed genesis-like block header
 static CBlockHeader make_signed_header() {
     auto kp = generate_keypair();
-    auto dims = compute_growth(0, 0);
+    auto dims = compute_growth(0);
 
     CBlockHeader hdr;
     hdr.height = 0;

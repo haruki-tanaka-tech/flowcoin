@@ -91,7 +91,7 @@ Every block must pass all 16 validation checks to be accepted:
    ```
 
 8. **Model dimensions**: `(d_model, n_layers, d_ff, n_heads, gru_dim, n_slots)` must
-   match `compute_growth(height, improving_blocks)`.
+   match `compute_growth(height)`.
 
 9. **Validation loss**: `0.0 < block.val_loss <= 100.0`.
 
@@ -170,36 +170,47 @@ Halving schedule:
 
 ### 2.5 Model Growth Schedule
 
-The neural network architecture grows over time as the blockchain matures.
+The neural network grows CONTINUOUSLY -- every block adds parameters.
+There are no phases, no plateaus, and no cap on slots.
 
-**Phase 1: Dimension Growth (blocks 0 - ~500,000)**
+**Dimension Growth (blocks 0-511)**
 
-Model dimensions increase at predefined plateau boundaries based on cumulative
-improving blocks (blocks where val_loss decreased):
+Dimensions grow linearly with block height, then freeze:
 
-| Plateau | d_model | n_layers | d_ff | n_heads | gru_dim |
-|---------|---------|----------|------|---------|---------|
-| 0       | 64      | 2        | 256  | 4       | 64      |
-| 1       | 128     | 4        | 512  | 4       | 128     |
-| 2       | 256     | 6        | 1024 | 8       | 256     |
-| 3       | 384     | 8        | 1536 | 8       | 384     |
-| 4       | 512     | 12       | 2048 | 8       | 512     |
-
-Transitions occur when the cumulative improving blocks exceed the plateau threshold.
-
-**Phase 2: Knowledge Growth (after dimension plateau)**
-
-Once dimension growth plateaus, the slot memory count (`n_slots`) increases linearly:
 ```
-n_slots = base_slots + floor(improving_blocks / slots_growth_interval)
+d_model(h)  = 512 + h             (capped at 1024)
+n_layers(h) = 8 + floor(h / 32)   (capped at 24)
+d_ff(h)     = 2 * d_model(h)
+n_heads(h)  = floor(d_model(h) / 64)
+gru_dim(h)  = d_model(h)
 ```
 
-This allows the model to accumulate more factual knowledge without changing
-the core architecture dimensions.
+At block 512, dimensions reach their maximum (d=1024, L=24) and freeze.
 
-**Weight Expansion at Growth Events**
+**Slot Growth (every block, no cap)**
 
-When dimensions increase, existing weights are preserved and expanded:
+Slots grow at every block height, with no upper bound:
+
+```
+n_slots(h) = 1024 + h * 4
+```
+
+| Block     | d_model | n_layers | n_slots   | ~Params  |
+|-----------|---------|----------|-----------|----------|
+| 0         | 512     | 8        | 1,024     | ~13M     |
+| 100       | 612     | 11       | 1,424     | ~35M     |
+| 500       | 1,012   | 23       | 3,024     | ~180M    |
+| 512+      | 1,024   | 24       | growing   | growing  |
+| 10,000    | 1,024   | 24       | 41,024    | ~3B      |
+| 100,000   | 1,024   | 24       | 401,024   | ~30B     |
+| 1,000,000 | 1,024   | 24       | 4,001,024 | ~300B    |
+
+Inference remains O(1) because only top_k=2 slots are active per token,
+regardless of total slot count.
+
+**Weight Expansion**
+
+When dimensions increase (blocks 0-511), existing weights are preserved and expanded:
 - New rows/columns are initialized from the deterministic weight initializer
 - Existing learned weights occupy the top-left submatrix of the expanded tensor
 - This preserves all training progress while allowing the model to utilize
@@ -328,7 +339,7 @@ Each layer of the ResonanceNet V5 model consists of:
    - n_slots memory vectors of dimension d_model
    - Cross-attention from the hidden states to slot memory
    - Provides persistent knowledge storage separate from sequence context
-   - Slots grow during Phase 2 of the model growth schedule
+   - Slots grow every block (no cap)
 
 ### 4.2 Weight Initialization
 
@@ -668,12 +679,12 @@ timestamp:     [TBD at launch]
 prev_hash:     0x0000000000000000000000000000000000000000000000000000000000000000
 nbits:         0x1f00ffff
 version:       1
-d_model:       64
-n_layers:      2
-d_ff:          256
-n_heads:       4
-gru_dim:       64
-n_slots:       16
+d_model:       512
+n_layers:      8
+d_ff:          1024
+n_heads:       8
+gru_dim:       512
+n_slots:       1024
 val_loss:      100.0
 prev_val_loss: 100.0
 train_steps:   0

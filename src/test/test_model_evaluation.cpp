@@ -412,10 +412,11 @@ void test_model_evaluation() {
         assert(dims.vocab == 256);
         assert(dims.seq_len == 256);
 
-        // Verify at all growth plateaus
-        for (uint64_t h = 0; h < DIM_GROWTH_END; h += GROWTH_PLATEAU_LEN) {
-            auto d = compute_growth(h, 0);
-            assert(d.n_heads * d.d_head == d.d_model);
+        // Verify at various heights during continuous growth
+        for (uint64_t h = 0; h <= DIM_FREEZE_HEIGHT; h += 64) {
+            auto d = compute_growth(h);
+            // n_heads = d_model / 64, d_head = 64, so n_heads * d_head <= d_model
+            assert(d.n_heads * d.d_head <= d.d_model);
             assert(d.d_ff == 2 * d.d_model);
         }
     }

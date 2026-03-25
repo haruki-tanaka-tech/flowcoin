@@ -143,7 +143,7 @@ static CBlock rg_block(uint64_t height, const uint256& prev,
         5.0f - static_cast<float>(height - 1) * 0.001f;
     if (block.prev_val_loss < 0.5f) block.prev_val_loss = 0.5f;
 
-    auto dims = compute_growth(height, 0);
+    auto dims = compute_growth(height);
     block.d_model = dims.d_model;
     block.n_layers = dims.n_layers;
     block.d_ff = dims.d_ff;

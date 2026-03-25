@@ -23,7 +23,7 @@ using namespace flow::consensus;
 // Helper: create a block header with a specific hash that meets the target
 static CBlockHeader make_valid_header() {
     auto kp = generate_keypair();
-    auto dims = compute_growth(0, 0);
+    auto dims = compute_growth(0);
 
     CBlockHeader hdr;
     hdr.height = 0;

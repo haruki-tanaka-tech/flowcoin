@@ -163,13 +163,13 @@ void test_protocol_spec() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 8: Growth schedule plateaus cover exactly DIM_GROWTH_END blocks
+    // Test 8: Growth schedule — continuous growth, dims freeze at 512
     // -----------------------------------------------------------------------
     {
-        assert(DIM_GROWTH_END == GROWTH_PLATEAU_LEN * NUM_GROWTH_PLATEAUS);
-        assert(DIM_GROWTH_END == 500);
-        assert(GROWTH_PLATEAU_LEN == 100);
-        assert(NUM_GROWTH_PLATEAUS == 5);
+        assert(DIM_FREEZE_HEIGHT == 512);
+        assert(MAX_D_MODEL == 1024);
+        assert(MAX_N_LAYERS == 24);
+        assert(SLOT_GROWTH_PER_BLOCK == 4);
     }
 
     // -----------------------------------------------------------------------

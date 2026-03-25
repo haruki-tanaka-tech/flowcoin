@@ -319,7 +319,7 @@ class BlockTest(FlowCoinTestFramework):
         """Verify model dimensions in block headers follow growth schedule."""
         self.log.info("Testing model dimensions...")
 
-        # At genesis or early blocks, dimensions should match plateau 0
+        # At genesis or early blocks, dimensions should match growth schedule
         height = node.getblockcount()
         if height < 100:
             expected_dims = get_model_dims_for_height(0)

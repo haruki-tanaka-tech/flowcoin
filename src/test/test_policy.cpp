@@ -594,16 +594,16 @@ void test_policy() {
         assert(consensus::GENESIS_SEQ_LEN == 256);
         assert(consensus::MAX_D_MODEL == 1024);
         assert(consensus::MAX_N_LAYERS == 24);
-        assert(consensus::MAX_D_FF == 2048);
     }
 
     // -----------------------------------------------------------------------
-    // Test 46: Growth plateau parameters
+    // Test 46: Growth parameters — continuous growth
     // -----------------------------------------------------------------------
     {
-        assert(consensus::GROWTH_PLATEAU_LEN == 100);
-        assert(consensus::NUM_GROWTH_PLATEAUS == 5);
-        assert(consensus::DIM_GROWTH_END == 500);
+        assert(consensus::DIM_FREEZE_HEIGHT == 512);
+        assert(consensus::MAX_D_MODEL == 1024);
+        assert(consensus::MAX_N_LAYERS == 24);
+        assert(consensus::SLOT_GROWTH_PER_BLOCK == 4);
     }
 
     // -----------------------------------------------------------------------

@@ -40,7 +40,7 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         if (!tip) throw std::runtime_error("Chain is empty");
 
         uint64_t next_height = tip->height + 1;
-        auto dims = consensus::compute_growth(next_height, tip->improving_blocks);
+        auto dims = consensus::compute_growth(next_height);
         uint32_t min_steps = consensus::compute_min_steps(next_height);
         Amount reward = consensus::compute_block_reward(next_height);
 
@@ -93,14 +93,9 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         j["min_next_timestamp"] = tip->timestamp + consensus::MIN_BLOCK_INTERVAL;
 
         // Growth phase
-        bool in_growth = (next_height < consensus::DIM_GROWTH_END);
-        j["growth_phase"] = in_growth ? "phase1_growth" : "phase2_mature";
-        if (in_growth) {
-            uint32_t plateau = static_cast<uint32_t>(next_height / consensus::GROWTH_PLATEAU_LEN);
-            j["plateau"] = plateau;
-            j["blocks_until_next_plateau"] =
-                (plateau + 1) * consensus::GROWTH_PLATEAU_LEN - next_height;
-        }
+        bool dims_growing = (next_height < consensus::DIM_FREEZE_HEIGHT);
+        j["growth_phase"] = dims_growing ? "dimension_growth" : "slot_growth";
+        j["dims_frozen"]  = !dims_growing;
 
         // Halving info
         int era = static_cast<int>(next_height / consensus::HALVING_INTERVAL);

@@ -183,8 +183,7 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         j["reward_atomic"] = reward;
 
         // Model dimensions at next height
-        uint32_t improving = tip ? tip->improving_blocks : 0;
-        auto dims = consensus::compute_growth(next_height, improving);
+        auto dims = consensus::compute_growth(next_height);
         j["d_model"]  = dims.d_model;
         j["n_layers"] = dims.n_layers;
         j["d_ff"]     = dims.d_ff;
@@ -195,8 +194,8 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         j["chain"]   = "main";
 
         // Growth phase
-        bool in_growth = (next_height < consensus::DIM_GROWTH_END);
-        j["growth_phase"] = in_growth ? "growth" : "mature";
+        bool dims_growing = (next_height < consensus::DIM_FREEZE_HEIGHT);
+        j["growth_phase"] = dims_growing ? "dimension_growth" : "slot_growth";
 
         // Halving info
         uint64_t halving_interval = consensus::HALVING_INTERVAL;
@@ -478,7 +477,7 @@ void register_mining_mempool_rpcs(RpcServer& server, ChainState& chain,
         if (!tip) throw std::runtime_error("Chain is empty");
 
         uint64_t next_height = tip->height + 1;
-        auto dims = consensus::compute_growth(next_height, tip->improving_blocks);
+        auto dims = consensus::compute_growth(next_height);
 
         json j;
         j["height"]          = next_height;

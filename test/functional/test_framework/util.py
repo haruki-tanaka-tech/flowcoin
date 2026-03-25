@@ -42,16 +42,9 @@ REGTEST_HRP = "rfl"
 MAINNET_HRP = "fl"
 TESTNET_HRP = "tfl"
 
-# Model growth schedule (Phase 1 plateaus)
-GROWTH_SCHEDULE = [
-    # (height_start, height_end, d_model, n_layers, d_ff, n_heads)
-    (0, 99, 512, 8, 1024, 8),
-    (100, 199, 640, 12, 1280, 10),
-    (200, 299, 768, 16, 1536, 12),
-    (300, 399, 896, 20, 1792, 14),
-    (400, 499, 1024, 24, 2048, 16),
-]
-DIM_GROWTH_END = 500
+# Model growth — continuous, no phases, no cap
+DIM_FREEZE_HEIGHT = 512  # dimensions freeze at this height
+SLOT_GROWTH_PER_BLOCK = 4
 
 
 # ======================================================================
@@ -783,26 +776,24 @@ def spend_utxo(node, utxo: dict, to_address: str,
 def get_model_dims_for_height(height: int) -> dict:
     """Get the expected model dimensions for a given block height.
 
-    Implements the growth schedule from consensus/growth.h.
+    Implements the continuous growth schedule from consensus/growth.h.
 
     Returns:
-        Dict with keys: d_model, n_layers, d_ff, n_heads.
+        Dict with keys: d_model, n_layers, d_ff, n_heads, n_slots.
     """
-    for start, end, d_model, n_layers, d_ff, n_heads in GROWTH_SCHEDULE:
-        if start <= height <= end:
-            return {
-                "d_model": d_model,
-                "n_layers": n_layers,
-                "d_ff": d_ff,
-                "n_heads": n_heads,
-            }
+    raw_d = 512 + min(height, 512)
+    d_model = min(raw_d, 1024)
+    n_layers = min(8 + height // 32, 24)
+    d_ff = 2 * d_model
+    n_heads = d_model // 64
+    n_slots = 1024 + height * SLOT_GROWTH_PER_BLOCK
 
-    # Phase 2: frozen at maximum dimensions
     return {
-        "d_model": 1024,
-        "n_layers": 24,
-        "d_ff": 2048,
-        "n_heads": 16,
+        "d_model": d_model,
+        "n_layers": n_layers,
+        "d_ff": d_ff,
+        "n_heads": n_heads,
+        "n_slots": n_slots,
     }
 
 
@@ -823,12 +814,12 @@ def assert_model_dims_at_height(node, height: int):
 def compute_min_training_steps(height: int) -> int:
     """Compute minimum training steps for a block at the given height.
 
-    Phase 1 (h < 500): 1000 + 4 * h
-    Phase 2 (h >= 500): 3000 * sqrt(h / 500)
+    At genesis: 1000. Decreases after h=500. Floor at 500.
     """
-    if height < DIM_GROWTH_END:
-        return 1000 + 4 * height
-    return int(3000 * math.sqrt(height / 500))
+    if height <= 500:
+        return 1000
+    ratio = math.sqrt(500.0 / height)
+    return max(500, int(1000.0 * ratio))
 
 
 # ======================================================================

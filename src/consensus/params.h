@@ -125,11 +125,8 @@ constexpr size_t   MAX_DELTA_SIZE      = 100'000'000;
 constexpr size_t   MIN_DELTA_SIZE      = 1;
 
 // ---- Minimum Training Steps (consensus rule) --------------------------------
-// Grows with height to ensure useful training per block.
-// Phase 1 (h < DIM_GROWTH_END=500): linear ramp from 1000 to 3000 steps
-//   min_steps = 1000 * (1 + 2*h/500) = 1000 + 4*h
-// Phase 2 (h >= 500): sqrt growth
-//   min_steps = 3000 * sqrt(h / 500)
+// More params -> each step more valuable -> min steps decrease (floor at 500).
+// At genesis: 1000 steps. At height 1000+: ~500 steps.
 constexpr uint32_t MIN_TRAIN_STEPS_BASE = 1000;
 
 // ---- Model Genesis (ResonanceNet V5) ----------------------------------------
@@ -149,34 +146,20 @@ constexpr uint32_t GENESIS_SEQ_LEN     = 256;   // Context window length
 constexpr uint32_t GENESIS_GRU_DIM     = 512;   // = GENESIS_D_MODEL (minGRU hidden state)
 constexpr uint32_t GENESIS_CONV_KERNEL = 4;     // Multi-scale conv kernel size
 
-// ---- Model Growth: Staircase Schedule ---------------------------------------
-// Phase 1 consists of 5 plateaus of 100 blocks each (blocks 0-499).
-// Within each plateau, model dimensions are fixed to allow cumulative training.
-// At plateau transitions, weights are expanded via zero-padding + copy.
-//
-// Plateau 0 (blocks   0- 99): d=512,  L=8,   d_ff=1024
-// Plateau 1 (blocks 100-199): d=640,  L=12,  d_ff=1280
-// Plateau 2 (blocks 200-299): d=768,  L=16,  d_ff=1536
-// Plateau 3 (blocks 300-399): d=896,  L=20,  d_ff=1792
-// Plateau 4 (blocks 400-499): d=1024, L=24,  d_ff=2048
-//
-// Growth increments per plateau:
-//   d_model: +128 per plateau = (1024-512)/4
-//   n_layers: +4 per plateau  = (24-8)/4
-//   d_ff: +256 per plateau    = (2048-1024)/4
+// ---- Model Growth (continuous, no phases, no cap) ----------------------------
+// d_model: 512 + height (capped at 1024 when d reaches max)
+constexpr uint32_t DIM_FREEZE_HEIGHT   = 512;    // dimensions freeze at this height
+constexpr uint32_t MAX_D_MODEL         = 1024;   // d_model ceiling
+constexpr uint32_t MAX_N_LAYERS        = 24;     // n_layers ceiling
 
-constexpr uint32_t GROWTH_PLATEAU_LEN  = 100;   // Blocks per plateau
-constexpr uint32_t NUM_GROWTH_PLATEAUS = 5;      // Total plateaus in Phase 1
-constexpr uint32_t DIM_GROWTH_END      = GROWTH_PLATEAU_LEN * NUM_GROWTH_PLATEAUS; // Block 500
+// Slots grow EVERY BLOCK, NO CAP:
+// n_slots(h) = GENESIS_N_SLOTS + h * SLOT_GROWTH_PER_BLOCK
+constexpr uint32_t SLOT_GROWTH_PER_BLOCK = 4;    // +4 slots per block, infinite growth
 
-// Maximum model dimensions (reached at plateau 4, block 400).
-constexpr uint32_t MAX_D_MODEL         = 1024;  // = GENESIS_D_MODEL + 4 * 128
-constexpr uint32_t MAX_N_LAYERS        = 24;    // = GENESIS_N_LAYERS + 4 * 4
-constexpr uint32_t MAX_D_FF            = 2048;  // = GENESIS_D_FF + 4 * 256
-
-// Slot memory grows in Phase 2 (blocks 500+).
-constexpr uint32_t MAX_N_SLOTS         = 65536; // Hard cap on slot count
-constexpr uint32_t SLOT_GROWTH_RATE    = 4;     // +4 slots per improving block
+// No MAX_N_SLOTS -- model grows forever
+// At block 100,000: 401,024 slots -> ~30B params
+// At block 1,000,000: 4,001,024 slots -> ~300B params
+// Inference stays O(1): only top_k=2 slots active per token
 
 // ---- Block Limits -----------------------------------------------------------
 // Maximum serialized block size: 32 MB.
@@ -247,7 +230,7 @@ struct ModelDimensions {
     uint32_t n_heads;      // Attention heads (= d_model / d_head)
     uint32_t d_head;       // Per-head dimension (always 64)
     uint32_t d_ff;         // Feed-forward inner dimension (= 2 * d_model)
-    uint32_t n_slots;      // Slot memory capacity (1024..65536)
+    uint32_t n_slots;      // Slot memory capacity (1024+, no cap)
     uint32_t top_k;        // Sparse slot retrieval count (always 2)
     uint32_t gru_dim;      // minGRU hidden state (= d_model)
     uint32_t conv_kernel;  // Multi-scale conv kernel size (always 4)
@@ -312,14 +295,14 @@ inline constexpr uint32_t compute_d_head(uint32_t d_model, uint32_t n_heads) {
     return (n_heads > 0) ? (d_model / n_heads) : 0;
 }
 
-/// Check if a d_model value is valid (must be a multiple of 64 for d_head alignment).
+/// Check if a d_model value is valid (continuous growth: any value in range).
 inline constexpr bool is_valid_d_model(uint32_t d) {
-    return d >= GENESIS_D_MODEL && d <= MAX_D_MODEL && (d % 64) == 0;
+    return d >= GENESIS_D_MODEL && d <= MAX_D_MODEL;
 }
 
-/// Check if an n_layers value is valid.
+/// Check if an n_layers value is valid (continuous growth: any value in range).
 inline constexpr bool is_valid_n_layers(uint32_t n) {
-    return n >= GENESIS_N_LAYERS && n <= MAX_N_LAYERS && (n % 4) == 0;
+    return n >= GENESIS_N_LAYERS && n <= MAX_N_LAYERS;
 }
 
 /// Compute the expected parameter count for given dimensions (rough estimate).
