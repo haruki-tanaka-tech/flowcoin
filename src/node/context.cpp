@@ -550,9 +550,14 @@ void NodeContext::interrupt() {
         LogInfo("node", "Shutdown requested");
         get_shutdown_state().request_shutdown();
 
-        // Stop the libuv event loop so main thread unblocks
+        // Stop the main libuv event loop (RPC) so main thread unblocks
         if (loop) {
             uv_stop(loop);
+        }
+
+        // Stop the P2P network thread
+        if (net) {
+            net->stop();
         }
     }
 }
