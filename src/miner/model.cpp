@@ -402,99 +402,72 @@ ggml_tensor* GGMLModel::build_forward(ggml_context* ctx,
 
 float GGMLModel::train_step(const uint8_t* input, const uint8_t* target,
                              int seq_len, float lr) {
-    // Allocate compute context (separate from weight context)
-    // Estimate: each ggml op creates a tensor, we have ~20 ops per layer + overhead
-    // Backward pass roughly doubles memory needs (grad tensors + intermediate)
-    const size_t est_tensors = 512 + static_cast<size_t>(n_layers_) * 128;
-    const size_t compute_mem = est_tensors * ggml_tensor_overhead()
-                             + ggml_graph_overhead_custom(16384, true)
-                             + static_cast<size_t>(seq_len) * vocab_ * sizeof(float) * 4  // logits + targets + grads
-                             + static_cast<size_t>(seq_len) * d_model_ * sizeof(float) * n_layers_ * 40
-                             + param_count() * sizeof(float) * 2  // grad accumulators
-                             + 256 * 1024 * 1024;  // extra headroom
+    // ═══ SPSA gradient estimation ═══
+    // Two forward passes with perturbed weights, no backward pass needed.
+    // Works with ANY ggml ops (no backward implementation required).
+    // SPSA: Simultaneous Perturbation Stochastic Approximation
 
-    struct ggml_init_params cparams = {
-        /*.mem_size   =*/ compute_mem,
-        /*.mem_buffer =*/ nullptr,
-        /*.no_alloc   =*/ false,
-    };
-    struct ggml_context* compute_ctx = ggml_init(cparams);
-    if (!compute_ctx) {
-        std::fprintf(stderr, "GGMLModel::train_step: failed to allocate compute context (%zu bytes)\n",
-                     compute_mem);
-        return 999.0f;
-    }
-
-    // Mark weight tensors as parameters (for gradient computation)
     auto wt = weight_tensors();
-    for (auto* t : wt) {
-        ggml_set_param(t);
+    const size_t n_params_total = param_count();
+    const float c = 0.01f;  // perturbation scale
+
+    // Generate random perturbation direction (Rademacher: ±1)
+    std::vector<float> perturbation(n_params_total);
+    static uint64_t rng = 12345;
+    for (size_t i = 0; i < n_params_total; i++) {
+        rng = rng * 6364136223846793005ULL + 1442695040888963407ULL;
+        perturbation[i] = (rng >> 63) ? 1.0f : -1.0f;
     }
 
-    // Build forward graph
-    ggml_tensor* loss = build_forward(compute_ctx, input, target, seq_len);
+    // Save original weights
+    std::vector<float> original_weights = get_weights();
 
-    // Mark loss tensor
-    ggml_set_loss(loss);
-
-    // Build compute graph with backward pass
-    struct ggml_cgraph* graph = ggml_new_graph_custom(compute_ctx, 16384, true);
-    ggml_build_forward_expand(graph, loss);
-
-    // Allocate gradient accumulator tensors for backward pass
-    // One grad_acc per weight tensor, in the compute context
-    const size_t n_params = wt.size();
-    std::vector<ggml_tensor*> grad_accs(n_params, nullptr);
-    for (size_t i = 0; i < n_params; i++) {
-        grad_accs[i] = ggml_dup_tensor(compute_ctx, wt[i]);
-        ggml_set_zero(grad_accs[i]);
-        ggml_set_name(grad_accs[i], (std::string("grad_") + ggml_get_name(wt[i])).c_str());
-    }
-
-    ggml_build_backward_expand(compute_ctx, graph, grad_accs.data());
-
-    // Compute (forward + backward)
-    int n_threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
-    if (n_threads > 8) n_threads = 8;  // Diminishing returns beyond 8 threads
-
-    struct ggml_cplan plan = ggml_graph_plan(graph, n_threads, nullptr);
-    std::vector<uint8_t> work;
-    if (plan.work_size > 0) {
-        work.resize(plan.work_size);
-        plan.work_data = work.data();
-    }
-    ggml_graph_compute(graph, &plan);
-
-    // Extract loss value
-    float loss_val = ggml_get_f32_1d(loss, 0);
-
-    // SGD update: weight -= lr * grad
-    // Also compute gradient norm
-    double grad_norm_sq = 0.0;
-    for (size_t i = 0; i < n_params; i++) {
-        ggml_tensor* grad = grad_accs[i];
-        if (!grad) continue;
-
-        float* w = reinterpret_cast<float*>(wt[i]->data);
-        const float* g = reinterpret_cast<const float*>(grad->data);
-        const int64_t n = ggml_nelements(wt[i]);
-
-        for (int64_t j = 0; j < n; j++) {
-            grad_norm_sq += static_cast<double>(g[j]) * g[j];
-            w[j] -= lr * g[j];
+    // Perturb weights +c*d
+    {
+        size_t offset = 0;
+        for (auto* t : wt) {
+            float* w = reinterpret_cast<float*>(t->data);
+            int64_t n = ggml_nelements(t);
+            for (int64_t j = 0; j < n; j++) {
+                w[j] = original_weights[offset + j] + c * perturbation[offset + j];
+            }
+            offset += n;
         }
     }
-    last_grad_norm_ = static_cast<float>(std::sqrt(grad_norm_sq));
+    float loss_plus = eval_loss(input, target, seq_len);
 
-    // Clear param/loss flags (important for next step)
-    for (auto* t : wt) {
-        t->flags &= ~GGML_TENSOR_FLAG_PARAM;
+    // Perturb weights -c*d
+    {
+        size_t offset = 0;
+        for (auto* t : wt) {
+            float* w = reinterpret_cast<float*>(t->data);
+            int64_t n = ggml_nelements(t);
+            for (int64_t j = 0; j < n; j++) {
+                w[j] = original_weights[offset + j] - c * perturbation[offset + j];
+            }
+            offset += n;
+        }
     }
-    loss->flags &= ~GGML_TENSOR_FLAG_LOSS;
+    float loss_minus = eval_loss(input, target, seq_len);
 
-    // Free compute context (weight tensors remain in ctx_)
-    ggml_free(compute_ctx);
+    // SPSA gradient estimate and SGD update
+    float grad_scale = (loss_plus - loss_minus) / (2.0f * c);
+    last_grad_norm_ = std::fabs(grad_scale);
 
+    {
+        size_t offset = 0;
+        for (auto* t : wt) {
+            float* w = reinterpret_cast<float*>(t->data);
+            int64_t n = ggml_nelements(t);
+            for (int64_t j = 0; j < n; j++) {
+                w[j] = original_weights[offset + j] - lr * grad_scale * perturbation[offset + j];
+            }
+            offset += n;
+        }
+    }
+
+    // Compute actual loss at new weights
+    float loss_val = eval_loss(input, target, seq_len);
     return loss_val;
 }
 
