@@ -1097,16 +1097,19 @@ def mine(args: argparse.Namespace) -> None:
                 if lv < best_loss:
                     best_loss = lv
 
-                total_checks += 1
+                # Hash check + status every 10 steps
+                if step % 10 == 0:
+                    total_checks += 1
 
-                # Hash check every step — hash first param tensor only (small, fast, unique)
-                with torch.no_grad():
-                    first_param = next(model.parameters()).data.cpu().numpy().tobytes()
-                delta_hash = keccak256(first_param)
-                training_hash = keccak256(delta_hash + data.hash)
-                training_int = int.from_bytes(training_hash, "big")
+                    # Hash first param (512KB embedding, changes every step)
+                    with torch.no_grad():
+                        first_param = next(model.parameters()).data.cpu().numpy().tobytes()
+                    delta_hash = keccak256(first_param)
+                    training_hash = keccak256(delta_hash + data.hash)
+                    training_int = int.from_bytes(training_hash, "big")
+                else:
+                    training_int = 2**256  # skip check
 
-                # Status every 10 steps
                 if step % 10 == 0:
                     elapsed = time.time() - cycle_start
                     st_s = step / elapsed
