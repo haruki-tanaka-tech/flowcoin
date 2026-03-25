@@ -86,15 +86,31 @@ constexpr int64_t  RETARGET_TIMESPAN   = RETARGET_INTERVAL * TARGET_BLOCK_TIME; 
 constexpr int      MAX_RETARGET_FACTOR = 4;
 
 // powLimit expressed as compact nBits.
-// Bitcoin uses 0x1d00ffff. We use 0x1f00ffff for an easier initial target,
-// giving miners time to ramp up training infrastructure.
 //
-// Decoding 0x1f00ffff:
+// FlowCoin mining is fundamentally different from Bitcoin:
+//   Bitcoin:   millions of SHA-256 hashes/sec, nonce is free
+//   FlowCoin:  ~2 training steps/sec, each step = forward+backward+update
+//
+// Satoshi set difficulty=1 (nBits=0x1d00ffff, target=2^224) which gave
+// ~24 min first block at 3 MH/s. We calibrate identically:
+//
+//   Measured: RTX 5080 at batch=32 = 2.0 training steps/sec
+//   Target:   ~20 min first block (like Satoshi's ~24 min)
+//   Steps:    2.0 st/s × 20 min × 60 = 2400 steps
+//   Target:   2^256 / 2400 = 2^244.77
+//
+// Decoding 0x1f1b4e81:
 //   exponent = 0x1f = 31
-//   mantissa = 0x00ffff
-//   target   = 0x00ffff << (8 * (31 - 3)) = 0x00ffff << 224
-// This yields a 226-bit target (very easy, ~2^226).
-constexpr uint32_t INITIAL_NBITS       = 0x1f00ffff;
+//   mantissa = 0x1b4e81
+//   target   = 0x1b4e81 << (8 * (31 - 3)) = 0x1b4e81 << 224
+//   = 001b4e8100000000000000000000000000000000000000000000000000000000
+//   ≈ 2^244.77
+//
+// Difficulty self-adjusts after 2016 blocks:
+//   Blocks 0-2015: ~20 min/block (1 miner) → actual timespan ~28 days
+//   Retarget: ratio = 28/14 = 2.0 → difficulty doubles
+//   Blocks 2016+:  ~10 min/block ✓
+constexpr uint32_t INITIAL_NBITS       = 0x1f1b4e81;
 
 // ---- Proof-of-Training Parameters ------------------------------------------
 // Number of tokens in the evaluation dataset for forward-pass validation.
