@@ -1061,8 +1061,8 @@ def mine(args: argparse.Namespace) -> None:
             params = sum(p.numel() for p in model.parameters())
             print(f"  Params: {params:,} | Target: {hex(nbits)}")
 
-            # Snapshot consensus weights
-            consensus = {k: v.clone() for k, v in model.state_dict().items()}
+            # Consensus weights = zeros (genesis model has no initial state)
+            consensus = {k: torch.zeros_like(v) for k, v in model.state_dict().items()}
 
             # Optimizer
             optimizer = torch.optim.AdamW(

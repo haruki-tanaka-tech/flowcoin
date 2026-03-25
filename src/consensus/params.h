@@ -144,7 +144,7 @@ constexpr size_t   MIN_DELTA_SIZE      = 1;
 // These define the architecture at block 0. All nodes must agree on these
 // values to generate identical genesis model weights from the deterministic seed.
 
-constexpr uint32_t GENESIS_SEED        = 42;    // Deterministic RNG seed for weight init
+constexpr uint32_t GENESIS_SEED        = 0;     // Zero = all weights zero (instant init, like Bitcoin has no initial SHA-256 state)
 constexpr uint32_t GENESIS_D_MODEL     = 512;   // Hidden dimension
 constexpr uint32_t GENESIS_N_LAYERS    = 8;     // Transformer-style layer count
 constexpr uint32_t GENESIS_N_HEADS     = 8;     // Multi-head attention heads
