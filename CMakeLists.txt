@@ -135,6 +135,22 @@ target_include_directories(json INTERFACE src/json)
 # FlowCoin libraries
 # =============================================================================
 
+# --- flowcoin_compat ---
+add_library(flowcoin_compat STATIC
+    src/compat/cpuid.cpp
+    src/compat/glibcxx_sanity.cpp
+)
+target_include_directories(flowcoin_compat PUBLIC src)
+target_link_libraries(flowcoin_compat PUBLIC pthread)
+
+# --- flowcoin_support ---
+add_library(flowcoin_support STATIC
+    src/support/lockedpool.cpp
+    src/support/cleanse.cpp
+)
+target_include_directories(flowcoin_support PUBLIC src)
+target_link_libraries(flowcoin_support PUBLIC pthread)
+
 # --- flowcoin_util ---
 add_library(flowcoin_util STATIC
     src/util/arith_uint256.cpp
@@ -170,6 +186,16 @@ add_library(flowcoin_crypto STATIC
 )
 target_include_directories(flowcoin_crypto PUBLIC src)
 target_link_libraries(flowcoin_crypto PUBLIC ed25519 flowcoin_hash)
+
+# --- flowcoin_common ---
+add_library(flowcoin_common STATIC
+    src/common/args.cpp
+    src/common/system.cpp
+    src/common/settings.cpp
+    src/common/config_options.cpp
+)
+target_include_directories(flowcoin_common PUBLIC src)
+target_link_libraries(flowcoin_common PUBLIC flowcoin_compat pthread)
 
 # --- flowcoin_consensus ---
 add_library(flowcoin_consensus STATIC
@@ -295,6 +321,21 @@ add_library(flowcoin_index STATIC
 target_include_directories(flowcoin_index PUBLIC src)
 target_link_libraries(flowcoin_index PUBLIC flowcoin_chain flowcoin_hash sqlite)
 
+# --- flowcoin_kernel ---
+add_library(flowcoin_kernel STATIC
+    src/kernel/context.cpp
+    src/kernel/validation.cpp
+    src/kernel/chainparams.cpp
+    src/kernel/coinstats.cpp
+    src/kernel/notifications.cpp
+    src/kernel/chain_verifier.cpp
+)
+target_include_directories(flowcoin_kernel PUBLIC src)
+target_link_libraries(flowcoin_kernel PUBLIC
+    flowcoin_consensus flowcoin_chain flowcoin_crypto flowcoin_hash
+    flowcoin_util flowcoin_common flowcoin_support
+)
+
 # --- flowcoin_policy ---
 add_library(flowcoin_policy STATIC
     src/policy/policy.cpp
@@ -342,13 +383,17 @@ target_link_libraries(flowcoin_node PUBLIC
     flowcoin_consensus
     flowcoin_mempool
     flowcoin_index
+    flowcoin_kernel
     flowcoin_policy
     flowcoin_interfaces
     flowcoin_rest
     flowcoin_primitives
     flowcoin_crypto
+    flowcoin_common
     flowcoin_hash
     flowcoin_util
+    flowcoin_support
+    flowcoin_compat
     json
     uv_a
 )
@@ -372,14 +417,18 @@ target_link_libraries(flowcoind PRIVATE
     flowcoin_net
     flowcoin_chain
     flowcoin_consensus
+    flowcoin_kernel
     flowcoin_index
     flowcoin_policy
     flowcoin_interfaces
     flowcoin_rest
     flowcoin_primitives
     flowcoin_crypto
+    flowcoin_common
     flowcoin_hash
     flowcoin_util
+    flowcoin_support
+    flowcoin_compat
     ggml
     sqlite
     ed25519
@@ -525,14 +574,18 @@ if(BUILD_TESTS)
         flowcoin_net
         flowcoin_chain
         flowcoin_consensus
+        flowcoin_kernel
         flowcoin_index
         flowcoin_policy
         flowcoin_interfaces
         flowcoin_rest
         flowcoin_primitives
         flowcoin_crypto
+        flowcoin_common
         flowcoin_hash
         flowcoin_util
+        flowcoin_support
+        flowcoin_compat
         ggml
         sqlite
         ed25519
@@ -553,6 +606,7 @@ endif()
 option(BUILD_BENCH "Build performance benchmarks" ON)
 if(BUILD_BENCH)
     add_executable(flowcoin_bench
+        src/bench/bench.cpp
         src/bench/bench_main.cpp
         src/bench/bench_keccak.cpp
         src/bench/bench_ed25519.cpp
@@ -574,10 +628,14 @@ if(BUILD_BENCH)
         flowcoin_net
         flowcoin_chain
         flowcoin_consensus
+        flowcoin_kernel
         flowcoin_primitives
         flowcoin_crypto
+        flowcoin_common
         flowcoin_hash
         flowcoin_util
+        flowcoin_support
+        flowcoin_compat
         ggml
         sqlite
         ed25519
