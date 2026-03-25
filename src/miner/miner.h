@@ -16,8 +16,6 @@
 
 #include "model.h"
 #include "rpc_client.h"
-#include "backend.h"
-#include "training.h"
 #include "hash_check.h"
 
 #include "../util/types.h"
@@ -54,8 +52,8 @@ struct MinerConfig {
     int   seq_len           = 256;
     float sparse_threshold  = 0.01f;
 
-    // Compute backend selection
-    std::string backend = "auto";  // auto, cuda, metal, vulkan, opencl, cpu
+    // Compute backend (ggml handles this automatically)
+    std::string backend = "auto";  // auto (ggml selects best available)
 
     // Mining behavior
     int  status_interval_ms = 1000;   // Print status every N ms
@@ -134,15 +132,9 @@ private:
     // ── Miner identity (Ed25519 keypair) ──
     KeyPair miner_key_;
 
-    // ── Model ──
-    Model model_;
-    Model consensus_;  // Snapshot of consensus model for delta computation
-
-    // ── Compute backend ──
-    std::unique_ptr<ComputeBackend> backend_;
-
-    // ── Trainer ──
-    std::unique_ptr<Trainer> trainer_;
+    // ── Model (ggml-based) ──
+    GGMLModel model_;
+    GGMLModel consensus_;  // Snapshot of consensus model for delta computation
 
     // ── RPC client ──
     RPCClient rpc_;
@@ -160,7 +152,6 @@ private:
     // ── Initialization helpers ──
     bool load_training_data();
     bool load_or_create_miner_key();
-    bool init_compute_backend();
     bool init_model();
     bool connect_to_node();
 

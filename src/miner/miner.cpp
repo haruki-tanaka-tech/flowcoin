@@ -41,9 +41,6 @@ MinerEngine::MinerEngine(const MinerConfig& config)
 
 MinerEngine::~MinerEngine() {
     stop();
-    if (backend_) {
-        backend_->shutdown();
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -56,37 +53,30 @@ bool MinerEngine::init() {
     std::printf("  ════════════════════\n\n");
 
     // Step 1: Load or create miner keypair
-    std::printf("[1/5] Loading miner identity...\n");
+    std::printf("[1/4] Loading miner identity...\n");
     if (!load_or_create_miner_key()) {
         std::fprintf(stderr, "FATAL: Failed to load miner key\n");
         return false;
     }
 
     // Step 2: Load training data
-    std::printf("[2/5] Loading training data...\n");
+    std::printf("[2/4] Loading training data...\n");
     if (!load_training_data()) {
         std::fprintf(stderr, "FATAL: No training data found in %s/training/\n",
                      config_.datadir.c_str());
         return false;
     }
 
-    // Step 3: Initialize compute backend
-    std::printf("[3/5] Initializing compute backend...\n");
-    if (!init_compute_backend()) {
-        std::fprintf(stderr, "FATAL: Failed to initialize compute backend\n");
-        return false;
-    }
-
-    // Step 4: Connect to node
-    std::printf("[4/5] Connecting to node at %s:%d...\n",
+    // Step 3: Connect to node
+    std::printf("[3/4] Connecting to node at %s:%d...\n",
                 config_.rpc_host.c_str(), config_.rpc_port);
     if (!connect_to_node()) {
         std::fprintf(stderr, "FATAL: Cannot connect to FlowCoin node\n");
         return false;
     }
 
-    // Step 5: Initialize model
-    std::printf("[5/5] Initializing ResonanceNet V5 model...\n");
+    // Step 4: Initialize model (ggml handles backend selection automatically)
+    std::printf("[4/4] Initializing ResonanceNet V5 model (ggml)...\n");
     if (!init_model()) {
         std::fprintf(stderr, "FATAL: Failed to initialize model\n");
         return false;
@@ -194,49 +184,6 @@ bool MinerEngine::load_or_create_miner_key() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Compute backend initialization
-// ═══════════════════════════════════════════════════════════════════════════
-
-bool MinerEngine::init_compute_backend() {
-    if (config_.backend == "auto") {
-        backend_ = create_best_backend();
-    } else if (config_.backend == "cuda") {
-        backend_ = create_backend(BackendType::CUDA);
-    } else if (config_.backend == "metal") {
-        backend_ = create_backend(BackendType::METAL);
-    } else if (config_.backend == "vulkan") {
-        backend_ = create_backend(BackendType::VULKAN);
-    } else if (config_.backend == "opencl") {
-        backend_ = create_backend(BackendType::OPENCL);
-    } else {
-        backend_ = create_backend(BackendType::CPU);
-    }
-
-    if (!backend_) {
-        std::fprintf(stderr, "  No compute backend available, falling back to CPU\n");
-        backend_ = create_backend(BackendType::CPU);
-    }
-
-    if (!backend_ || !backend_->init()) {
-        std::fprintf(stderr, "  Backend initialization failed\n");
-        return false;
-    }
-
-    std::printf("  Backend: %s\n", backend_->name().c_str());
-    std::printf("  Device:  %s\n", backend_->device_name().c_str());
-
-    size_t mem_total = backend_->total_memory();
-    size_t mem_avail = backend_->available_memory();
-    if (mem_total > 0) {
-        std::printf("  Memory:  %.1f GB total, %.1f GB available\n",
-                    static_cast<double>(mem_total) / (1024.0 * 1024.0 * 1024.0),
-                    static_cast<double>(mem_avail) / (1024.0 * 1024.0 * 1024.0));
-    }
-
-    return true;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // Model initialization
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -249,7 +196,6 @@ bool MinerEngine::init_model() {
             flow::consensus::GENESIS_D_FF,
             flow::consensus::GENESIS_N_SLOTS
         );
-        model_.zero_weights();
     } else {
         // Use dimensions from the block template
         model_.init(
@@ -258,19 +204,22 @@ bool MinerEngine::init_model() {
             current_template_.d_ff,
             current_template_.n_slots
         );
-        model_.zero_weights();
     }
 
     // Initialize consensus model (same structure, will be loaded from node)
-    consensus_.init(model_.d_model, model_.n_layers, model_.d_ff, model_.n_slots);
-    consensus_.zero_weights();
-
-    // Create trainer
-    trainer_ = std::make_unique<Trainer>(model_, *backend_, config_.learning_rate);
+    consensus_.init(model_.d_model(), model_.n_layers(), model_.d_ff(), model_.n_slots());
 
     size_t params = model_.param_count();
+    std::printf("  Backend: ggml (CPU");
+#ifdef GGML_USE_CUDA
+    std::printf(", CUDA");
+#endif
+#ifdef GGML_USE_METAL
+    std::printf(", Metal");
+#endif
+    std::printf(")\n");
     std::printf("  Model: d=%d, L=%d, ff=%d, slots=%d\n",
-                model_.d_model, model_.n_layers, model_.d_ff, model_.n_slots);
+                model_.d_model(), model_.n_layers(), model_.d_ff(), model_.n_slots());
     std::printf("  Parameters: %s (%zu bytes)\n",
                 format_params(params).c_str(), params * sizeof(float));
 
@@ -323,23 +272,17 @@ bool MinerEngine::refresh_block_template() {
         // Model dimensions may have changed
         flow::consensus::ModelDimensions dims = flow::consensus::compute_growth(tmpl.height);
 
-        if (static_cast<int>(dims.d_model)  != model_.d_model  ||
-            static_cast<int>(dims.n_layers) != model_.n_layers ||
-            static_cast<int>(dims.d_ff)     != model_.d_ff     ||
-            static_cast<int>(dims.n_slots)  != model_.n_slots) {
+        if (static_cast<int>(dims.d_model)  != model_.d_model()  ||
+            static_cast<int>(dims.n_layers) != model_.n_layers() ||
+            static_cast<int>(dims.d_ff)     != model_.d_ff()     ||
+            static_cast<int>(dims.n_slots)  != model_.n_slots()) {
 
             std::printf("\n  Model growth: d=%u L=%u ff=%u slots=%u\n",
                         dims.d_model, dims.n_layers, dims.d_ff, dims.n_slots);
 
             // Re-init model with new dimensions
-            // Weights from previous model are discarded; consensus weights
-            // would be loaded from the node in production
             model_.init(dims.d_model, dims.n_layers, dims.d_ff, dims.n_slots);
-            model_.zero_weights();
             consensus_.init(dims.d_model, dims.n_layers, dims.d_ff, dims.n_slots);
-            consensus_.zero_weights();
-
-            trainer_ = std::make_unique<Trainer>(model_, *backend_, config_.learning_rate);
         }
 
         // Reset GRU states for new block
@@ -388,8 +331,9 @@ float MinerEngine::training_step() {
 
     get_batch(input.data(), target.data());
 
-    float loss = trainer_->step(input.data(), target.data(), config_.seq_len);
-    stats_.current_grad_norm = trainer_->grad_norm();
+    float loss = model_.train_step(input.data(), target.data(),
+                                   config_.seq_len, config_.learning_rate);
+    stats_.current_grad_norm = model_.grad_norm();
 
     return loss;
 }
@@ -428,12 +372,12 @@ bool MinerEngine::submit_block(const RPCClient::BlockTemplate& tmpl,
     header.nbits         = tmpl.nbits;
     header.val_loss      = val_loss;
     header.prev_val_loss = tmpl.prev_val_loss;
-    header.d_model       = static_cast<uint32_t>(model_.d_model);
-    header.n_layers      = static_cast<uint32_t>(model_.n_layers);
-    header.d_ff          = static_cast<uint32_t>(model_.d_ff);
-    header.n_heads       = static_cast<uint32_t>(model_.n_heads);
-    header.gru_dim       = static_cast<uint32_t>(model_.d_model);
-    header.n_slots       = static_cast<uint32_t>(model_.n_slots);
+    header.d_model       = static_cast<uint32_t>(model_.d_model());
+    header.n_layers      = static_cast<uint32_t>(model_.n_layers());
+    header.d_ff          = static_cast<uint32_t>(model_.d_ff());
+    header.n_heads       = static_cast<uint32_t>(model_.d_model() / 64);  // derived from d_model
+    header.gru_dim       = static_cast<uint32_t>(model_.d_model());
+    header.n_slots       = static_cast<uint32_t>(model_.n_slots());
     header.version       = 1;
     header.nonce         = 0;  // PoT doesn't use a nonce in the traditional sense
     header.sparse_threshold = config_.sparse_threshold;
