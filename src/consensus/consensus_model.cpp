@@ -428,8 +428,17 @@ bool ConsensusModel::init(const consensus::ModelDimensions& dims, uint32_t seed)
     }
 
     create_tensors();
-    init_weights(seed);
-    LogInfo("eval", "model init: done (%zu params, seed=%u)", param_count(), seed);
+
+    // Genesis model: all weights zero (like Bitcoin genesis has no initial state).
+    // Block 1 delta = first trained weights. All nodes start from identical zeros.
+    // No expensive PRNG initialization — instant startup.
+    if (seed == 0) {
+        // Zero init: ggml_new_tensor already zeros memory with no_alloc=false
+        LogInfo("eval", "model init: done (%zu params, zero init)", param_count());
+    } else {
+        init_weights(seed);
+        LogInfo("eval", "model init: done (%zu params, seed=%u)", param_count(), seed);
+    }
 
     return true;
 }
