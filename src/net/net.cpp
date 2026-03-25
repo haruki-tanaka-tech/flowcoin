@@ -227,6 +227,17 @@ void NetManager::run() {
 
     uv_run(loop_, UV_RUN_DEFAULT);
 
+    // Drain remaining close callbacks
+    uv_run(loop_, UV_RUN_DEFAULT);
+
+    // Force-close any remaining handles
+    uv_walk(loop_, [](uv_handle_t* handle, void*) {
+        if (!uv_is_closing(handle)) {
+            uv_close(handle, nullptr);
+        }
+    }, nullptr);
+    uv_run(loop_, UV_RUN_DEFAULT);
+
     // Cleanup after loop exits
     uv_loop_close(loop_);
     uv_loop_delete(loop_);
