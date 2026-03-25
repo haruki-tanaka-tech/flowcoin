@@ -551,13 +551,9 @@ void NodeContext::interrupt() {
         get_shutdown_state().request_shutdown();
 
         // Stop the main libuv event loop (RPC) so main thread unblocks
+        // net->stop() is called later from main thread in flowcoind.cpp
         if (loop) {
             uv_stop(loop);
-        }
-
-        // Stop the P2P network thread
-        if (net) {
-            net->stop();
         }
     }
 }
