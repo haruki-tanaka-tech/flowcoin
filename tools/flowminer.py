@@ -533,16 +533,42 @@ def compute_fast_hash(model: ResonanceNetV5) -> bytes:
 def compute_full_delta(
     model: ResonanceNetV5,
     consensus_state: dict,
-) -> Tuple[bytes, bytes]:
-    """Full delta hash (expensive ~300ms). Only called when candidate found."""
-    parts = []
+    sparse_threshold: float = 1e-3,
+) -> Tuple[bytes, bytes, int]:
+    """Compute sparse delta. Returns (delta_hash, sparse_bytes, nonzero_count).
+
+    Sparse format: [uint32 count][count × (uint32 index, float32 value)]
+    Only entries where |delta| > threshold are stored.
+    Hash is computed on the FULL dense delta (for consensus), but the
+    block payload uses the sparse encoding (compact for transmission).
+    """
+    import numpy as np
+
+    # Collect full delta for hashing
+    all_delta = []
     with torch.no_grad():
         for key in sorted(model.state_dict().keys()):
             delta = (model.state_dict()[key].cpu().float()
                      - consensus_state[key].cpu().float())
-            parts.append(delta.numpy().tobytes())
-    delta_bytes = b"".join(parts)
-    return keccak256(delta_bytes), delta_bytes
+            all_delta.append(delta.numpy().flatten())
+    full_delta = np.concatenate(all_delta)
+
+    # Hash the full dense delta (consensus-compatible)
+    full_bytes = full_delta.tobytes()
+    delta_hash = keccak256(full_bytes)
+
+    # Sparse encode: only significant changes
+    mask = np.abs(full_delta) > sparse_threshold
+    indices = np.where(mask)[0].astype(np.uint32)
+    values = full_delta[mask].astype(np.float32)
+    nonzero = len(indices)
+
+    # Sparse format: [count:u32][idx:u32, val:f32] × count
+    sparse_data = struct.pack('<I', nonzero)
+    for i in range(nonzero):
+        sparse_data += struct.pack('<If', indices[i], values[i])
+
+    return delta_hash, sparse_data, nonzero
 
 
 # ===================================================================
@@ -1095,21 +1121,25 @@ def mine(args: argparse.Namespace) -> None:
                     )
 
                 if training_int < target:
-                    # Candidate found. Compute full delta for block submission.
-                    full_hash, full_bytes = compute_full_delta(model, consensus)
-                    full_training = keccak256(full_hash + data.hash)
+                    # Candidate found. Compute sparse delta for block.
+                    delta_hash, sparse_bytes, nonzero = compute_full_delta(
+                        model, consensus, sparse_threshold=1e-3)
                     elapsed = time.time() - cycle_start
                     blocks_found += 1
+
+                    total_params = sum(p.numel() for p in model.parameters())
+                    sparsity = (1 - nonzero / total_params) * 100
 
                     print(f"\n\n  *** BLOCK {height} FOUND! ***")
                     print(f"  Step: {step} | Loss: {best_loss:.4f} | "
                           f"Time: {elapsed:.1f}s")
-                    print(f"  Mining hash:  {training_hash.hex()[:16]}...")
-                    print(f"  Delta hash:   {full_hash.hex()[:16]}...")
-                    print(f"  Delta size:   {len(full_bytes):,} bytes")
+                    print(f"  Hash:     {training_hash.hex()[:16]}...")
+                    print(f"  Delta:    {nonzero:,} / {total_params:,} params "
+                          f"({sparsity:.1f}% sparse)")
+                    print(f"  Payload:  {len(sparse_bytes):,} bytes "
+                          f"({len(sparse_bytes)/1e6:.1f} MB)")
 
                     # Build the actual block
-                    print(f"  Building block...")
                     block_hex, block_hash_hex = build_block(
                         height=height,
                         prev_hash_hex=prev_hash_hex,
@@ -1117,26 +1147,26 @@ def mine(args: argparse.Namespace) -> None:
                         dims=dims,
                         val_loss=best_loss,
                         prev_val_loss=prev_val_loss,
-                        delta_hash=full_hash,
+                        delta_hash=delta_hash,
                         dataset_hash=data.hash,
-                        delta_bytes=full_bytes,
+                        delta_bytes=sparse_bytes,
                         miner_privkey=miner_privkey,
                         miner_pubkey=miner_pubkey,
                     )
 
-                    print(f"  Block hash:   {block_hash_hex[:16]}...")
-                    print(f"  Block size:   {len(block_hex) // 2:,} bytes")
+                    print(f"  Block:    {len(block_hex) // 2:,} bytes")
+                    print(f"  Submitting...")
 
-                    # Submit to node
-                    print(f"  Submitting to node...")
                     try:
                         result = rpc.call("submitblock", [block_hex])
                         if result is None:
-                            print(f"  Block accepted!")
+                            print(f"  Accepted!")
                         else:
-                            print(f"  Block rejected: {result}")
+                            print(f"  Rejected: {result}")
                     except RPCError as e:
-                        print(f"  Submit error: {e}")
+                        print(f"  Error: {e}")
+                    except Exception as e:
+                        print(f"  Error: {e}")
 
                     print()
                     break
