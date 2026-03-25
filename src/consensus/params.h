@@ -124,11 +124,6 @@ constexpr size_t   MAX_DELTA_SIZE      = 100'000'000;
 // Minimum delta size: at least 1 byte of training evidence.
 constexpr size_t   MIN_DELTA_SIZE      = 1;
 
-// ---- Minimum Training Steps (consensus rule) --------------------------------
-// More params -> each step more valuable -> min steps decrease (floor at 500).
-// At genesis: 1000 steps. At height 1000+: ~500 steps.
-constexpr uint32_t MIN_TRAIN_STEPS_BASE = 1000;
-
 // ---- Model Genesis (ResonanceNet V5) ----------------------------------------
 // These define the architecture at block 0. All nodes must agree on these
 // values to generate identical genesis model weights from the deterministic seed.

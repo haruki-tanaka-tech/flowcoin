@@ -34,7 +34,7 @@ CBlock create_genesis_block() {
     // PoUT fields: genesis has max loss (untrained model)
     genesis.val_loss        = MAX_VAL_LOSS;
     genesis.prev_val_loss   = MAX_VAL_LOSS;
-    genesis.train_steps     = 0;
+    genesis.reserved_field  = 0;
     genesis.stagnation      = 0;
 
     // Model architecture: genesis dimensions
@@ -239,8 +239,8 @@ bool validate_genesis_block(const CBlock& genesis) {
         return false;
     }
 
-    // 14. train_steps must be 0
-    if (genesis.train_steps != 0) {
+    // 14. reserved field must be 0
+    if (genesis.reserved_field != 0) {
         return false;
     }
 

@@ -90,7 +90,7 @@ void register_training_rpcs(RpcServer& server, ChainState& chain) {
         j["n_heads"]       = tip->n_heads;
         j["n_slots"]       = tip->n_slots;
         j["gru_dim"]       = tip->gru_dim;
-        j["train_steps"]   = tip->train_steps;
+        // train_steps removed from consensus (informational only in miner)
         j["stagnation"]    = tip->stagnation_count;
 
         // Compute expected dimensions and param count
@@ -241,7 +241,6 @@ void register_training_rpcs(RpcServer& server, ChainState& chain) {
         }
 
         consensus::ModelDimensions dims = consensus::compute_growth(height);
-        uint32_t min_steps = consensus::compute_min_steps(height);
 
         json j;
         j["height"]       = height;
@@ -256,7 +255,6 @@ void register_training_rpcs(RpcServer& server, ChainState& chain) {
         j["conv_kernel"]  = dims.conv_kernel;
         j["vocab"]        = dims.vocab;
         j["seq_len"]      = dims.seq_len;
-        j["min_steps"]    = min_steps;
         j["param_count"]  = estimate_param_count(dims);
 
         // Growth info

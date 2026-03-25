@@ -36,7 +36,7 @@ static void serialize_header(DataWriter& w, const CBlockHeader& hdr) {
     w.write_u32_le(hdr.n_heads);
     w.write_u32_le(hdr.gru_dim);
     w.write_u32_le(hdr.n_slots);
-    w.write_u32_le(hdr.train_steps);
+    w.write_u32_le(hdr.reserved_field);
     w.write_u32_le(hdr.stagnation);
     w.write_u32_le(hdr.delta_offset);
     w.write_u32_le(hdr.delta_length);
@@ -76,7 +76,7 @@ static bool deserialize_header(DataReader& r, CBlockHeader& hdr) {
     hdr.n_heads         = r.read_u32_le();
     hdr.gru_dim         = r.read_u32_le();
     hdr.n_slots         = r.read_u32_le();
-    hdr.train_steps     = r.read_u32_le();
+    hdr.reserved_field  = r.read_u32_le();
     hdr.stagnation      = r.read_u32_le();
     hdr.delta_offset    = r.read_u32_le();
     hdr.delta_length    = r.read_u32_le();

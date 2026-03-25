@@ -231,7 +231,7 @@ A FlowCoin miner performs the following steps for each block:
 1. Fetch the current block template (header fields, target, model dimensions)
 2. Load the cumulative model state from the chain tip
 3. Load a training dataset shard
-4. Perform gradient descent for at least `min_train_steps` steps
+4. Perform gradient descent (more steps = more delta change = new hash)
 5. Evaluate validation loss on the deterministic evaluation dataset
 6. Compute the weight delta (post-training weights minus pre-training weights)
 7. Sparsify and compress the delta

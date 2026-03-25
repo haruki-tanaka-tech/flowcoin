@@ -66,7 +66,7 @@ static flow::CBlockHeader make_header(int height) {
     h.n_heads = 8;
     h.gru_dim = 512;
     h.n_slots = 1024;
-    h.train_steps = 1000;
+    h.reserved_field = 0;
     h.stagnation = 0;
     h.delta_offset = 0;
     h.delta_length = 0;

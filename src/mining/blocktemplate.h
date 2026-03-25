@@ -44,7 +44,6 @@ struct BlockTemplate {
 
     uint256 target;                    //!< 256-bit target (decoded from nbits)
     std::string target_hex;            //!< Target as hex string for RPC
-    uint32_t min_train_steps;          //!< Minimum training steps required
     consensus::ModelDimensions dims;   //!< Model architecture for the miner
 
     uint64_t template_id;             //!< Unique template identifier
@@ -185,8 +184,7 @@ private:
         const std::array<uint8_t, 32>& miner_privkey,
         const std::array<uint8_t, 32>& miner_pubkey,
         const std::vector<uint8_t>& compressed_delta,
-        float val_loss,
-        uint32_t train_steps);
+        float val_loss);
 
     // --- Package-aware transaction selection (CPFP) ---
 

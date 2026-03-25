@@ -73,7 +73,6 @@ void ChainDB::init_tables() {
         "    nbits INTEGER NOT NULL,"
         "    val_loss REAL NOT NULL,"
         "    prev_val_loss REAL NOT NULL,"
-        "    train_steps INTEGER NOT NULL,"
         "    d_model INTEGER NOT NULL,"
         "    n_layers INTEGER NOT NULL,"
         "    d_ff INTEGER NOT NULL,"
@@ -123,17 +122,17 @@ void ChainDB::prepare_statements() {
     prepare(
         "INSERT OR REPLACE INTO block_index ("
         "    hash, prev_hash, height, timestamp, nbits,"
-        "    val_loss, prev_val_loss, train_steps,"
+        "    val_loss, prev_val_loss,"
         "    d_model, n_layers, d_ff, n_slots, n_heads, gru_dim,"
         "    stagnation_count, improving_blocks, status,"
         "    file_num, file_offset, file_size, n_tx,"
         "    merkle_root, miner_pubkey"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);",
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);",
         &stmt_save_);
 
     prepare(
         "SELECT hash, prev_hash, height, timestamp, nbits,"
-        "    val_loss, prev_val_loss, train_steps,"
+        "    val_loss, prev_val_loss,"
         "    d_model, n_layers, d_ff, n_slots, n_heads, gru_dim,"
         "    stagnation_count, improving_blocks, status,"
         "    file_num, file_offset, file_size, n_tx,"
@@ -143,7 +142,7 @@ void ChainDB::prepare_statements() {
 
     prepare(
         "SELECT hash, prev_hash, height, timestamp, nbits,"
-        "    val_loss, prev_val_loss, train_steps,"
+        "    val_loss, prev_val_loss,"
         "    d_model, n_layers, d_ff, n_slots, n_heads, gru_dim,"
         "    stagnation_count, improving_blocks, status,"
         "    file_num, file_offset, file_size, n_tx,"
@@ -233,7 +232,6 @@ void ChainDB::read_index_from_row(sqlite3_stmt* stmt, CBlockIndex& idx) const {
     idx.nbits            = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
     idx.val_loss         = static_cast<float>(sqlite3_column_double(stmt, col++));
     idx.prev_val_loss    = static_cast<float>(sqlite3_column_double(stmt, col++));
-    idx.train_steps      = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
     idx.d_model          = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
     idx.n_layers         = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
     idx.d_ff             = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
@@ -284,7 +282,6 @@ bool ChainDB::save_block_index(const CBlockIndex& index) {
     sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.nbits));
     sqlite3_bind_double(stmt_save_, col++, static_cast<double>(index.val_loss));
     sqlite3_bind_double(stmt_save_, col++, static_cast<double>(index.prev_val_loss));
-    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.train_steps));
     sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.d_model));
     sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.n_layers));
     sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.d_ff));

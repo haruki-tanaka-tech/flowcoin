@@ -35,14 +35,6 @@ namespace flow::consensus {
 // @return        The ModelDimensions for this height.
 ModelDimensions compute_growth(uint64_t height);
 
-// Compute minimum training steps for a block at given height.
-// More params means each step is more valuable, so min steps decrease.
-// At genesis: 1000 steps. Floor at 500 steps.
-//
-// @param height  The block height.
-// @return        Minimum number of SGD training steps required.
-uint32_t compute_min_steps(uint64_t height);
-
 // Count parameters for given dimensions.
 //
 // @param dims  The model dimensions.

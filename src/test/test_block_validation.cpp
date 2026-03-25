@@ -51,7 +51,7 @@ static CBlockHeader make_valid_genesis() {
     hdr.n_heads = dims.n_heads;
     hdr.gru_dim = dims.gru_dim;
     hdr.n_slots = dims.n_slots;
-    hdr.train_steps = 5000;
+    hdr.reserved_field = 0;
     hdr.version = 1;
     hdr.stagnation = 0;
     hdr.nonce = 0;
@@ -65,7 +65,6 @@ static BlockContext make_genesis_ctx() {
     BlockContext ctx;
     ctx.is_genesis = true;
     ctx.expected_dims = compute_growth(0);
-    ctx.min_train_steps = compute_min_steps(0);
     ctx.expected_nbits = INITIAL_NBITS;
     return ctx;
 }
@@ -80,7 +79,6 @@ static BlockContext make_child_ctx(const CBlockHeader& parent, uint64_t child_he
     ctx.prev_val_loss = parent.val_loss;
     ctx.prev_nbits = parent.nbits;
     ctx.expected_dims = compute_growth(child_height);
-    ctx.min_train_steps = compute_min_steps(child_height);
     ctx.expected_nbits = parent.nbits;  // same period
     ctx.improving_blocks = 0;
     ctx.adjusted_time = parent.timestamp + 86400;  // 1 day ahead
@@ -121,7 +119,7 @@ void test_block_validation() {
         child.n_heads = dims.n_heads;
         child.gru_dim = dims.gru_dim;
         child.n_slots = dims.n_slots;
-        child.train_steps = compute_min_steps(1);
+        child.reserved_field = 0;
         child.version = 1;
         sign_header(child);
 
@@ -152,7 +150,7 @@ void test_block_validation() {
         child.n_heads = dims.n_heads;
         child.gru_dim = dims.gru_dim;
         child.n_slots = dims.n_slots;
-        child.train_steps = compute_min_steps(1);
+        child.reserved_field = 0;
         child.version = 1;
         sign_header(child);
 
@@ -184,7 +182,7 @@ void test_block_validation() {
         child.n_heads = dims.n_heads;
         child.gru_dim = dims.gru_dim;
         child.n_slots = dims.n_slots;
-        child.train_steps = compute_min_steps(1);
+        child.reserved_field = 0;
         child.version = 1;
         sign_header(child);
 
@@ -256,7 +254,7 @@ void test_block_validation() {
         child.n_heads = dims.n_heads;
         child.gru_dim = dims.gru_dim;
         child.n_slots = dims.n_slots;
-        child.train_steps = compute_min_steps(1);
+        child.reserved_field = 0;
         child.version = 1;
         sign_header(child);
 
@@ -288,7 +286,7 @@ void test_block_validation() {
         child.n_heads = dims.n_heads;
         child.gru_dim = dims.gru_dim;
         child.n_slots = dims.n_slots;
-        child.train_steps = compute_min_steps(1);
+        child.reserved_field = 0;
         child.version = 1;
         sign_header(child);
 
@@ -366,20 +364,8 @@ void test_block_validation() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 13: Minimum training steps
+    // Test 13: (min training steps removed -- difficulty regulates mining)
     // -----------------------------------------------------------------------
-    {
-        // At genesis: 1000
-        assert(compute_min_steps(0) == 1000);
-        // At h=500: still 1000
-        assert(compute_min_steps(500) == 1000);
-
-        // After h=500: decreasing
-        assert(compute_min_steps(2000) < compute_min_steps(500));
-
-        // Floor at 500
-        assert(compute_min_steps(100000) == 500);
-    }
 
     // -----------------------------------------------------------------------
     // Test 14: Difficulty target encoding/decoding

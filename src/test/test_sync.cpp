@@ -33,7 +33,7 @@ static flow::CBlockHeader make_header(uint64_t height, const flow::uint256& prev
     hdr.n_heads = flow::consensus::GENESIS_N_HEADS;
     hdr.gru_dim = flow::consensus::GENESIS_GRU_DIM;
     hdr.n_slots = flow::consensus::GENESIS_N_SLOTS;
-    hdr.train_steps = 5000;
+    hdr.reserved_field = 0;
     hdr.version = 1;
     return hdr;
 }

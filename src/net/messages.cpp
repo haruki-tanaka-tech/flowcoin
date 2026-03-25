@@ -488,8 +488,8 @@ static bool deserialize_block_from_wire(const uint8_t* data, size_t len, CBlock&
     block.gru_dim = r.read_u32_le();
     // n_slots (4)
     block.n_slots = r.read_u32_le();
-    // train_steps (4)
-    block.train_steps = r.read_u32_le();
+    // reserved (4)
+    block.reserved_field = r.read_u32_le();
     // stagnation (4)
     block.stagnation = r.read_u32_le();
     // delta_offset (4)
@@ -743,7 +743,7 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         hdr.n_heads = r.read_u32_le();
         hdr.gru_dim = r.read_u32_le();
         hdr.n_slots = r.read_u32_le();
-        hdr.train_steps = r.read_u32_le();
+        hdr.reserved_field = r.read_u32_le();
         hdr.stagnation = r.read_u32_le();
         hdr.delta_offset = r.read_u32_le();
         hdr.delta_length = r.read_u32_le();
@@ -1066,7 +1066,7 @@ void MessageHandler::handle_cmpctblock(Peer& peer, const uint8_t* data, size_t l
     hdr.n_heads = r.read_u32_le();
     hdr.gru_dim = r.read_u32_le();
     hdr.n_slots = r.read_u32_le();
-    hdr.train_steps = r.read_u32_le();
+    hdr.reserved_field = r.read_u32_le();
     hdr.stagnation = r.read_u32_le();
     hdr.delta_offset = r.read_u32_le();
     hdr.delta_length = r.read_u32_le();
@@ -1236,7 +1236,7 @@ void MessageHandler::handle_cmpctblock(Peer& peer, const uint8_t* data, size_t l
         block.n_heads = cbs.header.n_heads;
         block.gru_dim = cbs.header.gru_dim;
         block.n_slots = cbs.header.n_slots;
-        block.train_steps = cbs.header.train_steps;
+        block.reserved_field = cbs.header.reserved_field;
         block.stagnation = cbs.header.stagnation;
         block.delta_offset = cbs.header.delta_offset;
         block.delta_length = cbs.header.delta_length;
@@ -1437,7 +1437,7 @@ void MessageHandler::handle_blocktxn(Peer& peer, const uint8_t* data, size_t len
     block.n_heads = cbs.header.n_heads;
     block.gru_dim = cbs.header.gru_dim;
     block.n_slots = cbs.header.n_slots;
-    block.train_steps = cbs.header.train_steps;
+    block.reserved_field = cbs.header.reserved_field;
     block.stagnation = cbs.header.stagnation;
     block.delta_offset = cbs.header.delta_offset;
     block.delta_length = cbs.header.delta_length;

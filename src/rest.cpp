@@ -612,7 +612,7 @@ RestResponse RestServer::handle_chaininfo() {
         j["val_loss"] = tip->val_loss;
         j["d_model"] = tip->d_model;
         j["n_layers"] = tip->n_layers;
-        j["train_steps"] = tip->train_steps;
+        // train_steps removed from consensus
     } else {
         j["blocks"] = 0;
         j["headers"] = 0;
@@ -729,7 +729,7 @@ std::vector<uint8_t> RestServer::block_to_json(const CBlock& block,
     j["n_layers"] = block.n_layers;
     j["d_ff"] = block.d_ff;
     j["n_heads"] = block.n_heads;
-    j["train_steps"] = block.train_steps;
+    // train_steps removed from consensus
     j["stagnation"] = block.stagnation;
     j["delta_length"] = block.delta_length;
     j["sparse_count"] = block.sparse_count;

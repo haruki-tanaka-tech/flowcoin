@@ -152,7 +152,7 @@ static CBlock fc_block(uint64_t height, const uint256& prev,
     block.n_heads = dims.n_heads;
     block.gru_dim = dims.gru_dim;
     block.n_slots = dims.n_slots;
-    block.train_steps = compute_min_steps(height) + 1000;
+    block.reserved_field = 0;
     block.stagnation = 0;
     block.nonce = 0;
     block.vtx = txs;

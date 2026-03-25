@@ -245,7 +245,7 @@ void test_rpc_handlers() {
             info["d_ff"] = 1024;
             info["n_heads"] = 8;
             info["n_slots"] = 1024;
-            info["train_steps"] = 1000;
+            // train_steps removed from consensus
             return info;
         };
         json result = handler(json::array());

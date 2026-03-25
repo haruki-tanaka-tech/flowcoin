@@ -41,14 +41,12 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
 
         uint64_t next_height = tip->height + 1;
         auto dims = consensus::compute_growth(next_height);
-        uint32_t min_steps = consensus::compute_min_steps(next_height);
         Amount reward = consensus::compute_block_reward(next_height);
 
         json j;
         j["next_height"] = next_height;
         j["prev_hash"] = hex_encode(tip->hash.data(), 32);
         j["prev_val_loss"] = tip->val_loss;
-        j["min_train_steps"] = min_steps;
         j["reward_atomic"] = reward;
         j["reward_flow"] = static_cast<double>(reward) /
                            static_cast<double>(consensus::COIN);
@@ -169,7 +167,7 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
             j["tip_d_model"] = tip->d_model;
             j["tip_n_layers"] = tip->n_layers;
             j["tip_n_slots"] = tip->n_slots;
-            j["tip_train_steps"] = tip->train_steps;
+            // tip_train_steps removed (not a consensus field)
             j["tip_stagnation"] = tip->stagnation_count;
             j["tip_improving_blocks"] = tip->improving_blocks;
 
@@ -371,13 +369,11 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         std::reverse(indices.begin(), indices.end());
 
         float total_loss = 0;
-        int total_steps = 0;
         int total_tx = 0;
         int improving = 0;
 
         for (CBlockIndex* bi : indices) {
             total_loss += bi->val_loss;
-            total_steps += bi->train_steps;
             total_tx += bi->n_tx;
             if (bi->is_improving()) improving++;
         }
@@ -389,8 +385,6 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         j["end"] = end_h;
         j["block_count"] = count;
         j["avg_val_loss"] = (count > 0) ? total_loss / count : 0.0f;
-        j["total_train_steps"] = total_steps;
-        j["avg_train_steps"] = (count > 0) ? total_steps / count : 0;
         j["total_transactions"] = total_tx;
         j["improving_blocks"] = improving;
         j["improving_pct"] = (count > 0) ? 100.0 * improving / count : 0.0;
@@ -442,7 +436,7 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
             h["t"] = bi->timestamp;
             h["vl"] = bi->val_loss;
             h["nb"] = bi->nbits;
-            h["ts"] = bi->train_steps;
+            // train_steps removed from consensus
             h["dm"] = bi->d_model;
             h["nl"] = bi->n_layers;
             // First 8 hex chars of hash as a short identifier

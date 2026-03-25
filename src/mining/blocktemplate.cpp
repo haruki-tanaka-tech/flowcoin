@@ -448,7 +448,6 @@ BlockTemplate BlockAssembler::create_template(const std::string& coinbase_addres
     // Model dimensions
     uint32_t improving_blocks = tip ? tip->improving_blocks : 0;
     tmpl.dims = consensus::compute_growth(next_height);
-    tmpl.min_train_steps = consensus::compute_min_steps(next_height);
 
     // Decode target
     arith_uint256 target_arith;
@@ -486,7 +485,6 @@ BlockTemplate BlockAssembler::create_template(const std::array<uint8_t, 32>& coi
 
     uint32_t improving_blocks = tip ? tip->improving_blocks : 0;
     tmpl.dims = consensus::compute_growth(next_height);
-    tmpl.min_train_steps = consensus::compute_min_steps(next_height);
 
     arith_uint256 target_arith;
     consensus::derive_target(tmpl.header.nbits, target_arith);
@@ -528,8 +526,7 @@ CBlock BlockAssembler::assemble_full_block(
     const std::array<uint8_t, 32>& miner_privkey,
     const std::array<uint8_t, 32>& miner_pubkey,
     const std::vector<uint8_t>& compressed_delta,
-    float val_loss,
-    uint32_t train_steps) {
+    float val_loss) {
 
     // Step 1: Start with the template's assembled block
     CBlock block = tmpl.assemble();
@@ -539,7 +536,6 @@ CBlock BlockAssembler::assemble_full_block(
 
     // Step 3: Set training proof fields
     block.val_loss = val_loss;
-    block.train_steps = train_steps;
 
     // Step 4: Set delta hash from compressed delta
     block.delta_hash = keccak256(compressed_delta.data(), compressed_delta.size());
@@ -898,9 +894,6 @@ std::vector<uint8_t> BlockAssembler::serialize_template_for_stratum(
 
     // Target (32 bytes)
     w.write_bytes(tmpl.target.data(), 32);
-
-    // Minimum training steps
-    w.write_u32_le(tmpl.min_train_steps);
 
     // Model dimensions
     w.write_u32_le(tmpl.dims.d_model);

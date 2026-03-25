@@ -33,7 +33,7 @@ static flow::CBlockHeader make_signed_genesis() {
     hdr.n_heads = dims.n_heads;
     hdr.gru_dim = dims.gru_dim;
     hdr.n_slots = dims.n_slots;
-    hdr.train_steps = 5000;
+    hdr.reserved_field = 0;
     hdr.version = 1;
 
     std::memcpy(hdr.miner_pubkey.data(), kp.pubkey.data(), 32);
@@ -54,7 +54,6 @@ static flow::consensus::BlockContext make_genesis_context() {
     ctx.is_genesis = true;
     ctx.expected_dims = compute_growth(0);
     ctx.expected_nbits = INITIAL_NBITS;
-    ctx.min_train_steps = compute_min_steps(0);
     ctx.adjusted_time = GENESIS_TIMESTAMP + 100000;
     return ctx;
 }
@@ -208,7 +207,6 @@ void test_validation() {
         ctx.prev_val_loss = 5.0f;
         ctx.expected_nbits = INITIAL_NBITS;
         ctx.expected_dims = compute_growth(1);
-        ctx.min_train_steps = compute_min_steps(1);
         ctx.adjusted_time = GENESIS_TIMESTAMP + 100000;
 
         // Make a valid header for height 1
@@ -226,7 +224,7 @@ void test_validation() {
         hdr.n_heads = dims.n_heads;
         hdr.gru_dim = dims.gru_dim;
         hdr.n_slots = dims.n_slots;
-        hdr.train_steps = 5000;
+        hdr.reserved_field = 0;
 
         // Compute the parent hash
         auto genesis = make_signed_genesis();

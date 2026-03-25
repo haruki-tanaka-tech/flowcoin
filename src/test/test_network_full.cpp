@@ -288,7 +288,7 @@ void test_network_full() {
         hdr.n_heads = 8;
         hdr.gru_dim = 512;
         hdr.n_slots = 1024;
-        hdr.train_steps = 1000;
+        hdr.reserved_field = 0;
         hdr.val_loss = 3.14f;
         hdr.prev_val_loss = 3.50f;
 
@@ -305,7 +305,7 @@ void test_network_full() {
         assert(restored.d_model == 512);
         assert(restored.n_layers == 8);
         assert(restored.d_ff == 1024);
-        assert(restored.train_steps == 1000);
+        assert(restored.reserved_field == 0);
     }
 
     // -----------------------------------------------------------------------

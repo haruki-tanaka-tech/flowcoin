@@ -374,16 +374,6 @@ bool check_block(const CBlock& block, const BlockContext& ctx,
     }
 
     // -----------------------------------------------------------------------
-    // Check 16: minimum training steps
-    // -----------------------------------------------------------------------
-    // The miner must have performed at least compute_min_steps(height)
-    // training steps. This value is pre-computed in ctx.min_train_steps.
-    if (block.train_steps < ctx.min_train_steps) {
-        return state.invalid(ValidationResult::BLOCK_INVALID, "insufficient-training",
-            "train_steps below minimum required");
-    }
-
-    // -----------------------------------------------------------------------
     // Check 15: forward evaluation (optional — requires eval callback)
     // -----------------------------------------------------------------------
     // If an eval function is provided and the block carries a delta payload,

@@ -65,7 +65,7 @@ static CBlock make_genesis_block() {
     block.n_heads = dims.n_heads;
     block.gru_dim = dims.gru_dim;
     block.n_slots = dims.n_slots;
-    block.train_steps = 5000;
+    block.reserved_field = 0;
     block.stagnation = 0;
     block.nonce = 0;
 
@@ -278,20 +278,8 @@ void test_blocktemplate() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 15: Minimum training steps decrease with height (floor at 500)
+    // Test 15: (min training steps removed -- difficulty regulates mining)
     // -----------------------------------------------------------------------
-    {
-        uint32_t steps_0 = compute_min_steps(0);
-        uint32_t steps_100 = compute_min_steps(100);
-        uint32_t steps_500 = compute_min_steps(500);
-        uint32_t steps_2000 = compute_min_steps(2000);
-
-        assert(steps_0 == MIN_TRAIN_STEPS_BASE);  // 1000
-        assert(steps_100 == 1000);  // constant up to h=500
-        assert(steps_500 == 1000);  // constant up to h=500
-        assert(steps_2000 < steps_500);  // decreasing after h=500
-        assert(steps_2000 >= 500);  // floor at 500
-    }
 
     // -----------------------------------------------------------------------
     // Test 16: Block size within limits
@@ -491,22 +479,8 @@ void test_blocktemplate() {
     }
 
     // -----------------------------------------------------------------------
-    // Test 28: Min steps — constant then decreasing, floor at 500
+    // Test 28: (min steps removed -- difficulty regulates mining)
     // -----------------------------------------------------------------------
-    {
-        // Constant at 1000 for h <= 500
-        for (uint64_t h = 0; h <= 500; h += 50) {
-            assert(compute_min_steps(h) == 1000);
-        }
-        // Monotonically non-increasing after h=500
-        uint32_t prev_steps = compute_min_steps(500);
-        for (uint64_t h = 501; h < 5000; h += 50) {
-            uint32_t steps = compute_min_steps(h);
-            assert(steps <= prev_steps);
-            assert(steps >= 500);  // floor
-            prev_steps = steps;
-        }
-    }
 
     // -----------------------------------------------------------------------
     // Test 29: Reward halving boundary values

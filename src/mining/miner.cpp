@@ -142,7 +142,6 @@ SubmitResult Miner::mine_cycle() {
     }
 
     emit_status("Training complete: val_loss=" + std::to_string(train_result.val_loss)
-                + " steps=" + std::to_string(train_result.train_steps)
                 + " delta=" + std::to_string(train_result.delta.get_compressed_size()) + " bytes");
 
     // Step 3: Fill block header with training proof
@@ -150,7 +149,6 @@ SubmitResult Miner::mine_cycle() {
     block.val_loss = train_result.val_loss;
     block.training_hash = train_result.training_hash;
     block.dataset_hash = train_result.dataset_hash;
-    block.train_steps = train_result.train_steps;
     block.delta_length = static_cast<uint32_t>(train_result.delta.get_compressed_size());
     block.sparse_count = train_result.sparse_count;
     block.sparse_threshold = train_result.sparse_threshold;
@@ -253,8 +251,7 @@ TrainingResult Miner::train_and_evaluate(const BlockTemplate& tmpl) {
     //   model.eval(eval_data) -> val_loss
     //   model.compute_delta() -> delta weights
 
-    uint32_t steps = std::max(tmpl.min_train_steps, cfg.max_train_steps);
-    steps = std::min(steps, cfg.max_train_steps);
+    uint32_t steps = cfg.max_train_steps;
 
     // Perform training steps
     float current_loss = result.prev_val_loss;
@@ -883,8 +880,7 @@ TrainingResult Miner::train_with_schedule(const BlockTemplate& tmpl,
 
     auto train_start = std::chrono::steady_clock::now();
 
-    uint32_t total_steps = std::max(tmpl.min_train_steps, cfg.max_train_steps);
-    total_steps = std::min(total_steps, cfg.max_train_steps);
+    uint32_t total_steps = cfg.max_train_steps;
 
     float current_loss = result.prev_val_loss;
 

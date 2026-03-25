@@ -20,7 +20,6 @@ void CBlockIndex::set_from_header(const CBlockHeader& hdr) {
     timestamp       = hdr.timestamp;
     val_loss        = hdr.val_loss;
     prev_val_loss   = hdr.prev_val_loss;
-    train_steps     = hdr.train_steps;
     nbits           = hdr.nbits;
     d_model         = hdr.d_model;
     n_layers        = hdr.n_layers;
@@ -54,8 +53,7 @@ consensus::BlockContext CBlockIndex::make_child_context(int64_t adjusted_time) c
     // Compute expected model dimensions for the child block
     ctx.expected_dims = consensus::compute_growth(child_height);
 
-    // Compute minimum training steps for the child block
-    ctx.min_train_steps = consensus::compute_min_steps(child_height);
+
 
     // For difficulty: at retarget boundaries the caller needs to compute
     // the new target. For now, carry forward the parent's nbits.
