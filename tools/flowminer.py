@@ -1099,14 +1099,10 @@ def mine(args: argparse.Namespace) -> None:
 
                 total_checks += 1
 
-                # Hash check every step using GPU-folded summary (1ms)
+                # Hash check every step — hash first param tensor only (small, fast, unique)
                 with torch.no_grad():
-                    all_params = torch.cat([p.data.flatten() for p in model.parameters()])
-                    delta_gpu = all_params - consensus_flat
-                    chunk = delta_gpu.numel() // 256
-                    summary = delta_gpu[:chunk * 256].view(256, chunk).sum(dim=1)
-                    summary_bytes = summary.cpu().numpy().tobytes()
-                delta_hash = keccak256(summary_bytes)
+                    first_param = next(model.parameters()).data.cpu().numpy().tobytes()
+                delta_hash = keccak256(first_param)
                 training_hash = keccak256(delta_hash + data.hash)
                 training_int = int.from_bytes(training_hash, "big")
 
