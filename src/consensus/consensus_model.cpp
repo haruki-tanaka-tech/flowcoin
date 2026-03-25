@@ -418,12 +418,22 @@ void ConsensusModel::init_weights(uint32_t seed) {
 bool ConsensusModel::init(const consensus::ModelDimensions& dims, uint32_t seed) {
     dims_ = dims;
 
+    fprintf(stderr, "ConsensusModel::init: d=%u L=%u slots=%u params=%zu\n",
+            dims.d_model, dims.n_layers, dims.n_slots, param_count());
+    fprintf(stderr, "ConsensusModel::init: allocating ggml context (%zu MB)...\n",
+            (param_count() * 4 + 1024*1024) / (1024*1024));
+
     if (!allocate_context()) {
+        fprintf(stderr, "ConsensusModel::init: ggml allocation failed!\n");
         return false;
     }
+    fprintf(stderr, "ConsensusModel::init: creating tensors...\n");
 
     create_tensors();
+    fprintf(stderr, "ConsensusModel::init: initializing weights (seed=%u)...\n", seed);
+
     init_weights(seed);
+    fprintf(stderr, "ConsensusModel::init: done (%zu params)\n", param_count());
 
     return true;
 }
