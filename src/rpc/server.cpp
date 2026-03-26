@@ -586,15 +586,6 @@ std::string RpcServer::process_request(const std::string& request,
         }
         if (!decoded.empty()) body = decoded;
     }
-    // Debug: log incoming body as hex for troubleshooting
-    {
-        std::string hex_preview;
-        for (size_t i = 0; i < std::min(body.size(), size_t(40)); i++) {
-            char h[4]; std::snprintf(h, sizeof(h), "%02x ", (unsigned char)body[i]);
-            hex_preview += h;
-        }
-        LogInfo("rpc", "RPC body (%zu bytes) hex: %s", body.size(), hex_preview.c_str());
-    }
     if (body.empty()) {
         failed_requests_++;
         json err_resp = {
