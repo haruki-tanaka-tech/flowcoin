@@ -24,7 +24,7 @@ EXTRA_DIST	= example.conf linux-usb-cgminer \
 
 SUBDIRS		= lib compat ccan
 
-cgminer_CPPFLAGS = $(PTHREAD_FLAGS) -fno-strict-aliasing $(JANSSON_CPPFLAGS) $(USBUTILS_CPPFLAGS) $(LIBCURL_CPPFLAGS)
+cgminer_CPPFLAGS = $(PTHREAD_FLAGS) -fno-strict-aliasing $(JANSSON_CPPFLAGS) $(USBUTILS_CPPFLAGS) $(LIBCURL_CPPFLAGS) -I$(srcdir)/../hash
 
 bin_PROGRAMS	= cgminer
 
@@ -45,7 +45,11 @@ cgminer_SOURCES := cgminer.c
 
 cgminer_SOURCES	+= elist.h miner.h compat.h bench_block.h	\
 		   util.c util.h uthash.h logging.h		\
-		   sha2.c sha2.h api.c
+		   sha2.c sha2.h api.c \
+		   keccak2.c keccak2.h \
+		   ../hash/KeccakHash.c ../hash/KeccakHash.h \
+		   ../hash/KeccakSponge.c ../hash/KeccakSponge.h \
+		   ../hash/KeccakP-1600-reference.c ../hash/KeccakP-1600-SnP.h
 
 cgminer_SOURCES	+= logging.c
 

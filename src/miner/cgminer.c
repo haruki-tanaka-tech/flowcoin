@@ -56,6 +56,7 @@ char *curly = ":D";
 #endif
 #include <libgen.h>
 #include <sha2.h>
+#include "keccak2.h"
 
 #include "compat.h"
 #include "miner.h"
@@ -5172,11 +5173,9 @@ static void regen_hash(struct work *work)
 	uint32_t *data32 = (uint32_t *)(work->data);
 	unsigned char swap[80];
 	uint32_t *swap32 = (uint32_t *)swap;
-	unsigned char hash1[32];
 
 	flip80(swap32, data32);
-	sha256(swap, 80, hash1);
-	sha256(hash1, 32, (unsigned char *)(work->hash));
+	keccak256d(swap, 80, (unsigned char *)(work->hash));
 }
 
 static bool cnx_needed(struct pool *pool);
@@ -7622,10 +7621,7 @@ out_unlock:
 
 static void gen_hash(unsigned char *data, unsigned char *hash, int len)
 {
-	unsigned char hash1[32];
-
-	sha256(data, len, hash1);
-	sha256(hash1, 32, hash);
+	keccak256d(data, len, hash);
 }
 
 void set_target(unsigned char *dest_target, double diff)
