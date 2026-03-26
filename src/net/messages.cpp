@@ -542,6 +542,17 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
         LogInfo("net", "accepted block at height %lu from peer %lu",
                 (unsigned long)block.height, (unsigned long)peer.id());
         relay_block(block_hash);
+
+        // Request more headers if peer likely has more blocks
+        if (peer.start_height() > block.height) {
+            DataWriter gh;
+            gh.write_u32_le(consensus::PROTOCOL_VERSION);
+            gh.write_compact_size(1);
+            gh.write_bytes(block_hash.data(), 32);
+            uint256 zero_stop;
+            gh.write_bytes(zero_stop.data(), 32);
+            send(peer, NetCmd::GETHEADERS, gh.release());
+        }
     } else {
         LogError("net", "rejected block from peer %lu: %s",
                 (unsigned long)peer.id(), vstate.reject_reason().c_str());

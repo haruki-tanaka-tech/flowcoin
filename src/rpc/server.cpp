@@ -563,44 +563,24 @@ std::string RpcServer::process_request(const std::string& request,
     }
 
     // Extract body
-    // Debug: log request headers
-    {
-        auto hend = request.find("\r\n\r\n");
-        if (hend != std::string::npos && hend < 500) {
-            LogInfo("rpc", "REQ HEADERS: %s", request.substr(0, hend).c_str());
-        }
-    }
     std::string body = get_body(request);
 
-    // Handle chunked transfer encoding (cgminer/libcurl sends this)
-    // Chunked format: hex_size\r\n chunk_data\r\n ... 0\r\n\r\n
+    // Handle chunked transfer encoding
     if (body.size() > 4 && body[0] != '{' && body[0] != '[') {
         std::string decoded;
         size_t pos = 0;
         while (pos < body.size()) {
-            // Find end of chunk size line
             auto crlf = body.find("\r\n", pos);
             if (crlf == std::string::npos) break;
-            // Parse chunk size (hex)
-            std::string size_str = body.substr(pos, crlf - pos);
             size_t chunk_size = 0;
-            try { chunk_size = std::stoul(size_str, nullptr, 16); } catch (...) { break; }
-            if (chunk_size == 0) break;  // terminal chunk
-            pos = crlf + 2;  // skip \r\n
+            try { chunk_size = std::stoul(body.substr(pos, crlf - pos), nullptr, 16); } catch (...) { break; }
+            if (chunk_size == 0) break;
+            pos = crlf + 2;
             if (pos + chunk_size > body.size()) break;
             decoded += body.substr(pos, chunk_size);
-            pos += chunk_size + 2;  // skip chunk data + \r\n
+            pos += chunk_size + 2;
         }
         if (!decoded.empty()) body = decoded;
-    }
-    // Debug: log incoming body as hex for troubleshooting
-    {
-        std::string hex_preview;
-        for (size_t i = 0; i < std::min(body.size(), size_t(40)); i++) {
-            char h[4]; std::snprintf(h, sizeof(h), "%02x ", (unsigned char)body[i]);
-            hex_preview += h;
-        }
-        LogInfo("rpc", "RPC body (%zu bytes) hex: %s", body.size(), hex_preview.c_str());
     }
     if (body.empty()) {
         failed_requests_++;
