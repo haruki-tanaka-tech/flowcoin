@@ -166,7 +166,9 @@ bool MinerEngine::refresh_block_template() {
 
     // Derive target from nbits
     arith_uint256 target;
+    std::fprintf(stderr, "  DEBUG: nbits = %u (0x%08x)\n", tmpl.nbits, tmpl.nbits);
     if (!consensus::derive_target(tmpl.nbits, target)) {
+        std::fprintf(stderr, "  ERROR: derive_target failed for nbits=0x%08x\n", tmpl.nbits);
         return false;
     }
     current_target_ = ArithToUint256(target);
