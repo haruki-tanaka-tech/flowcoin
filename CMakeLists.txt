@@ -484,41 +484,8 @@ target_link_libraries(flowcoin-tx PRIVATE
 # FlowCoin Miner (standalone, native C++)
 # =============================================================================
 
-# Core miner library (PoW nonce iteration)
-add_library(flowcoin_miner STATIC
-    src/miner/miner.cpp
-    src/miner/rpc_client.cpp
-    src/miner/hash_check.cpp
-)
-target_include_directories(flowcoin_miner PRIVATE src)
-target_link_libraries(flowcoin_miner PRIVATE
-    flowcoin_hash flowcoin_crypto flowcoin_util flowcoin_consensus flowcoin_primitives
-)
-
-# CUDA GPU mining (optional)
-option(FLOWCOIN_USE_CUDA "Build miner with CUDA support" OFF)
-if(FLOWCOIN_USE_CUDA)
-    set(CMAKE_CUDA_STANDARD 17)
-    enable_language(CUDA)
-    target_sources(flowcoin_miner PRIVATE src/miner/cuda_miner.cu)
-    target_compile_definitions(flowcoin_miner PUBLIC FLOWCOIN_USE_CUDA)
-    target_link_libraries(flowcoin_miner PRIVATE cudart)
-endif()
-
-# Miner executable
-add_executable(flowcoin-miner
-    src/flowcoin-miner.cpp
-)
-target_include_directories(flowcoin-miner PRIVATE src)
-target_link_libraries(flowcoin-miner PRIVATE
-    flowcoin_miner
-    flowcoin_primitives flowcoin_consensus
-    flowcoin_crypto flowcoin_hash flowcoin_util
-    flowcoin_support flowcoin_compat
-    ed25519 xkcp zstd
-    pthread dl m
-)
-install(TARGETS flowcoin-miner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+# Miner is built separately via src/miner/Makefile (OpenCL GPU mining)
+# Build: cd src/miner && make USE_OPENCL=1
 
 # =============================================================================
 # Tests (assert-based, no external framework required)
