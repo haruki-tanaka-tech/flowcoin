@@ -25,7 +25,7 @@
 // Consensus validates:
 //   1. Compressed size is within [MIN_DELTA_SIZE, MAX_DELTA_SIZE]
 //   2. Decompression succeeds
-//   3. keccak256 of compressed delta matches header.training_hash binding
+//   3. keccak256 of compressed delta matches uint256{} binding
 //   4. No NaN or Inf values in the decompressed data
 //   5. Sparse indices are in-range and sorted (no duplicates)
 

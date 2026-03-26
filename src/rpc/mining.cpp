@@ -9,7 +9,6 @@
 #include "mining/submitblock.h"
 #include "consensus/difficulty.h"
 #include "util/arith_uint256.h"
-#include "consensus/growth.h"
 #include "consensus/params.h"
 #include "consensus/reward.h"
 #include "util/strencodings.h"
@@ -51,17 +50,17 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
 
         // Model dimensions
         json dims;
-        dims["d_model"]     = tmpl.dims.d_model;
-        dims["n_layers"]    = tmpl.dims.n_layers;
-        dims["n_heads"]     = tmpl.dims.n_heads;
-        dims["d_head"]      = tmpl.dims.d_head;
-        dims["d_ff"]        = tmpl.dims.d_ff;
-        dims["n_slots"]     = tmpl.dims.n_slots;
-        dims["top_k"]       = tmpl.dims.top_k;
-        dims["gru_dim"]     = tmpl.dims.gru_dim;
-        dims["conv_kernel"] = tmpl.dims.conv_kernel;
-        dims["vocab"]       = tmpl.dims.vocab;
-        dims["seq_len"]     = tmpl.dims.seq_len;
+        dims["d_model"]     = 0;
+        dims["n_layers"]    = 0;
+        dims["n_heads"]     = 0;
+        dims["d_head"]      = 0;
+        dims["d_ff"]        = 0;
+        dims["n_slots"]     = 0;
+        dims["top_k"]       = 0;
+        dims["gru_dim"]     = 0;
+        dims["conv_kernel"] = 0;
+        dims["vocab"]       = 0;
+        dims["seq_len"]     = 0;
         j["model"]          = dims;
 
         // min_train_steps removed: difficulty alone regulates mining
@@ -76,9 +75,9 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         // Previous block's val_loss for the miner
         CBlockIndex* tip = chain.tip();
         if (tip) {
-            j["prev_val_loss"] = tip->val_loss;
+
         } else {
-            j["prev_val_loss"] = consensus::MAX_VAL_LOSS;
+            j["prev_val_loss"] = 100.0f;
         }
 
         // Capabilities
@@ -183,18 +182,13 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         j["reward_atomic"] = reward;
 
         // Model dimensions at next height
-        auto dims = consensus::compute_growth(next_height);
-        j["d_model"]  = dims.d_model;
-        j["n_layers"] = dims.n_layers;
-        j["d_ff"]     = dims.d_ff;
-        j["n_slots"]  = dims.n_slots;
-        j["n_heads"]  = dims.n_heads;
+        auto dims = 0;
 
         // min_train_steps removed: difficulty alone regulates mining
         j["chain"]   = "main";
 
         // Growth phase
-        bool dims_growing = (next_height < consensus::DIM_FREEZE_HEIGHT);
+        bool dims_growing = (next_height < 512);
         j["growth_phase"] = dims_growing ? "dimension_growth" : "slot_growth";
 
         // Halving info
@@ -211,21 +205,13 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
 
         // Current val_loss
         if (tip) {
-            j["val_loss"] = tip->val_loss;
-            j["improving_blocks"] = tip->improving_blocks;
+
+
         }
 
         // Estimate parameter count
-        uint64_t param_count = dims.vocab * dims.d_model; // embedding
-        param_count += dims.n_layers * (4 * dims.d_model * dims.d_model +
-                                         2 * dims.d_model * dims.d_ff +
-                                         3 * dims.d_model * dims.d_model +
-                                         4 * dims.d_model +
-                                         dims.d_model * dims.conv_kernel);
-        param_count += 2 * dims.n_slots * dims.d_model; // slot memory
-        param_count += dims.d_model * dims.vocab; // output head
-        j["estimated_params"] = param_count;
-        j["estimated_params_mb"] = static_cast<double>(param_count * 4) / (1024.0 * 1024.0);
+
+
 
         return j;
     });
@@ -460,7 +446,7 @@ void register_mining_mempool_rpcs(RpcServer& server, ChainState& chain,
         // Model info
         CBlockIndex* tip = chain.tip();
         if (tip) {
-            j["prev_val_loss"] = tip->val_loss;
+
         }
 
         // min_train_steps removed: difficulty alone regulates mining
@@ -477,26 +463,19 @@ void register_mining_mempool_rpcs(RpcServer& server, ChainState& chain,
         if (!tip) throw std::runtime_error("Chain is empty");
 
         uint64_t next_height = tip->height + 1;
-        auto dims = consensus::compute_growth(next_height);
+        auto dims = 0;
 
         json j;
         j["height"]          = next_height;
         j["prev_hash"]       = hex_encode(tip->hash.data(), 32);
         j["nbits"]           = tip->nbits;
-        j["prev_val_loss"]   = tip->val_loss;
+
         j["reward"]          = consensus::compute_block_reward(next_height);
         // min_train_steps removed: difficulty alone regulates mining
         j["mempool_txs"]     = mempool.size();
         j["mempool_bytes"]   = mempool.total_bytes();
 
         json model;
-        model["d_model"]     = dims.d_model;
-        model["n_layers"]    = dims.n_layers;
-        model["n_heads"]     = dims.n_heads;
-        model["d_ff"]        = dims.d_ff;
-        model["n_slots"]     = dims.n_slots;
-        model["vocab"]       = dims.vocab;
-        model["seq_len"]     = dims.seq_len;
         j["model"]           = model;
 
         // Target as hex

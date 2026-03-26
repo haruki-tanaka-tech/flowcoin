@@ -438,7 +438,7 @@ double model_improvement_rate(ChainState& chain, int n_blocks) {
     auto* tip = chain.tip();
     if (!tip || n_blocks <= 0) return 0.0;
 
-    float start_loss = tip->val_loss;
+
     auto* current = tip;
 
     for (int i = 0; i < n_blocks && current && current->prev; ++i) {
@@ -447,13 +447,10 @@ double model_improvement_rate(ChainState& chain, int n_blocks) {
 
     if (!current || current == tip) return 0.0;
 
-    float end_loss = current->val_loss;
-    if (end_loss <= 0.0f) return 0.0;
 
-    // Improvement = (start_loss - end_loss) / end_loss
-    // Negative means the model got worse
-    return static_cast<double>(end_loss - start_loss) /
-           static_cast<double>(end_loss);
+
+
+    return 0.0;  // PoW: no model loss tracking
 }
 
 } // namespace chain_util

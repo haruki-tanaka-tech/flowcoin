@@ -168,10 +168,10 @@ bool verify_block_signature(const CBlockHeader& header);
 ///
 /// @param height  Block height.
 /// @return        Model dimensions struct.
-consensus::ModelDimensions get_model_dims(uint64_t height);
+
 
 /// Compute the expected total parameter count for given dimensions.
-size_t compute_param_count(const consensus::ModelDimensions& dims);
+
 
 } // namespace flow::kernel
 

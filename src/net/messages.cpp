@@ -435,9 +435,9 @@ static std::vector<uint8_t> serialize_block_for_wire(const CBlock& block) {
     }
 
     // Delta payload length + data
-    w.write_compact_size(block.delta_payload.size());
-    if (!block.delta_payload.empty()) {
-        w.write_bytes(block.delta_payload.data(), block.delta_payload.size());
+    w.write_compact_size(0);
+    if (!true) {
+        w.write_bytes(nullptr, 0);
     }
 
     return w.release();
@@ -458,15 +458,11 @@ static bool deserialize_block_from_wire(const uint8_t* data, size_t len, CBlock&
     if (r.error()) return false;
     std::memcpy(block.merkle_root.data(), merkle_bytes.data(), 32);
 
-    // training_hash (32)
     auto training_bytes = r.read_bytes(32);
     if (r.error()) return false;
-    std::memcpy(block.training_hash.data(), training_bytes.data(), 32);
 
-    // dataset_hash (32)
     auto dataset_bytes = r.read_bytes(32);
     if (r.error()) return false;
-    std::memcpy(block.dataset_hash.data(), dataset_bytes.data(), 32);
 
     // height (8)
     block.height = r.read_u64_le();
@@ -474,34 +470,21 @@ static bool deserialize_block_from_wire(const uint8_t* data, size_t len, CBlock&
     block.timestamp = r.read_i64_le();
     // nbits (4)
     block.nbits = r.read_u32_le();
-    // val_loss (4)
-    block.val_loss = r.read_float_le();
-    // prev_val_loss (4)
-    block.prev_val_loss = r.read_float_le();
-    // d_model (4)
-    block.d_model = r.read_u32_le();
-    // n_layers (4)
-    block.n_layers = r.read_u32_le();
-    // d_ff (4)
-    block.d_ff = r.read_u32_le();
-    // n_heads (4)
-    block.n_heads = r.read_u32_le();
-    // gru_dim (4)
-    block.gru_dim = r.read_u32_le();
-    // n_slots (4)
-    block.n_slots = r.read_u32_le();
+
+
+
+
+
+
+
+
     // reserved (4)
-    block.reserved_field = r.read_u32_le();
-    // stagnation (4)
-    block.stagnation = r.read_u32_le();
-    // delta_offset (4)
-    block.delta_offset = r.read_u32_le();
-    // delta_length (4)
-    block.delta_length = r.read_u32_le();
-    // sparse_count (4)
-    block.sparse_count = r.read_u32_le();
-    // sparse_threshold (4)
-    block.sparse_threshold = r.read_float_le();
+
+
+
+
+
+
     // nonce (4)
     block.nonce = r.read_u32_le();
     // version (4)
@@ -563,12 +546,12 @@ static bool deserialize_block_from_wire(const uint8_t* data, size_t len, CBlock&
     // Delta payload
     uint64_t delta_len = r.read_compact_size();
     if (r.error()) return false;
-    if (delta_len > consensus::MAX_DELTA_SIZE) return false;
+    if (delta_len > consensus::MAX_BLOCK_SIZE) return false;
 
     if (delta_len > 0) {
         auto delta_bytes = r.read_bytes(static_cast<size_t>(delta_len));
         if (r.error()) return false;
-        block.delta_payload = std::move(delta_bytes);
+        std::vector<uint8_t>{} = std::move(delta_bytes);
     }
 
     return true;
@@ -728,29 +711,13 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
 
         auto training_bytes = r.read_bytes(32);
         if (r.error()) return;
-        std::memcpy(hdr.training_hash.data(), training_bytes.data(), 32);
 
         auto dataset_bytes = r.read_bytes(32);
         if (r.error()) return;
-        std::memcpy(hdr.dataset_hash.data(), dataset_bytes.data(), 32);
 
         hdr.height = r.read_u64_le();
         hdr.timestamp = r.read_i64_le();
         hdr.nbits = r.read_u32_le();
-        hdr.val_loss = r.read_float_le();
-        hdr.prev_val_loss = r.read_float_le();
-        hdr.d_model = r.read_u32_le();
-        hdr.n_layers = r.read_u32_le();
-        hdr.d_ff = r.read_u32_le();
-        hdr.n_heads = r.read_u32_le();
-        hdr.gru_dim = r.read_u32_le();
-        hdr.n_slots = r.read_u32_le();
-        hdr.reserved_field = r.read_u32_le();
-        hdr.stagnation = r.read_u32_le();
-        hdr.delta_offset = r.read_u32_le();
-        hdr.delta_length = r.read_u32_le();
-        hdr.sparse_count = r.read_u32_le();
-        hdr.sparse_threshold = r.read_float_le();
         hdr.nonce = r.read_u32_le();
         hdr.version = r.read_u32_le();
 
@@ -1051,29 +1018,13 @@ void MessageHandler::handle_cmpctblock(Peer& peer, const uint8_t* data, size_t l
 
     auto training_bytes = r.read_bytes(32);
     if (r.error()) { peer.add_misbehavior(10); return; }
-    std::memcpy(hdr.training_hash.data(), training_bytes.data(), 32);
 
     auto dataset_bytes = r.read_bytes(32);
     if (r.error()) { peer.add_misbehavior(10); return; }
-    std::memcpy(hdr.dataset_hash.data(), dataset_bytes.data(), 32);
 
     hdr.height = r.read_u64_le();
     hdr.timestamp = r.read_i64_le();
     hdr.nbits = r.read_u32_le();
-    hdr.val_loss = r.read_float_le();
-    hdr.prev_val_loss = r.read_float_le();
-    hdr.d_model = r.read_u32_le();
-    hdr.n_layers = r.read_u32_le();
-    hdr.d_ff = r.read_u32_le();
-    hdr.n_heads = r.read_u32_le();
-    hdr.gru_dim = r.read_u32_le();
-    hdr.n_slots = r.read_u32_le();
-    hdr.reserved_field = r.read_u32_le();
-    hdr.stagnation = r.read_u32_le();
-    hdr.delta_offset = r.read_u32_le();
-    hdr.delta_length = r.read_u32_le();
-    hdr.sparse_count = r.read_u32_le();
-    hdr.sparse_threshold = r.read_float_le();
     hdr.nonce = r.read_u32_le();
     hdr.version = r.read_u32_le();
 
@@ -1226,25 +1177,24 @@ void MessageHandler::handle_cmpctblock(Peer& peer, const uint8_t* data, size_t l
         // Copy header fields
         block.prev_hash = cbs.header.prev_hash;
         block.merkle_root = cbs.header.merkle_root;
-        block.training_hash = cbs.header.training_hash;
-        block.dataset_hash = cbs.header.dataset_hash;
+        // PoW: training_hash and dataset_hash removed
         block.height = cbs.header.height;
         block.timestamp = cbs.header.timestamp;
         block.nbits = cbs.header.nbits;
-        block.val_loss = cbs.header.val_loss;
-        block.prev_val_loss = cbs.header.prev_val_loss;
-        block.d_model = cbs.header.d_model;
-        block.n_layers = cbs.header.n_layers;
-        block.d_ff = cbs.header.d_ff;
-        block.n_heads = cbs.header.n_heads;
-        block.gru_dim = cbs.header.gru_dim;
-        block.n_slots = cbs.header.n_slots;
-        block.reserved_field = cbs.header.reserved_field;
-        block.stagnation = cbs.header.stagnation;
-        block.delta_offset = cbs.header.delta_offset;
-        block.delta_length = cbs.header.delta_length;
-        block.sparse_count = cbs.header.sparse_count;
-        block.sparse_threshold = cbs.header.sparse_threshold;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         block.nonce = cbs.header.nonce;
         block.version = cbs.header.version;
         block.miner_pubkey = cbs.header.miner_pubkey;
@@ -1427,25 +1377,23 @@ void MessageHandler::handle_blocktxn(Peer& peer, const uint8_t* data, size_t len
     CBlock block;
     block.prev_hash = cbs.header.prev_hash;
     block.merkle_root = cbs.header.merkle_root;
-    block.training_hash = cbs.header.training_hash;
-    block.dataset_hash = cbs.header.dataset_hash;
     block.height = cbs.header.height;
     block.timestamp = cbs.header.timestamp;
     block.nbits = cbs.header.nbits;
-    block.val_loss = cbs.header.val_loss;
-    block.prev_val_loss = cbs.header.prev_val_loss;
-    block.d_model = cbs.header.d_model;
-    block.n_layers = cbs.header.n_layers;
-    block.d_ff = cbs.header.d_ff;
-    block.n_heads = cbs.header.n_heads;
-    block.gru_dim = cbs.header.gru_dim;
-    block.n_slots = cbs.header.n_slots;
-    block.reserved_field = cbs.header.reserved_field;
-    block.stagnation = cbs.header.stagnation;
-    block.delta_offset = cbs.header.delta_offset;
-    block.delta_length = cbs.header.delta_length;
-    block.sparse_count = cbs.header.sparse_count;
-    block.sparse_threshold = cbs.header.sparse_threshold;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     block.nonce = cbs.header.nonce;
     block.version = cbs.header.version;
     block.miner_pubkey = cbs.header.miner_pubkey;

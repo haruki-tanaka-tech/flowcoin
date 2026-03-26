@@ -3,7 +3,6 @@
 
 #include "kernel/validation.h"
 #include "consensus/difficulty.h"
-#include "consensus/growth.h"
 #include "consensus/pow.h"
 #include "consensus/reward.h"
 #include "crypto/sign.h"
@@ -294,8 +293,8 @@ double get_difficulty(uint32_t nbits) {
 // Proof-of-Training
 // ============================================================================
 
-bool check_proof_of_training(const uint256& training_hash, uint32_t nbits) {
-    return consensus::check_proof_of_training(training_hash, nbits);
+bool check_proof_of_work(const uint256& training_hash, uint32_t nbits) {
+    return consensus::check_proof_of_work(training_hash, nbits);
 }
 
 uint256 compute_training_hash(const uint256& delta_hash,
@@ -323,16 +322,6 @@ bool verify_block_signature(const CBlockHeader& header) {
 }
 
 // ============================================================================
-// Model dimensions
-// ============================================================================
-
-consensus::ModelDimensions get_model_dims(uint64_t height) {
-    return consensus::compute_growth(height);
-}
-
-size_t compute_param_count(const consensus::ModelDimensions& dims) {
-    return consensus::estimate_param_count(
-        dims.d_model, dims.n_layers, dims.d_ff, dims.n_slots);
-}
+// PoW: no model dimensions needed
 
 } // namespace flow::kernel

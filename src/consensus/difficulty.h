@@ -1,16 +1,13 @@
 // Copyright (c) 2026 The FlowCoin Developers
 // Distributed under the MIT software license.
 //
-// Difficulty adjustment for FlowCoin's Proof-of-Useful-Training.
+// Difficulty adjustment for FlowCoin's Keccak-256d Proof-of-Work.
 // Implements Bitcoin's exact retarget algorithm: every 2016 blocks,
 // the target is adjusted based on actual vs expected timespan,
 // clamped to a 4x factor in either direction.
 //
-// The "training hash" (keccak256(delta_hash || dataset_hash)) must be
-// numerically less than or equal to the current target for a block
-// to be accepted. This ties difficulty to the quality/quantity of
-// training work: better training produces lower-entropy deltas that
-// are more likely to meet a tighter target.
+// The block hash keccak256d(header[0..91]) must be numerically less
+// than or equal to the current target for a block to be accepted.
 
 #ifndef FLOWCOIN_CONSENSUS_DIFFICULTY_H
 #define FLOWCOIN_CONSENSUS_DIFFICULTY_H
@@ -36,15 +33,15 @@ namespace flow::consensus {
 ///                exceeds the powLimit (INITIAL_NBITS). true otherwise.
 bool derive_target(uint32_t nbits, arith_uint256& target);
 
-/// Check whether a training hash meets the difficulty target.
+/// Check whether a block hash meets the difficulty target.
 ///
-/// The training hash is interpreted as a little-endian 256-bit unsigned
+/// The hash is interpreted as a little-endian 256-bit unsigned
 /// integer. It must be <= the target decoded from nbits.
 ///
-/// @param training_hash  keccak256(delta_hash || dataset_hash)
-/// @param nbits          Compact target for this block.
-/// @return               true if hash <= target, false otherwise.
-bool check_proof_of_training(const uint256& training_hash, uint32_t nbits);
+/// @param block_hash  keccak256d of unsigned header data.
+/// @param nbits       Compact target for this block.
+/// @return            true if hash <= target, false otherwise.
+bool check_proof_of_work(const uint256& block_hash, uint32_t nbits);
 
 /// Calculate the next required work target (called every RETARGET_INTERVAL blocks).
 ///

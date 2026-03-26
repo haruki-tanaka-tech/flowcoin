@@ -2,7 +2,7 @@
 // Distributed under the MIT software license.
 //
 // Minimal JSON-RPC client for the standalone miner.
-// Uses raw TCP sockets — no curl, no external dependencies.
+// Uses raw TCP sockets -- no curl, no external dependencies.
 
 #pragma once
 #include <string>
@@ -16,7 +16,6 @@ public:
               const std::string& user, const std::string& password);
 
     // Make a JSON-RPC call, return result as JSON string.
-    // Returns empty string on error.
     std::string call(const std::string& method, const std::string& params = "[]");
 
     // Convenience methods
@@ -27,8 +26,6 @@ public:
         uint64_t height;
         std::string prev_hash;
         uint32_t nbits;
-        float prev_val_loss;
-        int d_model, n_layers, d_ff, n_slots;
         bool valid;
     };
     BlockTemplate get_block_template();
@@ -44,12 +41,10 @@ public:
 private:
     std::string host_;
     int port_;
-    std::string auth_base64_;  // Base64(user:pass)
+    std::string auth_base64_;
 
-    // Raw HTTP POST over TCP socket
     std::string http_post(const std::string& body);
 
-    // Simple JSON value extraction (no full parser)
     static std::string json_get_string(const std::string& json, const std::string& key);
     static int64_t json_get_int(const std::string& json, const std::string& key);
     static double json_get_double(const std::string& json, const std::string& key);

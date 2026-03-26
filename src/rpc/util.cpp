@@ -485,7 +485,7 @@ void register_util_rpcs(RpcServer& server, ChainState& chain,
         // Compute statistics
         int64_t total_out = 0;
         int64_t total_fee = 0;
-        size_t total_size = block.delta_payload.size();
+        size_t total_size = 0;
         int tx_count = static_cast<int>(block.vtx.size());
         int input_count = 0;
         int output_count = 0;
@@ -525,11 +525,11 @@ void register_util_rpcs(RpcServer& server, ChainState& chain,
         j["subsidy"]       = static_cast<double>(subsidy) /
                              static_cast<double>(consensus::COIN);
         j["total_size"]    = total_size;
-        j["val_loss"]      = idx->val_loss;
-        j["d_model"]       = idx->d_model;
-        j["n_layers"]      = idx->n_layers;
+
+
+
         // train_steps removed from consensus
-        j["delta_size"]    = block.delta_payload.size();
+        j["delta_size"]    = 0;
 
         return j;
     });

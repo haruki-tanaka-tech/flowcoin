@@ -15,7 +15,6 @@
 #include "rpc/net.h"
 #include "consensus/params.h"
 #include "mempool/mempool.h"
-#include "consensus/eval.h"
 
 #include <uv.h>
 
@@ -576,28 +575,7 @@ bool step6_initialize_chain(NodeContext& node, const AppArgs& args) {
     LogInfo("init", "Chain initialized at height %lu",
             static_cast<unsigned long>(node.chain->height()));
 
-    // Initialize eval engine
-    try {
-        node.eval_engine = std::make_unique<consensus::EvalEngine>();
-        std::string ckpt = node.model_dir() + "/checkpoint.bin";
-        if (std::filesystem::exists(ckpt)) {
-            if (!node.eval_engine->load_checkpoint(ckpt)) {
-                LogWarn("init", "Checkpoint load failed, reinitializing from genesis");
-                if (!node.eval_engine->init_genesis()) {
-                    LogError("init", "EvalEngine genesis init failed");
-                    return false;
-                }
-            }
-        } else {
-            if (!node.eval_engine->init_genesis()) {
-                LogError("init", "EvalEngine genesis init failed");
-                return false;
-            }
-        }
-    } catch (const std::exception& e) {
-        LogError("init", "EvalEngine error: %s", e.what());
-        return false;
-    }
+    // PoW: no eval engine needed
 
     // Initialize mempool
     try {

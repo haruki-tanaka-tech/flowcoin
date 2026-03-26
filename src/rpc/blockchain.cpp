@@ -45,16 +45,16 @@ static json block_index_to_header_json(const CBlockIndex* idx) {
     j["height"]        = idx->height;
     j["timestamp"]     = idx->timestamp;
     j["nbits"]         = idx->nbits;
-    j["val_loss"]      = idx->val_loss;
-    j["prev_val_loss"] = idx->prev_val_loss;
-    j["d_model"]       = idx->d_model;
-    j["n_layers"]      = idx->n_layers;
-    j["d_ff"]          = idx->d_ff;
-    j["n_heads"]       = idx->n_heads;
-    j["n_slots"]       = idx->n_slots;
-    j["gru_dim"]       = idx->gru_dim;
+
+
+
+
+
+
+
+
     // train_steps removed from consensus
-    j["stagnation"]    = idx->stagnation_count;
+
     j["merkle_root"]   = hash_to_hex(idx->merkle_root);
     j["miner_pubkey"]  = hex_encode(idx->miner_pubkey.data(), 32);
     j["n_tx"]          = idx->n_tx;
@@ -186,7 +186,7 @@ void register_blockchain_rpcs(RpcServer& server, ChainState& chain) {
                 }
                 j["tx"] = txs;
             }
-            j["size"] = block.delta_payload.size() + block.vtx.size() * 200; // estimate
+            j["size"] = 0 + block.vtx.size() * 200; // estimate
         }
 
         return j;
@@ -215,11 +215,11 @@ void register_blockchain_rpcs(RpcServer& server, ChainState& chain) {
         j["difficulty"]    = tip ? tip->nbits : consensus::INITIAL_NBITS;
 
         if (tip) {
-            j["val_loss"]        = tip->val_loss;
-            j["d_model"]         = tip->d_model;
-            j["n_layers"]        = tip->n_layers;
-            j["n_slots"]         = tip->n_slots;
-            j["improving_blocks"] = tip->improving_blocks;
+
+
+
+
+
         }
 
         j["halving_interval"]  = consensus::HALVING_INTERVAL;
@@ -488,7 +488,7 @@ void register_extended_blockchain_rpcs(RpcServer& server, ChainState& chain) {
         j["blocks"] = tip ? static_cast<int64_t>(tip->height + 1) : 0;
 
         // Compute cumulative improving blocks as a proxy for chain quality
-        j["improving_blocks"] = tip ? tip->improving_blocks : 0;
+
 
         // Average val_loss over last 10 blocks
         if (tip) {
@@ -496,7 +496,7 @@ void register_extended_blockchain_rpcs(RpcServer& server, ChainState& chain) {
             int count = 0;
             CBlockIndex* idx = tip;
             while (idx && count < 10) {
-                total_loss += idx->val_loss;
+
                 count++;
                 idx = idx->prev;
             }

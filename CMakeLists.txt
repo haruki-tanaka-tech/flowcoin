@@ -212,15 +212,12 @@ add_library(flowcoin_consensus STATIC
     src/consensus/validation.cpp
     src/consensus/difficulty.cpp
     src/consensus/reward.cpp
-    src/consensus/growth.cpp
     src/consensus/merkle.cpp
-    src/consensus/eval.cpp
-    src/consensus/consensus_model.cpp
     src/consensus/genesis.cpp
     src/consensus/pow.cpp
 )
 target_include_directories(flowcoin_consensus PUBLIC src)
-target_link_libraries(flowcoin_consensus PUBLIC flowcoin_hash flowcoin_util ggml zstd)
+target_link_libraries(flowcoin_consensus PUBLIC flowcoin_hash flowcoin_util zstd)
 
 # --- flowcoin_primitives ---
 add_library(flowcoin_primitives STATIC
@@ -239,7 +236,6 @@ add_library(flowcoin_chain STATIC
     src/chain/blockstore.cpp
     src/chain/utxo.cpp
     src/chain/txindex.cpp
-    src/chain/modelstate.cpp
     src/chain/chaindb.cpp
 )
 target_include_directories(flowcoin_chain PUBLIC src)
@@ -488,9 +484,8 @@ target_link_libraries(flowcoin-tx PRIVATE
 # FlowCoin Miner (standalone, native C++)
 # =============================================================================
 
-# Core miner library
+# Core miner library (PoW nonce iteration)
 add_library(flowcoin_miner STATIC
-    src/miner/model.cpp
     src/miner/miner.cpp
     src/miner/rpc_client.cpp
     src/miner/hash_check.cpp
@@ -498,18 +493,16 @@ add_library(flowcoin_miner STATIC
 target_include_directories(flowcoin_miner PRIVATE src)
 target_link_libraries(flowcoin_miner PRIVATE
     flowcoin_hash flowcoin_crypto flowcoin_util flowcoin_consensus flowcoin_primitives
-    ggml
 )
 
-# CUDA GPU acceleration (optional)
+# CUDA GPU mining (optional)
 option(FLOWCOIN_USE_CUDA "Build miner with CUDA support" OFF)
 if(FLOWCOIN_USE_CUDA)
-    # Use system g++ as CUDA host compiler (must match system headers)
     set(CMAKE_CUDA_STANDARD 17)
     enable_language(CUDA)
-    target_sources(flowcoin_miner PRIVATE src/miner/cuda_ops.cu)
+    target_sources(flowcoin_miner PRIVATE src/miner/cuda_miner.cu)
     target_compile_definitions(flowcoin_miner PUBLIC FLOWCOIN_USE_CUDA)
-    target_link_libraries(flowcoin_miner PRIVATE cublas cudart)
+    target_link_libraries(flowcoin_miner PRIVATE cudart)
 endif()
 
 # Miner executable
@@ -522,7 +515,7 @@ target_link_libraries(flowcoin-miner PRIVATE
     flowcoin_primitives flowcoin_consensus
     flowcoin_crypto flowcoin_hash flowcoin_util
     flowcoin_support flowcoin_compat
-    ggml ed25519 xkcp zstd
+    ed25519 xkcp zstd
     pthread dl m
 )
 install(TARGETS flowcoin-miner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

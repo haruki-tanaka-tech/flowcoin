@@ -24,25 +24,9 @@ namespace flow {
 static void serialize_header(DataWriter& w, const CBlockHeader& hdr) {
     w.write_bytes(hdr.prev_hash.data(), 32);
     w.write_bytes(hdr.merkle_root.data(), 32);
-    w.write_bytes(hdr.training_hash.data(), 32);
-    w.write_bytes(hdr.dataset_hash.data(), 32);
     w.write_u64_le(hdr.height);
     w.write_i64_le(hdr.timestamp);
     w.write_u32_le(hdr.nbits);
-    w.write_float_le(hdr.val_loss);
-    w.write_float_le(hdr.prev_val_loss);
-    w.write_u32_le(hdr.d_model);
-    w.write_u32_le(hdr.n_layers);
-    w.write_u32_le(hdr.d_ff);
-    w.write_u32_le(hdr.n_heads);
-    w.write_u32_le(hdr.gru_dim);
-    w.write_u32_le(hdr.n_slots);
-    w.write_u32_le(hdr.reserved_field);
-    w.write_u32_le(hdr.stagnation);
-    w.write_u32_le(hdr.delta_offset);
-    w.write_u32_le(hdr.delta_length);
-    w.write_u32_le(hdr.sparse_count);
-    w.write_float_le(hdr.sparse_threshold);
     w.write_u32_le(hdr.nonce);
     w.write_u32_le(hdr.version);
     w.write_bytes(hdr.miner_pubkey.data(), 32);
@@ -58,31 +42,9 @@ static bool deserialize_header(DataReader& r, CBlockHeader& hdr) {
     if (r.error()) return false;
     std::memcpy(hdr.merkle_root.data(), mroot.data(), 32);
 
-    auto thash = r.read_bytes(32);
-    if (r.error()) return false;
-    std::memcpy(hdr.training_hash.data(), thash.data(), 32);
-
-    auto dhash = r.read_bytes(32);
-    if (r.error()) return false;
-    std::memcpy(hdr.dataset_hash.data(), dhash.data(), 32);
-
     hdr.height          = r.read_u64_le();
     hdr.timestamp       = r.read_i64_le();
     hdr.nbits           = r.read_u32_le();
-    hdr.val_loss        = r.read_float_le();
-    hdr.prev_val_loss   = r.read_float_le();
-    hdr.d_model         = r.read_u32_le();
-    hdr.n_layers        = r.read_u32_le();
-    hdr.d_ff            = r.read_u32_le();
-    hdr.n_heads         = r.read_u32_le();
-    hdr.gru_dim         = r.read_u32_le();
-    hdr.n_slots         = r.read_u32_le();
-    hdr.reserved_field  = r.read_u32_le();
-    hdr.stagnation      = r.read_u32_le();
-    hdr.delta_offset    = r.read_u32_le();
-    hdr.delta_length    = r.read_u32_le();
-    hdr.sparse_count    = r.read_u32_le();
-    hdr.sparse_threshold = r.read_float_le();
     hdr.nonce           = r.read_u32_le();
     hdr.version         = r.read_u32_le();
 
@@ -222,19 +184,13 @@ std::string BlockStore::get_block_path(int file_num) const {
 std::vector<uint8_t> BlockStore::serialize_block(const CBlock& block) const {
     DataWriter w(4096);
 
-    // Serialize header (308 bytes fixed)
+    // Serialize header (188 bytes fixed)
     serialize_header(w, block);
 
     // Serialize transaction count + transactions
     w.write_compact_size(block.vtx.size());
     for (const auto& tx : block.vtx) {
         serialize_tx(w, tx);
-    }
-
-    // Serialize delta payload
-    w.write_compact_size(block.delta_payload.size());
-    if (!block.delta_payload.empty()) {
-        w.write_bytes(block.delta_payload.data(), block.delta_payload.size());
     }
 
     return w.release();
@@ -256,16 +212,6 @@ bool BlockStore::deserialize_block(const uint8_t* data, size_t len, CBlock& bloc
     block.vtx.resize(static_cast<size_t>(ntx));
     for (auto& tx : block.vtx) {
         if (!deserialize_tx(r, tx)) return false;
-    }
-
-    // Deserialize delta payload
-    uint64_t delta_len = r.read_compact_size();
-    if (r.error() || delta_len > consensus::MAX_DELTA_SIZE) return false;
-    if (delta_len > 0) {
-        block.delta_payload = r.read_bytes(static_cast<size_t>(delta_len));
-        if (r.error()) return false;
-    } else {
-        block.delta_payload.clear();
     }
 
     return true;

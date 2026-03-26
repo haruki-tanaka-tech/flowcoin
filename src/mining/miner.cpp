@@ -147,14 +147,14 @@ SubmitResult Miner::mine_cycle() {
 
     // Step 3: Fill block header with training proof
     CBlock block = tmpl.assemble();
-    block.val_loss = train_result.val_loss;
-    block.training_hash = train_result.training_hash;
-    block.dataset_hash = train_result.dataset_hash;
-    block.delta_length = static_cast<uint32_t>(train_result.delta.get_compressed_size());
-    block.sparse_count = train_result.sparse_count;
-    block.sparse_threshold = train_result.sparse_threshold;
-    block.delta_payload = train_result.delta.compressed_data();
-    block.delta_offset = 0;
+
+    uint256{} = uint256{};
+    uint256{} = uint256{};
+
+
+
+    std::vector<uint8_t>{} = train_result.delta.compressed_data();
+
 
     // Set miner identity
     std::memcpy(block.miner_pubkey.data(), cfg.miner_pubkey.data(), 32);
@@ -214,8 +214,8 @@ SubmitResult Miner::mine_one_block() {
 TrainingResult Miner::train_and_evaluate(const BlockTemplate& tmpl) {
     TrainingResult result;
     result.success = false;
-    result.val_loss = consensus::MAX_VAL_LOSS;
-    result.prev_val_loss = tmpl.header.prev_val_loss;
+    result.val_loss = 100.0f;
+
     result.train_steps = 0;
 
     MinerConfig cfg;
@@ -233,7 +233,7 @@ TrainingResult Miner::train_and_evaluate(const BlockTemplate& tmpl) {
     }
 
     // Compute dataset hash from evaluation data
-    result.dataset_hash = keccak256(eval_data.data(), eval_data.size());
+    uint256{} = keccak256(eval_data.data(), eval_data.size());
 
     auto train_start = std::chrono::steady_clock::now();
 
@@ -246,7 +246,7 @@ TrainingResult Miner::train_and_evaluate(const BlockTemplate& tmpl) {
     // via the consensus_model and eval engine modules.
     //
     // The actual integration point is:
-    //   ModelState& model = chain_.get_model_state();
+
     //   model.load_weights();
     //   float loss = model.train(train_data, cfg.learning_rate, ...);
     //   model.eval(eval_data) -> val_loss
@@ -298,8 +298,7 @@ TrainingResult Miner::train_and_evaluate(const BlockTemplate& tmpl) {
 
     // Create delta from model weight changes
     // The actual delta would come from: model.get_weight_delta()
-    size_t param_count = consensus::estimate_param_count(
-        tmpl.dims.d_model, tmpl.dims.n_layers, tmpl.dims.d_ff, tmpl.dims.n_slots);
+    size_t param_count = 0;  // PoW: no model
 
     // Create a sparse delta with the computed changes
     result.sparse_threshold = cfg.sparse_threshold;
@@ -328,8 +327,8 @@ TrainingResult Miner::train_and_evaluate(const BlockTemplate& tmpl) {
     result.sparse_count = static_cast<uint32_t>(result.delta.count_nonzero());
 
     // Compute training proof hash
-    result.training_hash = compute_training_proof_hash(
-        result.delta_hash, result.dataset_hash);
+    uint256{} = compute_training_proof_hash(
+        result.delta_hash, uint256{});
 
     result.success = true;
     return result;
@@ -447,7 +446,7 @@ bool Miner::load_training_data(const BlockTemplate& tmpl,
         // Generate synthetic training data for testing.
         // In production, this reads from the actual dataset files.
         size_t train_size = static_cast<size_t>(cfg.batch_size) *
-                            consensus::EVAL_SEQ_LEN * 4;
+                            256 * 4;
         train_data.resize(train_size);
         DeterministicRNG rng(tmpl.header.height * 1000 + 1);
         rng.fill_bytes(train_data.data(), train_data.size());
@@ -461,7 +460,7 @@ bool Miner::load_training_data(const BlockTemplate& tmpl,
     } else {
         // Generate deterministic evaluation data.
         // All nodes must use the same eval data for consensus.
-        size_t eval_size = static_cast<size_t>(consensus::EVAL_TOKENS) * 4;
+        size_t eval_size = static_cast<size_t>(4096) * 4;
         eval_data.resize(eval_size);
         DeterministicRNG rng(tmpl.header.height * 1000 + 2);
         rng.fill_bytes(eval_data.data(), eval_data.size());
@@ -607,8 +606,8 @@ MiningSession::MiningSession()
     , avg_steps_per_block(0.0)
     , avg_time_per_block(0.0)
     , current_hashrate(0.0)
-    , best_val_loss(consensus::MAX_VAL_LOSS)
-    , current_val_loss(consensus::MAX_VAL_LOSS)
+    , best_val_loss(100.0f)
+    , current_val_loss(100.0f)
 {
 }
 
@@ -858,8 +857,8 @@ TrainingResult Miner::train_with_schedule(const BlockTemplate& tmpl,
                                             const TrainingConfig& schedule) {
     TrainingResult result;
     result.success = false;
-    result.val_loss = consensus::MAX_VAL_LOSS;
-    result.prev_val_loss = tmpl.header.prev_val_loss;
+    result.val_loss = 100.0f;
+
     result.train_steps = 0;
 
     MinerConfig cfg;
@@ -877,7 +876,7 @@ TrainingResult Miner::train_with_schedule(const BlockTemplate& tmpl,
         return result;
     }
 
-    result.dataset_hash = keccak256(eval_data.data(), eval_data.size());
+    uint256{} = keccak256(eval_data.data(), eval_data.size());
 
     auto train_start = std::chrono::steady_clock::now();
 
@@ -929,8 +928,7 @@ TrainingResult Miner::train_with_schedule(const BlockTemplate& tmpl,
     }
 
     // Compute weight delta
-    size_t param_count = consensus::estimate_param_count(
-        tmpl.dims.d_model, tmpl.dims.n_layers, tmpl.dims.d_ff, tmpl.dims.n_slots);
+    size_t param_count = 0;  // PoW: no model
 
     result.sparse_threshold = cfg.sparse_threshold;
     std::vector<float> delta_weights(std::min(param_count, static_cast<size_t>(1024)), 0.0f);
@@ -951,7 +949,7 @@ TrainingResult Miner::train_with_schedule(const BlockTemplate& tmpl,
 
     result.delta_hash = result.delta.compute_hash();
     result.sparse_count = static_cast<uint32_t>(result.delta.count_nonzero());
-    result.training_hash = compute_training_proof_hash(result.delta_hash, result.dataset_hash);
+    uint256{} = compute_training_proof_hash(result.delta_hash, uint256{});
 
     result.success = true;
     return result;

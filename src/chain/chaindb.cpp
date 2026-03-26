@@ -72,16 +72,7 @@ void ChainDB::init_tables() {
         "    height INTEGER NOT NULL,"
         "    timestamp INTEGER NOT NULL,"
         "    nbits INTEGER NOT NULL,"
-        "    val_loss REAL NOT NULL,"
-        "    prev_val_loss REAL NOT NULL,"
-        "    d_model INTEGER NOT NULL,"
-        "    n_layers INTEGER NOT NULL,"
-        "    d_ff INTEGER NOT NULL,"
-        "    n_slots INTEGER NOT NULL,"
-        "    n_heads INTEGER NOT NULL,"
-        "    gru_dim INTEGER NOT NULL,"
-        "    stagnation_count INTEGER NOT NULL,"
-        "    improving_blocks INTEGER NOT NULL,"
+        "    nonce INTEGER NOT NULL DEFAULT 0,"
         "    status INTEGER NOT NULL,"
         "    file_num INTEGER NOT NULL,"
         "    file_offset INTEGER NOT NULL,"
@@ -123,19 +114,15 @@ void ChainDB::prepare_statements() {
     prepare(
         "INSERT OR REPLACE INTO block_index ("
         "    hash, prev_hash, height, timestamp, nbits,"
-        "    val_loss, prev_val_loss,"
-        "    d_model, n_layers, d_ff, n_slots, n_heads, gru_dim,"
-        "    stagnation_count, improving_blocks, status,"
+        "    nonce, status,"
         "    file_num, file_offset, file_size, n_tx,"
         "    merkle_root, miner_pubkey"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);",
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);",
         &stmt_save_);
 
     prepare(
         "SELECT hash, prev_hash, height, timestamp, nbits,"
-        "    val_loss, prev_val_loss,"
-        "    d_model, n_layers, d_ff, n_slots, n_heads, gru_dim,"
-        "    stagnation_count, improving_blocks, status,"
+        "    nonce, status,"
         "    file_num, file_offset, file_size, n_tx,"
         "    merkle_root, miner_pubkey"
         " FROM block_index ORDER BY height ASC;",
@@ -143,9 +130,7 @@ void ChainDB::prepare_statements() {
 
     prepare(
         "SELECT hash, prev_hash, height, timestamp, nbits,"
-        "    val_loss, prev_val_loss,"
-        "    d_model, n_layers, d_ff, n_slots, n_heads, gru_dim,"
-        "    stagnation_count, improving_blocks, status,"
+        "    nonce, status,"
         "    file_num, file_offset, file_size, n_tx,"
         "    merkle_root, miner_pubkey"
         " FROM block_index WHERE hash = ?;",
@@ -231,16 +216,7 @@ void ChainDB::read_index_from_row(sqlite3_stmt* stmt, CBlockIndex& idx) const {
     idx.height           = static_cast<uint64_t>(sqlite3_column_int64(stmt, col++));
     idx.timestamp        = sqlite3_column_int64(stmt, col++);
     idx.nbits            = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
-    idx.val_loss         = static_cast<float>(sqlite3_column_double(stmt, col++));
-    idx.prev_val_loss    = static_cast<float>(sqlite3_column_double(stmt, col++));
-    idx.d_model          = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
-    idx.n_layers         = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
-    idx.d_ff             = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
-    idx.n_slots          = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
-    idx.n_heads          = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
-    idx.gru_dim          = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
-    idx.stagnation_count = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
-    idx.improving_blocks = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
+    idx.nonce            = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
     idx.status           = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
 
     // Disk position
@@ -281,16 +257,7 @@ bool ChainDB::save_block_index(const CBlockIndex& index) {
     sqlite3_bind_int64(stmt_save_, col++, static_cast<int64_t>(index.height));
     sqlite3_bind_int64(stmt_save_, col++, index.timestamp);
     sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.nbits));
-    sqlite3_bind_double(stmt_save_, col++, static_cast<double>(index.val_loss));
-    sqlite3_bind_double(stmt_save_, col++, static_cast<double>(index.prev_val_loss));
-    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.d_model));
-    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.n_layers));
-    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.d_ff));
-    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.n_slots));
-    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.n_heads));
-    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.gru_dim));
-    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.stagnation_count));
-    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.improving_blocks));
+    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.nonce));
     sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.status));
     sqlite3_bind_int(stmt_save_, col++, index.pos.file_num);
     sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.pos.offset));

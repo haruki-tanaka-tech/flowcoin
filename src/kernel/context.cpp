@@ -7,9 +7,7 @@
 #include "chain/chainstate.h"
 #include "chain/utxo.h"
 #include "consensus/difficulty.h"
-#include "consensus/eval.h"
 #include "consensus/genesis.h"
-#include "consensus/growth.h"
 #include "consensus/reward.h"
 #include "consensus/validation.h"
 
@@ -65,28 +63,7 @@ bool Kernel::init() {
         return false;
     }
 
-    // Initialize evaluation engine
-    if (!config_.skip_model_eval) {
-        eval_ = std::make_unique<consensus::EvalEngine>();
-
-        // Try to load from checkpoint first
-        std::string checkpoint_path = chain_dir + "/model_checkpoint.bin";
-        if (std::filesystem::exists(checkpoint_path, ec)) {
-            if (!eval_->load_checkpoint(checkpoint_path)) {
-                LogError("init", "failed to load model checkpoint, "
-                             "will replay from genesis");
-                if (!eval_->init_genesis()) {
-                    LogError("init", "failed to init genesis model");
-                    return false;
-                }
-            }
-        } else {
-            if (!eval_->init_genesis()) {
-                LogError("init", "failed to init genesis model");
-                return false;
-            }
-        }
-    }
+    // PoW: no evaluation engine needed
 
     // Load chain or create genesis
     if (!load_chain()) {
@@ -98,7 +75,7 @@ bool Kernel::init() {
 
     // Cache current model dimensions
     uint64_t height = get_height();
-    current_dims_ = consensus::compute_growth(height);
+
 
     initialized_ = true;
     return true;
@@ -107,14 +84,10 @@ bool Kernel::init() {
 void Kernel::shutdown() {
     if (!initialized_) return;
 
-    // Save model checkpoint if eval engine is active
-    if (eval_ && !config_.datadir.empty()) {
-        std::string checkpoint_path = config_.datadir + "/model_checkpoint.bin";
-        eval_->save_checkpoint(checkpoint_path);
-    }
+    // PoW: no model checkpoint to save
 
     // Chain state flushes on destruction
-    eval_.reset();
+
     chain_.reset();
 
     initialized_ = false;
@@ -239,7 +212,7 @@ consensus::ValidationState Kernel::accept_block(const CBlock& block) {
     }
 
     // Update cached dimensions
-    current_dims_ = consensus::compute_growth(chain_->height());
+
 
     return state;
 }
@@ -267,13 +240,9 @@ bool Kernel::get_header_at_height(uint64_t height, CBlockHeader& header) const {
 // Consensus parameter queries
 // ============================================================================
 
-const consensus::ModelDimensions& Kernel::get_model_dims() const {
-    return current_dims_;
-}
+// get_model_dims removed (PoW)
 
-consensus::ModelDimensions Kernel::get_model_dims_at(uint64_t height) const {
-    return consensus::compute_growth(height);
-}
+// get_model_dims_at removed (PoW)
 
 uint32_t Kernel::get_next_nbits() const {
     if (!chain_) return consensus::INITIAL_NBITS;
@@ -309,13 +278,13 @@ bool Kernel::has_utxo(const uint256& txid, uint32_t vout) const {
 // ============================================================================
 
 uint256 Kernel::get_model_hash() const {
-    if (!eval_) return uint256();
-    return eval_->get_model_hash();
+    uint256 h;
+    h.set_null();
+    return h;
 }
 
 size_t Kernel::get_model_params() const {
-    if (!eval_) return 0;
-    return eval_->param_count();
+    return 0;  // PoW: no model
 }
 
 // ============================================================================

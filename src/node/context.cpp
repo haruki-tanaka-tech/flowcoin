@@ -14,7 +14,6 @@
 #include "net/net.h"
 #include "rpc/server.h"
 #include "mempool/mempool.h"
-#include "consensus/eval.h"
 #include "net/sync.h"
 #include "primitives/block.h"
 
@@ -275,7 +274,6 @@ bool NodeContext::init() {
     // Register all subsystems for tracking
     size_t idx_chain   = register_subsystem("chain");
     size_t idx_mempool = register_subsystem("mempool");
-    size_t idx_eval    = register_subsystem("eval_engine");
     size_t idx_wallet  = register_subsystem("wallet");
     size_t idx_net     = register_subsystem("net");
     size_t idx_sync    = register_subsystem("sync");
@@ -315,39 +313,11 @@ bool NodeContext::init() {
     mark_init_end(idx_mempool);
     LogInfo("node", "Mempool initialized");
 
-    // 3. Eval engine
-    mark_init_start(idx_eval);
-    set_subsystem_state(idx_eval, SubsystemState::INITIALIZING);
-    try {
-        eval_engine = std::make_unique<consensus::EvalEngine>();
-        // Try to load checkpoint; if none exists, init from genesis
-        std::string ckpt_path = model_dir() + "/checkpoint.bin";
-        if (std::filesystem::exists(ckpt_path)) {
-            if (!eval_engine->load_checkpoint(ckpt_path)) {
-                LogWarn("node", "Failed to load model checkpoint, reinitializing from genesis");
-                if (!eval_engine->init_genesis()) {
-                    LogError("node", "EvalEngine::init_genesis() failed");
-                    set_subsystem_state(idx_eval, SubsystemState::FAILED);
-                    return false;
-                }
-            } else {
-                LogInfo("node", "Loaded model checkpoint from %s", ckpt_path.c_str());
-            }
-        } else {
-            if (!eval_engine->init_genesis()) {
-                LogError("node", "EvalEngine::init_genesis() failed");
-                set_subsystem_state(idx_eval, SubsystemState::FAILED);
-                return false;
-            }
-            LogInfo("node", "EvalEngine initialized from genesis seed");
-        }
-    } catch (const std::exception& e) {
-        LogError("node", "EvalEngine exception: %s", e.what());
-        set_subsystem_state(idx_eval, SubsystemState::FAILED);
-        return false;
+    // 3. PoW: no eval engine needed
+    {
+        constexpr int idx_eval = 2;
+        (void)idx_eval;
     }
-    set_subsystem_state(idx_eval, SubsystemState::RUNNING);
-    mark_init_end(idx_eval);
 
     // 4. Wallet
     mark_init_start(idx_wallet);
@@ -613,24 +583,9 @@ void NodeContext::stop() {
 
     // --- 3. Eval Engine ---
     // Save the final model checkpoint before destroying the engine.
-    if (eval_engine) {
         LogInfo("node", "[3/7] Saving model checkpoint...");
         int64_t t0 = now_us();
-        if (chain) {
-            // Save with the current height in the filename
-            uint64_t h = chain->height();
-            std::string ckpt_path = model_dir() + "/checkpoint.bin";
-            if (eval_engine->save_checkpoint(ckpt_path)) {
-                int64_t t1 = now_us();
-                LogInfo("node", "Model checkpoint saved at height %lu (%.1f ms)",
-                        static_cast<unsigned long>(h),
-                        static_cast<double>(t1 - t0) / 1000.0);
-            } else {
-                LogWarn("node", "Failed to save model checkpoint at height %lu",
-                        static_cast<unsigned long>(h));
-            }
-        }
-    }
+        // PoW: no model checkpoint to save
 
     // --- 2. Mempool ---
     // The mempool is purely in-memory; no persistence needed.
@@ -1164,7 +1119,6 @@ std::string NodeContext::extended_status() const {
     ss << "  Network:     " << (health.net_ok ? "OK" : "FAILED") << "\n";
     ss << "  RPC:         " << (health.rpc_ok ? "OK" : "disabled") << "\n";
     ss << "  Mempool:     " << (health.mempool_ok ? "OK" : "FAILED") << "\n";
-    ss << "  Eval engine: " << (health.eval_engine_ok ? "OK" : "FAILED") << "\n";
     ss << "  Disk space:  " << (health.disk_space_ok ? "OK" : "LOW") << "\n";
 
     return ss.str();
@@ -1235,10 +1189,7 @@ NodeContext::HealthStatus NodeContext::check_health() const {
         status.mempool_txs = static_cast<int64_t>(mempool->size());
     }
 
-    // Eval engine health
-    if (eval_engine) {
-        status.eval_engine_ok = true;
-    }
+    // PoW: no eval engine
 
     // Disk space
     status.disk_free_mb = get_disk_free_mb();
@@ -1283,7 +1234,6 @@ int64_t NodeContext::get_disk_free_mb() const {
 // ============================================================================
 
 bool NodeContext::verify_chain_model_consistency() const {
-    if (!chain || !eval_engine) return false;
 
     uint64_t chain_h = chain->height();
     // The eval engine should track the same height as the chain.
@@ -1299,7 +1249,6 @@ bool NodeContext::verify_chain_model_consistency() const {
 }
 
 bool NodeContext::replay_model_from(uint64_t from_height) {
-    if (!chain || !eval_engine) return false;
 
     uint64_t tip = chain->height();
     if (from_height > tip) return true;  // Nothing to replay
@@ -1404,25 +1353,7 @@ void NodeContext::periodic_maintenance() {
             format_duration(uptime()).c_str(),
             static_cast<long long>(get_rss_mb()));
 
-    // 3. Check if model checkpoint should be saved
-    // Save a checkpoint every 2016 blocks (same as retarget interval)
-    if (chain && eval_engine) {
-        uint64_t height = chain->height();
-        if (height > 0 && (height % consensus::CHECKPOINT_INTERVAL) == 0) {
-            std::string ckpt = model_dir() + "/checkpoint_" +
-                              std::to_string(height) + ".bin";
-            if (!std::filesystem::exists(ckpt)) {
-                LogInfo("node", "Saving periodic model checkpoint at height %lu",
-                        static_cast<unsigned long>(height));
-                if (eval_engine->save_checkpoint(ckpt)) {
-                    LogInfo("node", "Checkpoint saved: %s", ckpt.c_str());
-                } else {
-                    LogWarn("node", "Failed to save checkpoint at height %lu",
-                            static_cast<unsigned long>(height));
-                }
-            }
-        }
-    }
+    // 3. PoW: no model checkpoint
 
     // 4. Log rotate if needed
     log_rotate();
@@ -1516,7 +1447,7 @@ std::string NodeContext::dump_debug_info() const {
     ss << "  Network: " << (health.net_ok ? "OK" : "FAIL") << "\n";
     ss << "  RPC: " << (health.rpc_ok ? "OK" : "disabled") << "\n";
     ss << "  Mempool: " << (health.mempool_ok ? "OK" : "FAIL") << "\n";
-    ss << "  EvalEngine: " << (health.eval_engine_ok ? "OK" : "FAIL") << "\n";
+
     ss << "  Disk: " << health.disk_free_mb << " MB free"
        << (health.disk_space_ok ? "" : " (LOW)") << "\n";
     ss << "  RSS: " << health.rss_mb << " MB\n";
@@ -1624,10 +1555,7 @@ NodeContext::NodeHealthInfo NodeContext::get_node_health() const {
         health.mempool_bytes = mempool->bytes();
     }
 
-    // Model memory
-    if (eval_engine) {
-        health.model_bytes = eval_engine->param_count() * sizeof(float);
-    }
+    // PoW: no model memory
 
     // Disk stats
     health.blocks_disk_bytes = 0;
@@ -1696,17 +1624,7 @@ NodeContext::NodeHealthInfo NodeContext::get_node_health() const {
 
     // Model stats
     health.model_params = 0;
-    health.last_val_loss = 0.0f;
     health.model_hash.set_null();
-
-    if (eval_engine) {
-        health.model_params = eval_engine->param_count();
-        health.model_hash = eval_engine->get_model_hash();
-    }
-
-    if (chain && chain->tip()) {
-        health.last_val_loss = chain->tip()->val_loss;
-    }
 
     // Warnings
     health.is_healthy = true;
@@ -1761,17 +1679,7 @@ void NodeContext::run_maintenance() {
         }
     }
 
-    // 3. Save model checkpoint if at interval
-    if (chain && eval_engine) {
-        uint64_t h = chain->height();
-        if (h > 0 && (h % consensus::CHECKPOINT_INTERVAL) == 0) {
-            std::string ckpt = model_dir() + "/checkpoint.bin";
-            if (eval_engine->save_checkpoint(ckpt)) {
-                LogInfo("node", "Maintenance: model checkpoint saved at height %lu",
-                        static_cast<unsigned long>(h));
-            }
-        }
-    }
+    // 3. PoW: no model checkpoint
 
     // 4. Prune old block files if pruning enabled
     if (chain && chain->is_pruning_enabled()) {
@@ -1989,7 +1897,7 @@ NodeContext::NodeInfo NodeContext::get_info() const {
     info.ibd = is_ibd.load();
     info.sync_progress = 1.0;
     info.model_params = 0;
-    info.model_loss = 0.0f;
+
     info.rss_mb = get_rss_mb();
     info.disk_free_mb = get_disk_free_mb();
     info.datadir = datadir;
@@ -2001,12 +1909,8 @@ NodeContext::NodeInfo NodeContext::get_info() const {
         info.inbound = static_cast<int>(net->inbound_count());
     }
 
-    if (eval_engine) {
-        info.model_params = eval_engine->param_count();
-    }
-
     if (chain && chain->tip()) {
-        info.model_loss = chain->tip()->val_loss;
+
         int64_t tip_time = chain->tip()->timestamp;
         int64_t now = static_cast<int64_t>(std::time(nullptr));
         if (now - tip_time > 7200) {
@@ -2080,7 +1984,7 @@ bool NodeContext::process_new_block(const CBlock& block) {
     LogInfo("node", "Block %lu connected: %zu txs, loss=%.4f (%.1f ms)",
             static_cast<unsigned long>(block.height),
             block.vtx.size(),
-            static_cast<double>(block.val_loss),
+
             elapsed_ms);
 
     return true;
