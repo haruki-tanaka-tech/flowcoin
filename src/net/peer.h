@@ -63,6 +63,10 @@ public:
     uint64_t nonce() const { return nonce_; }
     void set_nonce(uint64_t n) { nonce_ = n; }
 
+    // Persistent node identity (exchanged in VERSION, used for multi-address dedup)
+    uint64_t node_id() const { return node_id_; }
+    void set_node_id(uint64_t id) { node_id_ = id; }
+
     // Service flags
     uint64_t services() const { return services_; }
     void set_services(uint64_t s) { services_ = s; }
@@ -422,6 +426,7 @@ private:
     uint32_t protocol_version_ = 0;
     std::string user_agent_;
     uint64_t nonce_ = 0;
+    uint64_t node_id_ = 0;
     uint64_t services_ = 0;
     int64_t last_ping_time_ = 0;
     uint64_t ping_nonce_ = 0;
