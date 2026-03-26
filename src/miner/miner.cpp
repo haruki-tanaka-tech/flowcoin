@@ -16,6 +16,10 @@
 #include "../util/strencodings.h"
 #include "../util/arith_uint256.h"
 
+#ifdef FLOWCOIN_USE_CUDA
+#include "cuda_miner.h"
+#endif
+
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -67,6 +71,16 @@ bool MinerEngine::init() {
         std::fprintf(stderr, "FATAL: Cannot connect to FlowCoin node\n");
         return false;
     }
+
+    // Step 3 (optional): Initialize CUDA
+#ifdef FLOWCOIN_USE_CUDA
+    std::printf("[3/3] Initializing CUDA...\n");
+    if (cuda::cuda_init()) {
+        std::printf("  GPU mining enabled\n");
+    } else {
+        std::printf("  No GPU found, falling back to CPU\n");
+    }
+#endif
 
     std::printf("\n  Ready to mine.\n\n");
     return true;
@@ -213,6 +227,65 @@ void MinerEngine::run() {
         uint32_t nonce = 0;
         bool found = false;
 
+#ifdef FLOWCOIN_USE_CUDA
+        // ── GPU mining path ──
+        // Mine in batches of 16M nonces per kernel launch.
+        // The GPU handles all nonce iteration internally.
+        const uint32_t cuda_batch = 1U << 24;  // 16M nonces per launch
+
+        while (running_.load()) {
+            auto batch_start = Clock::now();
+
+            uint32_t result = cuda::cuda_mine_batch(
+                unsigned_base.data(),
+                static_cast<int>(unsigned_base.size()),
+                current_target_.data(),
+                nonce,
+                cuda_batch
+            );
+
+            auto batch_end = Clock::now();
+            double batch_secs = std::chrono::duration<double>(
+                batch_end - batch_start).count();
+
+            stats_.total_hashes.fetch_add(cuda_batch, std::memory_order_relaxed);
+
+            if (result != 0) {
+                header.nonce = result;
+                found = true;
+                break;
+            }
+
+            nonce += cuda_batch;
+
+            // Print status with GPU hashrate
+            now = Clock::now();
+            double since_print = std::chrono::duration<double>(
+                now - last_status_print_).count();
+
+            if (since_print >= static_cast<double>(config_.status_interval_ms) / 1000.0) {
+                double gpu_rate = static_cast<double>(cuda_batch) / batch_secs;
+                std::printf("\r  [%s] %s (GPU) | height=%llu | blocks=%llu",
+                            format_elapsed(std::chrono::duration<double>(
+                                now - mining_start_).count()).c_str(),
+                            format_hashrate(gpu_rate).c_str(),
+                            static_cast<unsigned long long>(current_template_.height),
+                            static_cast<unsigned long long>(stats_.blocks_found.load()));
+                std::fflush(stdout);
+                last_status_print_ = now;
+            }
+
+            // Refresh template if too much time passed
+            double since_ref = std::chrono::duration<double>(
+                now - last_template_refresh_).count();
+            if (since_ref > 30.0) {
+                break;  // Get new template
+            }
+
+            if (nonce == 0) break;  // overflow
+        }
+#else
+        // ── CPU mining path ──
         while (running_.load()) {
             // Set nonce in the unsigned data at offset 84
             std::memcpy(&unsigned_base[84], &nonce, 4);
@@ -248,6 +321,7 @@ void MinerEngine::run() {
 
             if (nonce == 0) break;  // overflow
         }
+#endif
 
         if (found) {
             // Submit block
@@ -267,6 +341,9 @@ void MinerEngine::run() {
 
 void MinerEngine::stop() {
     running_.store(false);
+#ifdef FLOWCOIN_USE_CUDA
+    cuda::cuda_shutdown();
+#endif
 }
 
 // =========================================================================
