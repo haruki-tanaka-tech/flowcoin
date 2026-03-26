@@ -166,6 +166,7 @@ static void resize_tui(void)
     if (log_win)    { delwin(log_win);    log_win    = NULL; }
     endwin();
     refresh();
+    clear();
     create_tui_windows();
 }
 
@@ -174,7 +175,7 @@ static void init_tui(void)
     initscr();
     cbreak();
     noecho();
-    nodelay(stdscr, TRUE);
+    halfdelay(5);  /* getch() blocks up to 500ms, replaces nodelay+usleep */
     keypad(stdscr, TRUE);
 
     if (has_colors()) {
@@ -205,7 +206,6 @@ static void drain_log_ring(void)
         g_log_tail = (g_log_tail + 1) % LOG_RING_SIZE;
     }
     pthread_mutex_unlock(&g_log_mutex);
-    wrefresh(log_win);
 }
 
 static void update_tui(void)
@@ -265,7 +265,7 @@ static void update_tui(void)
     mvwprintw(status_win, 6, 1, " [Q]uit");
     wattroff(status_win, A_BOLD);
 
-    wrefresh(status_win);
+    wnoutrefresh(status_win);
 
     /* ─── Device info window ─── */
     werase(info_win);
@@ -285,10 +285,14 @@ static void update_tui(void)
               (unsigned long)stats.blocks_found,
               (unsigned long)stats.blocks_rejected);
     mvwhline(info_win, 2, 0, ACS_HLINE, cols);
-    wrefresh(info_win);
+    wnoutrefresh(info_win);
 
     /* ─── Drain log ring ─── */
     drain_log_ring();
+    wnoutrefresh(log_win);
+
+    /* Single atomic screen update */
+    doupdate();
 }
 
 /*
@@ -801,7 +805,7 @@ int main(int argc, char *argv[])
             g_running = 0;
         }
 
-        usleep(500000); /* Update display every 0.5s */
+        /* halfdelay(5) in init_tui handles 500ms timing via getch() */
     }
 
     /* Clean shutdown */
