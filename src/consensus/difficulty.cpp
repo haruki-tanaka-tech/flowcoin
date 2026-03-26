@@ -73,15 +73,20 @@ bool check_proof_of_work(const uint256& block_hash, uint32_t nbits) {
         return false;
     }
 
-    // Convert the hash bytes to a 256-bit arithmetic value.
-    // The hash is stored in byte order; UintToArith256 interprets byte 0
-    // as the least significant byte (little-endian), which is the standard
-    // convention for Bitcoin-style proof-of-work comparison.
-    arith_uint256 hash_value = UintToArith256(block_hash);
+    // Convert the target to uint256 and reverse to big-endian byte order
+    // for comparison. The keccak hash output has byte 0 as most significant,
+    // while ArithToUint256 produces little-endian (byte 0 = least significant).
+    // Reversing the target bytes aligns both to the same big-endian order
+    // so the Blob lexicographic comparison works correctly.
+    uint256 target_le = ArithToUint256(target);
+    uint256 target_be;
+    for (int i = 0; i < 32; ++i) {
+        target_be[i] = target_le[31 - i];
+    }
 
     // The hash must be less than or equal to the target.
     // Lower hash = more "work" (same as Bitcoin PoW).
-    return hash_value <= target;
+    return block_hash <= target_be;
 }
 
 // ---------------------------------------------------------------------------
