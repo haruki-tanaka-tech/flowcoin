@@ -220,41 +220,6 @@ void ocl_shutdown(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * Pre-compute partial Keccak state from header
- * ═══════════════════════════════════════════════════════════════════════ */
-
-static void precompute_partial_state(const uint8_t *header, int header_len,
-                                     uint64_t *partial_state) {
-    /* Zero state */
-    memset(partial_state, 0, 25 * sizeof(uint64_t));
-
-    /*
-     * Absorb header into state with Keccak padding.
-     * Rate = 136 bytes (1088 bits for Keccak-256).
-     * header_len < 136, so it fits in one block.
-     */
-    uint8_t padded[136];
-    memset(padded, 0, 136);
-    memcpy(padded, header, (size_t)header_len);
-    /* Zero out nonce field — kernel will XOR its own nonce */
-    memset(padded + 84, 0, 4);
-    padded[header_len] = 0x01;      /* Keccak padding start */
-    padded[135] |= 0x80;            /* End of rate */
-
-    /* XOR padded block into state (17 uint64 words = 136 bytes) */
-    for (int i = 0; i < 17; i++) {
-        uint64_t word;
-        memcpy(&word, padded + i * 8, 8);
-        partial_state[i] = word;
-    }
-    /*
-     * NOTE: Do NOT run the permutation here.
-     * The kernel will XOR the nonce into the correct word and
-     * then run both permutations (for the double hash).
-     */
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
  * Mine a batch of nonces
  * ═══════════════════════════════════════════════════════════════════════ */
 
