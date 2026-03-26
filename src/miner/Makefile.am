@@ -51,7 +51,7 @@ cgminer_SOURCES	+= elist.h miner.h compat.h bench_block.h	\
 		   ../hash/KeccakSponge.c ../hash/KeccakSponge.h \
 		   ../hash/KeccakP-1600-reference.c ../hash/KeccakP-1600-SnP.h
 
-cgminer_SOURCES	+= logging.c
+cgminer_SOURCES	+= logging.c driver-cpu.c driver-stubs.c
 
 cgminer_SOURCES	+= klist.h klist.c
 
