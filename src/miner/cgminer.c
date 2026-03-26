@@ -5503,8 +5503,8 @@ static bool test_work_current(struct work *work)
 	unsigned char bedata[32];
 	char hexstr[68];
 	bool ret = true;
-	unsigned char *bin_height = &pool->coinbase[43];
-	uint8_t cb_height_sz = bin_height[-1];
+	unsigned char *bin_height = pool->coinbase ? &pool->coinbase[43] : NULL;
+	uint8_t cb_height_sz = bin_height ? bin_height[-1] : 0;
 	uint32_t height = 0;
 
 	if (work->mandatory)

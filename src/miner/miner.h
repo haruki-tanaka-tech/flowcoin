@@ -271,11 +271,12 @@ static inline int fsync (int fd)
 	DRIVER_ADD_COMMAND(bitmain_soc)
 
 #define DRIVER_PARSE_COMMANDS(DRIVER_ADD_COMMAND) \
+	DRIVER_ADD_COMMAND(cpu) \
 	FPGA_PARSE_COMMANDS(DRIVER_ADD_COMMAND) \
 	ASIC_PARSE_COMMANDS(DRIVER_ADD_COMMAND)
 
 #define DRIVER_ENUM(X) DRIVER_##X,
-#define DRIVER_PROTOTYPE(X) struct device_drv X##_drv;
+#define DRIVER_PROTOTYPE(X) extern struct device_drv X##_drv;
 
 /* Create drv_driver enum from DRIVER_PARSE_COMMANDS macro */
 enum drv_driver {
@@ -1380,8 +1381,9 @@ struct pool {
 	char *gbt_workid;
 	int gbt_expires;
 	uint32_t gbt_version;
-	uint32_t curtime;
+	int64_t  curtime;       /* FlowCoin: 8-byte timestamp */
 	uint32_t gbt_bits;
+	uint64_t gbt_height;    /* FlowCoin: 8-byte block height */
 	unsigned char *txn_hashes;
 	int gbt_txns;
 	int height;

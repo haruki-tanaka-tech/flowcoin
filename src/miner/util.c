@@ -631,6 +631,9 @@ json_t *json_rpc_call(CURL *curl, const char *url,
 
 	upload_data.buf = rpc_req;
 	upload_data.len = strlen(rpc_req);
+	/* Tell libcurl the exact body size so it uses Content-Length
+	 * instead of Transfer-Encoding: chunked */
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long) upload_data.len);
 	sprintf(len_hdr, "Content-Length: %lu",
 		(unsigned long) upload_data.len);
 	sprintf(user_agent_hdr, "User-Agent: %s", PACKAGE_STRING);

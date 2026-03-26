@@ -71,6 +71,23 @@ std::string RpcServer::get_header(const std::string& request, const std::string&
 std::string RpcServer::get_body(const std::string& request) {
     auto sep = request.find("\r\n\r\n");
     if (sep == std::string::npos) return "";
+
+    // If Transfer-Encoding: chunked, ignore Content-Length and return
+    // everything after headers (the chunked decoder in process_request
+    // will reassemble the body).
+    std::string te = get_header(request, "Transfer-Encoding");
+    if (te.find("chunked") != std::string::npos) {
+        return request.substr(sep + 4);
+    }
+
+    // Respect Content-Length — don't read beyond it
+    std::string cl = get_header(request, "Content-Length");
+    if (!cl.empty()) {
+        try {
+            size_t content_length = std::stoul(cl);
+            return request.substr(sep + 4, content_length);
+        } catch (...) {}
+    }
     return request.substr(sep + 4);
 }
 
@@ -410,8 +427,10 @@ void RpcServer::on_read(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf)
         return;
     }
 
-    // Check Content-Length to know when the body is complete
+    // Check Content-Length or Transfer-Encoding to know when body is complete
     std::string cl_val = get_header(ctx->buffer, "Content-Length");
+    std::string te_val = get_header(ctx->buffer, "Transfer-Encoding");
+    bool is_chunked = (te_val.find("chunked") != std::string::npos);
     size_t content_length = 0;
     if (!cl_val.empty()) {
         try { content_length = std::stoul(cl_val); } catch (...) {}
@@ -420,9 +439,16 @@ void RpcServer::on_read(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf)
     size_t body_start = header_end + 4;
     size_t body_received = ctx->buffer.size() - body_start;
 
-    if (body_received < content_length && nread >= 0) {
-        // Still waiting for more body data
+    if (is_chunked) {
+        // For chunked encoding, wait for terminal chunk "0\r\n\r\n"
+        if (ctx->buffer.find("\r\n0\r\n", body_start) == std::string::npos) {
+            if (nread >= 0) return;  // still receiving chunks
+        }
+    } else if (content_length > 0 && body_received < content_length && nread >= 0) {
+        // Still waiting for more body data (Content-Length mode)
         return;
+    } else if (content_length == 0 && !is_chunked && body_received == 0 && nread >= 0) {
+        // No body expected and none received — proceed
     }
 
     // We have a complete request -- process it
@@ -537,7 +563,45 @@ std::string RpcServer::process_request(const std::string& request,
     }
 
     // Extract body
+    // Debug: log request headers
+    {
+        auto hend = request.find("\r\n\r\n");
+        if (hend != std::string::npos && hend < 500) {
+            LogInfo("rpc", "REQ HEADERS: %s", request.substr(0, hend).c_str());
+        }
+    }
     std::string body = get_body(request);
+
+    // Handle chunked transfer encoding (cgminer/libcurl sends this)
+    // Chunked format: hex_size\r\n chunk_data\r\n ... 0\r\n\r\n
+    if (body.size() > 4 && body[0] != '{' && body[0] != '[') {
+        std::string decoded;
+        size_t pos = 0;
+        while (pos < body.size()) {
+            // Find end of chunk size line
+            auto crlf = body.find("\r\n", pos);
+            if (crlf == std::string::npos) break;
+            // Parse chunk size (hex)
+            std::string size_str = body.substr(pos, crlf - pos);
+            size_t chunk_size = 0;
+            try { chunk_size = std::stoul(size_str, nullptr, 16); } catch (...) { break; }
+            if (chunk_size == 0) break;  // terminal chunk
+            pos = crlf + 2;  // skip \r\n
+            if (pos + chunk_size > body.size()) break;
+            decoded += body.substr(pos, chunk_size);
+            pos += chunk_size + 2;  // skip chunk data + \r\n
+        }
+        if (!decoded.empty()) body = decoded;
+    }
+    // Debug: log incoming body as hex for troubleshooting
+    {
+        std::string hex_preview;
+        for (size_t i = 0; i < std::min(body.size(), size_t(40)); i++) {
+            char h[4]; std::snprintf(h, sizeof(h), "%02x ", (unsigned char)body[i]);
+            hex_preview += h;
+        }
+        LogInfo("rpc", "RPC body (%zu bytes) hex: %s", body.size(), hex_preview.c_str());
+    }
     if (body.empty()) {
         failed_requests_++;
         json err_resp = {
@@ -562,7 +626,11 @@ std::string RpcServer::process_request(const std::string& request,
     // Parse JSON
     json req_json;
     try {
-        req_json = json::parse(body);
+        // Trim trailing whitespace/newlines (cgminer sends \n after JSON)
+        std::string trimmed = body;
+        while (!trimmed.empty() && (trimmed.back() == '\n' || trimmed.back() == '\r' || trimmed.back() == ' ' || trimmed.back() == '\t'))
+            trimmed.pop_back();
+        req_json = json::parse(trimmed);
     } catch (const json::parse_error& e) {
         failed_requests_++;
         json err_resp = {

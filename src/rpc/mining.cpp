@@ -38,47 +38,41 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         json j;
         j["height"]        = tmpl.header.height;
         j["previousblockhash"] = hex_encode(tmpl.header.prev_hash.data(), 32);
-        j["nbits"]         = tmpl.header.nbits;
-        j["timestamp"]     = tmpl.header.timestamp;
-        j["version"]       = tmpl.header.version;
+        j["version"]       = static_cast<int>(tmpl.header.version);
+        j["curtime"]       = static_cast<int>(tmpl.header.timestamp);
 
-        // Target as hex for the miner
+        // bits as hex string (cgminer expects this format)
+        char bits_hex[9];
+        std::snprintf(bits_hex, sizeof(bits_hex), "%08x", tmpl.header.nbits);
+        j["bits"] = std::string(bits_hex);
+
+        // Also keep nbits as integer for our own miner
+        j["nbits"] = tmpl.header.nbits;
+
+        // Target as hex string (64 chars)
         arith_uint256 target;
         consensus::derive_target(tmpl.header.nbits, target);
         uint256 target_bytes = ArithToUint256(target);
         j["target"] = hex_encode(target_bytes.data(), 32);
 
-        // Model dimensions
-        json dims;
-        dims["d_model"]     = 0;
-        dims["n_layers"]    = 0;
-        dims["n_heads"]     = 0;
-        dims["d_head"]      = 0;
-        dims["d_ff"]        = 0;
-        dims["n_slots"]     = 0;
-        dims["top_k"]       = 0;
-        dims["gru_dim"]     = 0;
-        dims["conv_kernel"] = 0;
-        dims["vocab"]       = 0;
-        dims["seq_len"]     = 0;
-        j["model"]          = dims;
+        // Coinbase transaction as nested object (cgminer expects coinbasetxn.data)
+        auto cb_data = tmpl.coinbase_tx.serialize();
+        json cbtxn;
+        cbtxn["data"] = hex_encode(cb_data);
+        j["coinbasetxn"] = cbtxn;
 
-        // min_train_steps removed: difficulty alone regulates mining
-
-        // Coinbase transaction info
+        // Also keep flat version for our miner
+        j["coinbase_tx"] = hex_encode(cb_data);
         j["coinbase_value"] = tmpl.coinbase_tx.get_value_out();
 
-        // Coinbase tx as hex
-        auto cb_data = tmpl.coinbase_tx.serialize();
-        j["coinbase_tx"] = hex_encode(cb_data);
+        // longpollid (required by cgminer)
+        j["longpollid"] = hex_encode(tmpl.header.prev_hash.data(), 32) + "_" + std::to_string(tmpl.header.height);
 
-        // Previous block's val_loss for the miner
-        CBlockIndex* tip = chain.tip();
-        if (tip) {
+        // expires (seconds until template is stale)
+        j["expires"] = 120;
 
-        } else {
-            j["prev_val_loss"] = 100.0f;
-        }
+        // submitold
+        j["submitold"] = true;
 
         // Capabilities
         json capabilities = json::array();
@@ -91,14 +85,19 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         mutable_fields.push_back("time");
         mutable_fields.push_back("transactions");
         mutable_fields.push_back("prevblock");
-        mutable_fields.push_back("coinbase");
+        mutable_fields.push_back("coinbase/append");
+        mutable_fields.push_back("submit/coinbase");
         j["mutable"] = mutable_fields;
+
+        // rules (cgminer checks this for GBT support)
+        j["rules"] = json::array();
 
         // Block weight limit
         j["weightlimit"] = MAX_BLOCK_WEIGHT;
         j["sigoplimit"]  = consensus::MAX_BLOCK_SIGOPS;
 
         // Minimum timestamp
+        CBlockIndex* tip = chain.tip();
         if (tip) {
             j["mintime"] = tip->timestamp + consensus::MIN_BLOCK_INTERVAL;
         } else {
