@@ -123,7 +123,7 @@ arith_uint256 get_pow_limit();
 double get_difficulty(uint32_t nbits);
 
 // ============================================================================
-// Proof-of-Training (pure functions)
+// Keccak-256d Proof-of-Work (pure functions)
 // ============================================================================
 
 /// Check if a training hash meets the difficulty target.

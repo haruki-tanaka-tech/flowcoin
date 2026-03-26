@@ -138,7 +138,7 @@ public:
     /// Get the current mining difficulty target (nbits).
     virtual uint32_t get_nbits() = 0;
 
-    // ---- Model (Proof-of-Training) -----------------------------------------
+    // ---- Model (Keccak-256d Proof-of-Work) -----------------------------------------
 
     /// Get the total parameter count of the consensus model.
     virtual size_t get_model_param_count() = 0;
