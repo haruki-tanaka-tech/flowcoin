@@ -31,6 +31,7 @@
  * ═══════════════════════════════════════════════════════════════════════ */
 
 static volatile int g_running = 1;
+static volatile int g_resize  = 0;
 static mining_stats_t g_stats;
 static pthread_mutex_t g_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -139,6 +140,35 @@ static int load_miner_keypair(void)
  * └─────────────────────────────────────────────────────┘
  */
 
+static void create_tui_windows(void)
+{
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
+    if (cols < 40) cols = 40;
+    if (rows < 16) rows = 16;
+
+    /* Status area: top 8 lines (including border) */
+    status_win = newwin(8, cols, 0, 0);
+    /* Device info: 3 lines */
+    info_win = newwin(3, cols, 8, 0);
+    /* Log area: remaining space */
+    int log_rows = rows - 11;
+    if (log_rows < 3) log_rows = 3;
+    log_win = newwin(log_rows, cols, 11, 0);
+    scrollok(log_win, TRUE);
+}
+
+static void resize_tui(void)
+{
+    if (status_win) { delwin(status_win); status_win = NULL; }
+    if (info_win)   { delwin(info_win);   info_win   = NULL; }
+    if (log_win)    { delwin(log_win);    log_win    = NULL; }
+    endwin();
+    refresh();
+    create_tui_windows();
+}
+
 static void init_tui(void)
 {
     initscr();
@@ -156,20 +186,7 @@ static void init_tui(void)
     }
 
     curs_set(0);
-
-    int rows, cols;
-    getmaxyx(stdscr, rows, cols);
-    (void)cols;
-
-    /* Status area: top 8 lines (including border) */
-    status_win = newwin(8, cols, 0, 0);
-    /* Device info: 3 lines */
-    info_win = newwin(3, cols, 8, 0);
-    /* Log area: remaining space */
-    int log_rows = rows - 11;
-    if (log_rows < 3) log_rows = 3;
-    log_win = newwin(log_rows, cols, 11, 0);
-    scrollok(log_win, TRUE);
+    create_tui_windows();
 }
 
 static void cleanup_tui(void)
@@ -193,12 +210,14 @@ static void drain_log_ring(void)
 
 static void update_tui(void)
 {
+    if (!status_win || !info_win || !log_win) return;
+
     pthread_mutex_lock(&g_stats_mutex);
     mining_stats_t stats = g_stats;
     pthread_mutex_unlock(&g_stats_mutex);
 
     int cols = getmaxx(stdscr);
-    (void)cols;
+    if (cols < 40) return;  /* terminal too narrow */
 
     /* ─── Status window ─── */
     werase(status_win);
@@ -408,6 +427,8 @@ static void *mining_thread(void *arg)
     uint8_t target[32];
     uint32_t nbits;
     uint64_t block_height;
+    uint64_t last_logged_height = 0;
+    time_t last_template_time = 0;
 
     while (g_running) {
         /* Get block template */
@@ -417,10 +438,15 @@ static void *mining_thread(void *arg)
                 usleep(100000); /* 5s in 100ms chunks */
             continue;
         }
+        last_template_time = time(NULL);
 
-        tui_log("Mining block %lu, nbits: %08x, target: %02x%02x%02x%02x%02x%02x",
-                (unsigned long)block_height, nbits,
-                target[0], target[1], target[2], target[3], target[4], target[5]);
+        /* Only log when height actually changes */
+        if (block_height != last_logged_height) {
+            tui_log("Mining block %lu, nbits: %08x, target: %02x%02x%02x%02x%02x%02x",
+                    (unsigned long)block_height, nbits,
+                    target[0], target[1], target[2], target[3], target[4], target[5]);
+            last_logged_height = block_height;
+        }
 
         pthread_mutex_lock(&g_stats_mutex);
         g_stats.current_height = block_height;
@@ -437,8 +463,8 @@ static void *mining_thread(void *arg)
         while (g_running && !found && !new_block) {
 #ifdef USE_OPENCL
             if (use_gpu) {
-                /* GPU path: mine 256M nonces per batch */
-                uint32_t batch_count = 1 << 22;  /* 4M — smaller batch, more reliable */
+                /* GPU path */
+                uint32_t batch_count = 1 << 22;  /* 4M per batch */
                 uint32_t winning_nonce;
 
                 if (ocl_mine_batch(header, 92, target, 84,
@@ -455,10 +481,17 @@ static void *mining_thread(void *arg)
                         if (hash[j] > target[j]) { cpu_valid = 0; break; }
                     }
                     if (!cpu_valid) {
-                        /* GPU false positive — reset nonce and continue */
+                        /* GPU false positive -- clear nonce and continue */
                         memset(header + 84, 0, 4);
                         nonce += batch_count;
-                        if (nonce < batch_count) new_block = 1; /* overflow */
+                        if (nonce < batch_count) {
+                            /* Nonce overflow: update timestamp silently */
+                            int64_t ts = (int64_t)time(NULL);
+                            memcpy(header + 72, &ts, 8);
+                            nonce = 0;
+                            hashes_this_block = 0;
+                            block_start = time(NULL);
+                        }
                         continue;
                     }
 
@@ -504,13 +537,13 @@ static void *mining_thread(void *arg)
                 time_t now = time(NULL);
                 double elapsed = difftime(now, block_start);
                 if (elapsed > 0) {
-                    double hashrate = hashes_this_block / elapsed;
+                    double hashrate = (double)hashes_this_block / elapsed;
                     pthread_mutex_lock(&g_stats_mutex);
                     g_stats.hashrate_5s = hashrate;
                     g_stats.total_hashes += batch_count;
                     g_stats.elapsed_secs = difftime(now, g_stats.start_time);
                     if (g_stats.elapsed_secs > 0)
-                        g_stats.hashrate_avg = g_stats.total_hashes / g_stats.elapsed_secs;
+                        g_stats.hashrate_avg = (double)g_stats.total_hashes / g_stats.elapsed_secs;
                     pthread_mutex_unlock(&g_stats_mutex);
                 }
 
@@ -524,11 +557,18 @@ static void *mining_thread(void *arg)
                     }
                 }
 
-                /* Nonce space exhausted */
+                /* Re-fetch template every 30s for fresh merkle_root */
+                if (difftime(time(NULL), last_template_time) >= 30.0) {
+                    new_block = 1;  /* will re-fetch at top of outer loop */
+                }
+
+                /* Nonce overflow: silently update timestamp and continue */
                 if (nonce < batch_count) {
-                    tui_log("Nonce space exhausted for block %lu",
-                            (unsigned long)block_height);
-                    break;
+                    int64_t ts = (int64_t)time(NULL);
+                    memcpy(header + 72, &ts, 8);
+                    nonce = 0;
+                    hashes_this_block = 0;
+                    block_start = time(NULL);
                 }
             } else
 #endif
@@ -599,13 +639,13 @@ static void *mining_thread(void *arg)
                 time_t now = time(NULL);
                 double elapsed = difftime(now, block_start);
                 if (elapsed > 0) {
-                    double hashrate = hashes_this_block / elapsed;
+                    double hashrate = (double)hashes_this_block / elapsed;
                     pthread_mutex_lock(&g_stats_mutex);
                     g_stats.hashrate_5s = hashrate;
                     g_stats.total_hashes += batch_count;
                     g_stats.elapsed_secs = difftime(now, g_stats.start_time);
                     if (g_stats.elapsed_secs > 0) {
-                        g_stats.hashrate_avg = g_stats.total_hashes / g_stats.elapsed_secs;
+                        g_stats.hashrate_avg = (double)g_stats.total_hashes / g_stats.elapsed_secs;
                     }
                     pthread_mutex_unlock(&g_stats_mutex);
                 }
@@ -620,11 +660,18 @@ static void *mining_thread(void *arg)
                     }
                 }
 
-                /* Nonce space exhausted */
+                /* Re-fetch template every 30s for fresh merkle_root */
+                if (difftime(time(NULL), last_template_time) >= 30.0) {
+                    new_block = 1;  /* will re-fetch at top of outer loop */
+                }
+
+                /* Nonce overflow: silently update timestamp and continue */
                 if (nonce < batch_count) {
-                    tui_log("Nonce space exhausted for block %lu",
-                            (unsigned long)block_height);
-                    break;
+                    int64_t ts = (int64_t)time(NULL);
+                    memcpy(header + 72, &ts, 8);
+                    nonce = 0;
+                    hashes_this_block = 0;
+                    block_start = time(NULL);
                 }
             }
         }
@@ -644,7 +691,10 @@ static void *mining_thread(void *arg)
 
 static void sig_handler(int sig)
 {
-    (void)sig;
+    if (sig == SIGWINCH) {
+        g_resize = 1;
+        return;
+    }
     g_running = 0;
 }
 
@@ -715,6 +765,7 @@ int main(int argc, char *argv[])
     /* Install signal handlers */
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
+    signal(SIGWINCH, sig_handler);
 
     /* Initialize stats */
     memset(&g_stats, 0, sizeof(g_stats));
@@ -738,6 +789,11 @@ int main(int argc, char *argv[])
 
     /* TUI update loop (main thread) */
     while (g_running) {
+        if (g_resize) {
+            g_resize = 0;
+            resize_tui();
+        }
+
         update_tui();
 
         int ch = getch();
