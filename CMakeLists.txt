@@ -488,8 +488,7 @@ target_link_libraries(flowcoin-tx PRIVATE
 # FlowCoin Miner (standalone, native C++)
 # =============================================================================
 
-# Core miner library (uses ggml for all tensor ops -- no custom backends)
-# GPU support (CUDA, Metal, Vulkan) comes from ggml automatically when available
+# Core miner library
 add_library(flowcoin_miner STATIC
     src/miner/model.cpp
     src/miner/miner.cpp
@@ -501,6 +500,17 @@ target_link_libraries(flowcoin_miner PRIVATE
     flowcoin_hash flowcoin_crypto flowcoin_util flowcoin_consensus flowcoin_primitives
     ggml
 )
+
+# CUDA GPU acceleration (optional)
+option(FLOWCOIN_USE_CUDA "Build miner with CUDA support" OFF)
+if(FLOWCOIN_USE_CUDA)
+    # Use system g++ as CUDA host compiler (must match system headers)
+    set(CMAKE_CUDA_STANDARD 17)
+    enable_language(CUDA)
+    target_sources(flowcoin_miner PRIVATE src/miner/cuda_ops.cu)
+    target_compile_definitions(flowcoin_miner PUBLIC FLOWCOIN_USE_CUDA)
+    target_link_libraries(flowcoin_miner PRIVATE cublas cudart)
+endif()
 
 # Miner executable
 add_executable(flowcoin-miner

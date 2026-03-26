@@ -7,6 +7,10 @@
 
 #include "model.h"
 
+#ifdef FLOWCOIN_USE_CUDA
+#include "cuda_ops.h"
+#endif
+
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -14,6 +18,7 @@
 #include <cstring>
 #include <numeric>
 #include <thread>
+#include <vector>
 
 namespace flow::miner {
 
@@ -475,9 +480,16 @@ float GGMLModel::train_step(const uint8_t* input, const uint8_t* target,
 // Eval loss (forward only)
 // ═══════════════════════════════════════════════════════════════════════════
 
+#ifdef FLOWCOIN_USE_CUDA
+// cuda_ops.h included at top of file (before namespace)
+#endif
+
 float GGMLModel::eval_loss(const uint8_t* input, const uint8_t* target,
                             int seq_len) {
-    // Forward-only evaluation
+#ifdef FLOWCOIN_USE_CUDA
+    return eval_loss_cuda(input, target, seq_len);
+#endif
+    // CPU fallback via ggml
     const size_t compute_mem = param_count() * sizeof(float) * 4
                              + static_cast<size_t>(seq_len) * vocab_ * sizeof(float) * 4
                              + 256 * 1024 * 1024;
@@ -511,5 +523,122 @@ float GGMLModel::eval_loss(const uint8_t* input, const uint8_t* target,
     ggml_free(compute_ctx);
     return loss_val;
 }
+
+#ifdef FLOWCOIN_USE_CUDA
+
+void GGMLModel::init_cuda_buffers(int seq_len) {
+    using namespace ::flow::miner::cuda;
+    if (cuda_initialized_) return;
+    
+
+    int D = d_model_, S = seq_len, V = vocab_, FF = d_ff_;
+
+    // Upload weights to GPU
+    gpu_tok_emb_ = alloc(V * D);
+    upload(gpu_tok_emb_, (float*)tok_emb_->data, V * D);
+
+    gpu_layers_.resize(n_layers_);
+    for (int l = 0; l < n_layers_; l++) {
+        auto& L = layers_[l];
+        auto& G = gpu_layers_[l];
+        G.norm1_w = alloc(D); upload(G.norm1_w, (float*)L.norm1_w->data, D);
+        G.norm2_w = alloc(D); upload(G.norm2_w, (float*)L.norm2_w->data, D);
+        G.gru_wz = alloc(D*D); upload(G.gru_wz, (float*)L.gru_wz->data, D*D);
+        G.gru_wh = alloc(D*D); upload(G.gru_wh, (float*)L.gru_wh->data, D*D);
+        G.gru_bz = alloc(D); upload(G.gru_bz, (float*)L.gru_bz->data, D);
+        G.gru_bh = alloc(D); upload(G.gru_bh, (float*)L.gru_bh->data, D);
+        G.ffn_gate_w = alloc(D*FF); upload(G.ffn_gate_w, (float*)L.ffn_gate_w->data, D*FF);
+        G.ffn_up_w = alloc(D*FF); upload(G.ffn_up_w, (float*)L.ffn_up_w->data, D*FF);
+        G.ffn_down_w = alloc(FF*D); upload(G.ffn_down_w, (float*)L.ffn_down_w->data, FF*D);
+    }
+    gpu_final_norm_w_ = alloc(D);
+    upload(gpu_final_norm_w_, (float*)final_norm_w_->data, D);
+
+    // Work buffers
+    gpu_x_ = alloc(S * D);
+    gpu_tmp_ = alloc(S * D);
+    gpu_normed_ = alloc(S * D);
+    gpu_gate_ = alloc(S * FF);
+    gpu_up_ = alloc(S * FF);
+    gpu_logits_ = alloc(S * V);
+    gpu_tokens_ = (int32_t*)raw_alloc(S * sizeof(int32_t));
+    gpu_targets_ = (uint8_t*)raw_alloc(S);
+
+    cuda_initialized_ = true;
+}
+
+float GGMLModel::eval_loss_cuda(const uint8_t* input, const uint8_t* target, int seq_len) {
+    using namespace ::flow::miner::cuda;
+    
+    int D = d_model_, S = seq_len, V = vocab_, FF = d_ff_;
+
+    if (!cuda_initialized_) init_cuda_buffers(seq_len);
+
+    // Re-upload weights (they change every SPSA step)
+    upload(gpu_tok_emb_, (float*)tok_emb_->data, V * D);
+    for (int l = 0; l < n_layers_; l++) {
+        auto& L = layers_[l];
+        auto& G = gpu_layers_[l];
+        upload(G.norm1_w, (float*)L.norm1_w->data, D);
+        upload(G.norm2_w, (float*)L.norm2_w->data, D);
+        upload(G.gru_wz, (float*)L.gru_wz->data, D*D);
+        upload(G.gru_wh, (float*)L.gru_wh->data, D*D);
+        upload(G.gru_bz, (float*)L.gru_bz->data, D);
+        upload(G.gru_bh, (float*)L.gru_bh->data, D);
+        upload(G.ffn_gate_w, (float*)L.ffn_gate_w->data, D*FF);
+        upload(G.ffn_up_w, (float*)L.ffn_up_w->data, D*FF);
+        upload(G.ffn_down_w, (float*)L.ffn_down_w->data, FF*D);
+    }
+    upload(gpu_final_norm_w_, (float*)final_norm_w_->data, D);
+
+    // Upload input/target
+    std::vector<int32_t> tokens_i32(S);
+    for (int i = 0; i < S; i++) tokens_i32[i] = input[i];
+    raw_upload(gpu_tokens_, tokens_i32.data(), S * sizeof(int32_t));
+    raw_upload(gpu_targets_, target, S);
+
+    // Embedding lookup
+    get_rows(gpu_tok_emb_, gpu_tokens_, gpu_x_, S, D, V);
+
+    // Layer loop
+    for (int l = 0; l < n_layers_; l++) {
+        auto& G = gpu_layers_[l];
+
+        // RMSNorm → SiLU gate → residual
+        rms_norm(gpu_x_, G.norm1_w, gpu_normed_, S, D);
+        matmul(gpu_normed_, G.gru_wz, gpu_tmp_, S, D, D);  // z = normed @ Wz^T
+        add_bias(gpu_tmp_, G.gru_bz, gpu_tmp_, S, D);
+        silu(gpu_tmp_, gpu_tmp_, S * D);
+
+        float* gpu_val = gpu_gate_;  // reuse buffer
+        matmul(gpu_normed_, G.gru_wh, gpu_val, S, D, D);
+        add_bias(gpu_val, G.gru_bh, gpu_val, S, D);
+
+        mul(gpu_tmp_, gpu_val, gpu_tmp_, S * D);
+        add(gpu_x_, gpu_tmp_, gpu_x_, S * D);
+
+        // RMSNorm → SwiGLU FFN → residual
+        rms_norm(gpu_x_, G.norm2_w, gpu_normed_, S, D);
+        matmul(gpu_normed_, G.ffn_gate_w, gpu_gate_, S, FF, D);
+        silu(gpu_gate_, gpu_gate_, S * FF);
+        matmul(gpu_normed_, G.ffn_up_w, gpu_up_, S, FF, D);
+        mul(gpu_gate_, gpu_up_, gpu_gate_, S * FF);
+        matmul(gpu_gate_, G.ffn_down_w, gpu_tmp_, S, D, FF);
+        add(gpu_x_, gpu_tmp_, gpu_x_, S * D);
+    }
+
+    // Final norm
+    rms_norm(gpu_x_, gpu_final_norm_w_, gpu_normed_, S, D);
+
+    // Logits = normed @ tok_emb^T
+    matmul(gpu_normed_, gpu_tok_emb_, gpu_logits_, S, V, D);
+
+    // Cross-entropy loss
+    float loss = cross_entropy(gpu_logits_, gpu_targets_, S, V);
+
+    return loss;
+}
+
+#endif // FLOWCOIN_USE_CUDA
 
 } // namespace flow::miner
