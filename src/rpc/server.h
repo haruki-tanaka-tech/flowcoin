@@ -178,6 +178,16 @@ public:
     /// Enable cookie-based authentication from a file.
     void set_cookie_auth(const std::string& cookie_path);
 
+    /// Generate a .cookie file with random credentials in the given datadir.
+    /// Sets file permissions to 0600 (owner-only). Returns true on success.
+    bool generate_cookie(const std::string& datadir);
+
+    /// Remove the .cookie file from the given datadir.
+    static void remove_cookie(const std::string& datadir);
+
+    /// Get the full path to the .cookie file for the given datadir.
+    static std::string cookie_filepath(const std::string& datadir);
+
     /// Get server statistics.
     struct ServerStats {
         uint64_t total_requests;

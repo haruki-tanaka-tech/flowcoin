@@ -8,9 +8,13 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <random>
 #include <sstream>
 #include <stdexcept>
+
+#include <sys/stat.h>
 
 namespace flow {
 
@@ -225,6 +229,59 @@ void RpcServer::set_cookie_auth(const std::string& cookie_path) {
         cookie_auth_ = "Basic " + base64_encode(cookie_content);
         LogInfo("rpc", "Loaded cookie authentication from %s", cookie_path.c_str());
     }
+}
+
+std::string RpcServer::cookie_filepath(const std::string& datadir) {
+    std::string path = datadir;
+    if (!path.empty() && path.back() != '/') path += "/";
+    path += ".cookie";
+    return path;
+}
+
+bool RpcServer::generate_cookie(const std::string& datadir) {
+    // Generate 32 random bytes -> 64 hex characters
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<int> dist(0, 255);
+
+    static const char hex_chars[] = "0123456789abcdef";
+    std::string cookie_pass;
+    cookie_pass.reserve(64);
+    for (int i = 0; i < 32; ++i) {
+        uint8_t byte = static_cast<uint8_t>(dist(gen));
+        cookie_pass.push_back(hex_chars[(byte >> 4) & 0x0F]);
+        cookie_pass.push_back(hex_chars[byte & 0x0F]);
+    }
+
+    std::string cookie_user = "__cookie__";
+    std::string cookie_line = cookie_user + ":" + cookie_pass;
+
+    std::string path = cookie_filepath(datadir);
+    std::ofstream ofs(path);
+    if (!ofs.is_open()) {
+        LogWarn("rpc", "Failed to create cookie file: %s", path.c_str());
+        return false;
+    }
+
+    ofs << cookie_line << "\n";
+    ofs.close();
+
+    // Set restrictive permissions (owner-only read/write)
+    ::chmod(path.c_str(), 0600);
+
+    // Update server auth to accept cookie credentials
+    user_ = cookie_user;
+    password_ = cookie_pass;
+    auth_header_ = "Basic " + base64_encode(cookie_line);
+    cookie_auth_ = auth_header_;
+
+    LogInfo("rpc", "Generated cookie authentication: %s", path.c_str());
+    return true;
+}
+
+void RpcServer::remove_cookie(const std::string& datadir) {
+    std::string path = cookie_filepath(datadir);
+    std::filesystem::remove(path);
 }
 
 // ---------------------------------------------------------------------------

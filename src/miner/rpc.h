@@ -12,13 +12,21 @@
 typedef struct {
     char host[64];
     int  port;
-    char user[64];
-    char pass[64];
+    char user[128];
+    char pass[128];
 } rpc_client_t;
 
 void rpc_init(rpc_client_t *rpc, const char *host, int port,
               const char *user, const char *pass);
 void rpc_cleanup(rpc_client_t *rpc);
+
+/*
+ * Read cookie authentication from <datadir>/.cookie file.
+ * If the file exists and is valid, fills user and pass buffers.
+ * Returns true on success.
+ */
+bool rpc_read_cookie(const char *datadir, char *user, int user_size,
+                     char *pass, int pass_size);
 
 /* Get current block count. Returns -1 on error. */
 int64_t rpc_getblockcount(rpc_client_t *rpc);
