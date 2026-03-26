@@ -14,7 +14,6 @@
 #include "chain/blockindex.h"
 #include "chain/blockstore.h"
 #include "chain/chaindb.h"
-#include "chain/modelstate.h"
 #include "chain/txindex.h"
 #include "chain/utxo.h"
 #include "consensus/validation.h"
@@ -82,7 +81,6 @@ public:
     ///   4. Verify tip matches stored tip
     ///   5. If mismatch: crash recovery (walk back to find valid tip)
     ///   6. Load UTXO set
-    ///   7. Initialize ModelState
     bool load_from_disk();
 
     /// Save all persistent state to disk.
@@ -133,8 +131,7 @@ public:
     const BlockTree& block_tree() const { return tree_; }
     UTXOSet&         utxo_set()         { return utxo_; }
     BlockStore&      block_store()      { return store_; }
-    ModelState&      model_state()      { return model_state_; }
-    const ModelState& model_state() const { return model_state_; }
+    const
     TxIndex*         tx_index()        { return txindex_.get(); }
     const TxIndex*   tx_index() const  { return txindex_.get(); }
 
@@ -189,7 +186,6 @@ private:
     BlockTree   tree_;
     UTXOSet     utxo_;
     BlockStore  store_;
-    ModelState  model_state_;
     std::unique_ptr<TxIndex> txindex_;
     std::unique_ptr<ChainDB> chaindb_;
     bool        txindex_enabled_ = true;
@@ -213,10 +209,7 @@ private:
     /// Build the chain of blocks from genesis to the given tip,
     /// returned in order from oldest to newest (genesis first).
     std::vector<CBlockIndex*> get_chain_to(CBlockIndex* tip) const;
-
-    /// Determine the EvalFunction to use for block validation.
     /// Returns nullptr if Check 15 should be skipped (IBD / assume-valid).
-    consensus::EvalFunction get_eval_function(const CBlockIndex* parent) const;
 
     /// Persist a block index entry to ChainDB.
     void persist_block_index(const CBlockIndex* idx);
@@ -320,7 +313,7 @@ public:
         size_t total_transactions;
         size_t total_blocks;
         size_t blocks_disk_bytes;
-        float current_val_loss;
+        // (removed: val_loss)
         size_t model_params;
         uint256 model_hash;
         int64_t median_time_past;

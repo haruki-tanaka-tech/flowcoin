@@ -365,7 +365,7 @@ RestResponse RestServer::handle_headers(int count,
                 hj["timestamp"] = hdr.timestamp;
                 hj["nbits"] = hdr.nbits;
                 hj["nonce"] = hdr.nonce;
-                hj["val_loss"] = hdr.val_loss;
+
                 hj["confirmations"] = static_cast<int>(
                     tip_height >= hdr.height ?
                     tip_height - hdr.height + 1 : 0);
@@ -609,9 +609,9 @@ RestResponse RestServer::handle_chaininfo() {
         j["difficulty"] = 1.0;  // Would compute from nbits
         j["time"] = tip->timestamp;
         j["mediantime"] = tip->timestamp;
-        j["val_loss"] = tip->val_loss;
-        j["d_model"] = tip->d_model;
-        j["n_layers"] = tip->n_layers;
+
+
+
         // train_steps removed from consensus
     } else {
         j["blocks"] = 0;
@@ -718,21 +718,21 @@ std::vector<uint8_t> RestServer::block_to_json(const CBlock& block,
     j["version"] = block.version;
     j["prev_hash"] = hash_to_hex(block.prev_hash);
     j["merkle_root"] = hash_to_hex(block.merkle_root);
-    j["training_hash"] = hash_to_hex(block.training_hash);
-    j["dataset_hash"] = hash_to_hex(block.dataset_hash);
+    j["training_hash"] = hash_to_hex(uint256{});
+    j["dataset_hash"] = hash_to_hex(uint256{});
     j["timestamp"] = block.timestamp;
     j["nbits"] = block.nbits;
     j["nonce"] = block.nonce;
-    j["val_loss"] = block.val_loss;
-    j["prev_val_loss"] = block.prev_val_loss;
-    j["d_model"] = block.d_model;
-    j["n_layers"] = block.n_layers;
-    j["d_ff"] = block.d_ff;
-    j["n_heads"] = block.n_heads;
+
+
+
+
+
+
     // train_steps removed from consensus
-    j["stagnation"] = block.stagnation;
-    j["delta_length"] = block.delta_length;
-    j["sparse_count"] = block.sparse_count;
+
+
+
     j["n_tx"] = block.vtx.size();
     j["size"] = block.get_block_size();
     j["weight"] = block.get_block_weight();
@@ -799,7 +799,7 @@ std::vector<uint8_t> RestServer::header_to_json(const CBlockHeader& header,
     j["nbits"] = header.nbits;
     j["nonce"] = header.nonce;
     j["confirmations"] = confirmations;
-    j["val_loss"] = header.val_loss;
+
 
     std::string s = j.dump();
     return std::vector<uint8_t>(s.begin(), s.end());

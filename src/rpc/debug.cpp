@@ -8,7 +8,6 @@
 #include "chain/blockstore.h"
 #include "chain/utxo.h"
 #include "consensus/difficulty.h"
-#include "consensus/growth.h"
 #include "consensus/params.h"
 #include "consensus/reward.h"
 #include "consensus/validation.h"
@@ -41,30 +40,19 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         if (!tip) throw std::runtime_error("Chain is empty");
 
         uint64_t next_height = tip->height + 1;
-        auto dims = consensus::compute_growth(next_height);
+        auto dims = 0;
         Amount reward = consensus::compute_block_reward(next_height);
 
         json j;
         j["next_height"] = next_height;
         j["prev_hash"] = hex_encode(tip->hash.data(), 32);
-        j["prev_val_loss"] = tip->val_loss;
+
         j["reward_atomic"] = reward;
         j["reward_flow"] = static_cast<double>(reward) /
                            static_cast<double>(consensus::COIN);
 
         // Model dimensions
         json m;
-        m["d_model"] = dims.d_model;
-        m["n_layers"] = dims.n_layers;
-        m["n_heads"] = dims.n_heads;
-        m["d_head"] = dims.d_head;
-        m["d_ff"] = dims.d_ff;
-        m["n_slots"] = dims.n_slots;
-        m["top_k"] = dims.top_k;
-        m["gru_dim"] = dims.gru_dim;
-        m["conv_kernel"] = dims.conv_kernel;
-        m["vocab"] = dims.vocab;
-        m["seq_len"] = dims.seq_len;
         j["model"] = m;
 
         // Difficulty info
@@ -73,17 +61,9 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         consensus::derive_target(tip->nbits, target);
         j["target_hex"] = hex_encode(ArithToUint256(target).data(), 32);
 
-        // Estimate parameter count
-        uint64_t params = dims.vocab * dims.d_model; // embedding
-        params += dims.n_layers * (4 * dims.d_model * dims.d_model +
-                                    2 * dims.d_model * dims.d_ff +
-                                    3 * dims.d_model * dims.d_model +
-                                    4 * dims.d_model +
-                                    dims.d_model * dims.conv_kernel);
-        params += 2 * dims.n_slots * dims.d_model; // slot memory
-        params += dims.d_model * dims.vocab; // output head
-        j["estimated_params"] = params;
-        j["estimated_params_mb"] = static_cast<double>(params * 4) / (1024.0 * 1024.0);
+        // PoW: no model parameters
+        j["estimated_params"] = 0;
+        j["estimated_params_mb"] = 0.0;
 
         // Timing
         j["target_block_time"] = consensus::TARGET_BLOCK_TIME;
@@ -92,7 +72,7 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         j["min_next_timestamp"] = tip->timestamp + consensus::MIN_BLOCK_INTERVAL;
 
         // Growth phase
-        bool dims_growing = (next_height < consensus::DIM_FREEZE_HEIGHT);
+        bool dims_growing = (next_height < 512);
         j["growth_phase"] = dims_growing ? "dimension_growth" : "slot_growth";
         j["dims_frozen"]  = !dims_growing;
 
@@ -164,35 +144,35 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         j["block_tree_size"] = chain.block_tree().size();
 
         if (tip) {
-            j["tip_val_loss"] = tip->val_loss;
-            j["tip_d_model"] = tip->d_model;
-            j["tip_n_layers"] = tip->n_layers;
-            j["tip_n_slots"] = tip->n_slots;
+
+
+
+
             // tip_train_steps removed (not a consensus field)
-            j["tip_stagnation"] = tip->stagnation_count;
-            j["tip_improving_blocks"] = tip->improving_blocks;
+
+
 
             // Walk back to compute statistics
             int total_improving = 0;
             float total_loss = 0;
-            float min_loss = tip->val_loss;
-            float max_loss = tip->val_loss;
+
+
             int count = 0;
             CBlockIndex* idx = tip;
 
             while (idx && count < 100) {
-                if (idx->is_improving()) total_improving++;
-                total_loss += idx->val_loss;
-                if (idx->val_loss < min_loss) min_loss = idx->val_loss;
-                if (idx->val_loss > max_loss) max_loss = idx->val_loss;
+
+
+
+
                 count++;
                 idx = idx->prev;
             }
 
             j["last_100_improving"] = total_improving;
             j["last_100_avg_loss"] = (count > 0) ? total_loss / count : 0.0f;
-            j["last_100_min_loss"] = min_loss;
-            j["last_100_max_loss"] = max_loss;
+
+
 
             // Time between last 10 blocks
             idx = tip;
@@ -231,9 +211,9 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         params["retarget_interval"] = consensus::RETARGET_INTERVAL;
         params["coinbase_maturity"] = consensus::COINBASE_MATURITY;
         params["max_block_size"] = consensus::MAX_BLOCK_SIZE;
-        params["max_delta_size"] = consensus::MAX_DELTA_SIZE;
-        params["eval_tokens"] = consensus::EVAL_TOKENS;
-        params["eval_seq_len"] = consensus::EVAL_SEQ_LEN;
+        params["max_delta_size"] = consensus::MAX_BLOCK_SIZE;
+        params["eval_tokens"] = 4096;
+        params["eval_seq_len"] = 256;
         j["consensus_params"] = params;
 
         // Assume-valid info
@@ -374,9 +354,9 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         int improving = 0;
 
         for (CBlockIndex* bi : indices) {
-            total_loss += bi->val_loss;
+
             total_tx += bi->n_tx;
-            if (bi->is_improving()) improving++;
+
         }
 
         int count = static_cast<int>(indices.size());
@@ -435,11 +415,11 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
             json h;
             h["h"] = bi->height;
             h["t"] = bi->timestamp;
-            h["vl"] = bi->val_loss;
+
             h["nb"] = bi->nbits;
             // train_steps removed from consensus
-            h["dm"] = bi->d_model;
-            h["nl"] = bi->n_layers;
+
+
             // First 8 hex chars of hash as a short identifier
             h["id"] = hex_encode(bi->hash.data(), 4);
             result.push_back(h);

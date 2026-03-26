@@ -267,11 +267,8 @@ public:
         if (ctx_ && ctx_->chain) {
             auto* tip = ctx_->chain->tip();
             if (tip) {
-                // Approximate parameter count from architecture dimensions
-                size_t d = tip->d_model;
-                size_t n = tip->n_layers;
-                size_t ff = tip->d_ff;
-                return d * d * n * 4 + d * ff * n * 2;
+                // PoW: no model parameters
+                return 0;
             }
         }
         return 0;
@@ -280,7 +277,7 @@ public:
     float get_model_val_loss() override {
         if (ctx_ && ctx_->chain) {
             auto* tip = ctx_->chain->tip();
-            if (tip) return tip->val_loss;
+
         }
         return 0.0f;
     }

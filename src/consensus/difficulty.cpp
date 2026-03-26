@@ -64,10 +64,10 @@ bool derive_target(uint32_t nbits, arith_uint256& target) {
 }
 
 // ---------------------------------------------------------------------------
-// check_proof_of_training
+// check_proof_of_work
 // ---------------------------------------------------------------------------
 
-bool check_proof_of_training(const uint256& training_hash, uint32_t nbits) {
+bool check_proof_of_work(const uint256& block_hash, uint32_t nbits) {
     arith_uint256 target;
     if (!derive_target(nbits, target)) {
         return false;
@@ -77,7 +77,7 @@ bool check_proof_of_training(const uint256& training_hash, uint32_t nbits) {
     // The hash is stored in byte order; UintToArith256 interprets byte 0
     // as the least significant byte (little-endian), which is the standard
     // convention for Bitcoin-style proof-of-work comparison.
-    arith_uint256 hash_value = UintToArith256(training_hash);
+    arith_uint256 hash_value = UintToArith256(block_hash);
 
     // The hash must be less than or equal to the target.
     // Lower hash = more "work" (same as Bitcoin PoW).

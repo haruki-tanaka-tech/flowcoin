@@ -12,7 +12,6 @@
 #include "../chain/blockindex.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 #include <sstream>
 
@@ -45,12 +44,6 @@ static void append_i64(std::vector<uint8_t>& buf, int64_t v) {
     append_u64(buf, u);
 }
 
-static void append_float(std::vector<uint8_t>& buf, float f) {
-    uint32_t bits;
-    std::memcpy(&bits, &f, 4);
-    append_u32(buf, bits);
-}
-
 static uint32_t read_u32_le(const uint8_t* p) {
     return static_cast<uint32_t>(p[0])
          | (static_cast<uint32_t>(p[1]) << 8)
@@ -72,64 +65,28 @@ static int64_t read_i64_le(const uint8_t* p) {
     return result;
 }
 
-static float read_float_le(const uint8_t* p) {
-    uint32_t bits = read_u32_le(p);
-    float f;
-    std::memcpy(&f, &bits, 4);
-    return f;
-}
-
 // ---------------------------------------------------------------------------
-// get_unsigned_data -- 244 bytes (bytes 0-243 of the header)
+// get_unsigned_data -- 92 bytes (bytes 0-91 of the header)
 // ---------------------------------------------------------------------------
 
 std::vector<uint8_t> CBlockHeader::get_unsigned_data() const {
     std::vector<uint8_t> buf;
-    buf.reserve(244);
+    buf.reserve(BLOCK_HEADER_UNSIGNED_SIZE);
 
-    // 32-byte fields (4 * 32 = 128 bytes)
+    // 32-byte fields (2 * 32 = 64 bytes)
     append_bytes(buf, prev_hash.data(), 32);        // 0-31
     append_bytes(buf, merkle_root.data(), 32);       // 32-63
-    append_bytes(buf, training_hash.data(), 32);     // 64-95
-    append_bytes(buf, dataset_hash.data(), 32);      // 96-127
 
     // 8-byte fields (2 * 8 = 16 bytes)
-    append_u64(buf, height);                         // 128-135
-    append_i64(buf, timestamp);                      // 136-143
+    append_u64(buf, height);                         // 64-71
+    append_i64(buf, timestamp);                      // 72-79
 
-    // 4-byte fields
-    append_u32(buf, nbits);                          // 144-147
-    append_float(buf, val_loss);                     // 148-151
-    append_float(buf, prev_val_loss);                // 152-155
+    // 4-byte fields (3 * 4 = 12 bytes)
+    append_u32(buf, nbits);                          // 80-83
+    append_u32(buf, nonce);                          // 84-87
+    append_u32(buf, version);                        // 88-91
 
-    // Architecture dimensions (6 * 4 = 24 bytes)
-    append_u32(buf, d_model);                        // 156-159
-    append_u32(buf, n_layers);                       // 160-163
-    append_u32(buf, d_ff);                           // 164-167
-    append_u32(buf, n_heads);                        // 168-171
-    append_u32(buf, gru_dim);                        // 172-175
-    append_u32(buf, n_slots);                        // 176-179
-
-    // Training metadata (2 * 4 = 8 bytes)
-    append_u32(buf, reserved_field);                 // 180-183 (reserved)
-    append_u32(buf, stagnation);                     // 184-187
-
-    // Delta reference (4 * 4 = 16 bytes)
-    append_u32(buf, delta_offset);                   // 188-191
-    append_u32(buf, delta_length);                   // 192-195
-    append_u32(buf, sparse_count);                   // 196-199
-    append_float(buf, sparse_threshold);             // 200-203
-
-    // Nonce + version (2 * 4 = 8 bytes)
-    append_u32(buf, nonce);                          // 204-207
-    append_u32(buf, version);                        // 208-211
-
-    // Miner pubkey (32 bytes)
-    append_bytes(buf, miner_pubkey.data(), 32);      // 212-243
-
-    // Total: 128 + 16 + 8 + 24 + 8 + 16 + 8 + 4 + 32 = 244 bytes
-    // Signature (bytes 244-307) is NOT included -- that's what we sign over.
-
+    // Total: 64 + 16 + 12 = 92 bytes
     return buf;
 }
 
@@ -143,32 +100,19 @@ uint256 CBlockHeader::get_hash() const {
 }
 
 // ---------------------------------------------------------------------------
-// get_training_hash -- keccak256(training_hash || dataset_hash) for PoW
-// ---------------------------------------------------------------------------
-
-uint256 CBlockHeader::get_training_hash() const {
-    // Combine the training proof hash and dataset hash into a single
-    // hash value for target comparison.
-    std::vector<uint8_t> combined;
-    combined.reserve(64);
-    append_bytes(combined, training_hash.data(), 32);
-    append_bytes(combined, dataset_hash.data(), 32);
-    return keccak256(combined.data(), combined.size());
-}
-
-// ---------------------------------------------------------------------------
-// serialize -- full 308-byte header
+// serialize -- full 188-byte header
 // ---------------------------------------------------------------------------
 
 std::vector<uint8_t> CBlockHeader::serialize() const {
     std::vector<uint8_t> buf = get_unsigned_data();
     buf.reserve(BLOCK_HEADER_SIZE);
-    append_bytes(buf, miner_sig.data(), 64);    // 244-307
+    append_bytes(buf, miner_pubkey.data(), 32);  // 92-123
+    append_bytes(buf, miner_sig.data(), 64);     // 124-187
     return buf;
 }
 
 // ---------------------------------------------------------------------------
-// deserialize -- 308-byte header from raw bytes
+// deserialize -- 188-byte header from raw bytes
 // ---------------------------------------------------------------------------
 
 bool CBlockHeader::deserialize(const uint8_t* data, size_t len) {
@@ -177,47 +121,27 @@ bool CBlockHeader::deserialize(const uint8_t* data, size_t len) {
     // Read 32-byte hash fields
     std::memcpy(prev_hash.data(), data + 0, 32);
     std::memcpy(merkle_root.data(), data + 32, 32);
-    std::memcpy(training_hash.data(), data + 64, 32);
-    std::memcpy(dataset_hash.data(), data + 96, 32);
 
     // Read integer fields
-    height           = read_u64_le(data + 128);
-    timestamp        = read_i64_le(data + 136);
-    nbits            = read_u32_le(data + 144);
-    val_loss         = read_float_le(data + 148);
-    prev_val_loss    = read_float_le(data + 152);
-    d_model          = read_u32_le(data + 156);
-    n_layers         = read_u32_le(data + 160);
-    d_ff             = read_u32_le(data + 164);
-    n_heads          = read_u32_le(data + 168);
-    gru_dim          = read_u32_le(data + 172);
-    n_slots          = read_u32_le(data + 176);
-    reserved_field   = read_u32_le(data + 180);
-    stagnation       = read_u32_le(data + 184);
-    delta_offset     = read_u32_le(data + 188);
-    delta_length     = read_u32_le(data + 192);
-    sparse_count     = read_u32_le(data + 196);
-    sparse_threshold = read_float_le(data + 200);
-    nonce            = read_u32_le(data + 204);
-    version          = read_u32_le(data + 208);
+    height           = read_u64_le(data + 64);
+    timestamp        = read_i64_le(data + 72);
+    nbits            = read_u32_le(data + 80);
+    nonce            = read_u32_le(data + 84);
+    version          = read_u32_le(data + 88);
 
     // Read miner identity
-    std::memcpy(miner_pubkey.data(), data + 212, 32);
-    std::memcpy(miner_sig.data(), data + 244, 64);
+    std::memcpy(miner_pubkey.data(), data + 92, 32);
+    std::memcpy(miner_sig.data(), data + 124, 64);
 
     return true;
 }
 
 // ---------------------------------------------------------------------------
-// is_proof_of_training_valid
+// check_pow
 // ---------------------------------------------------------------------------
 
-bool CBlockHeader::is_proof_of_training_valid(const uint256& target) const {
+bool CBlockHeader::check_pow(const uint256& target) const {
     uint256 hash = get_hash();
-    // The hash must be lexicographically less than or equal to the target.
-    // uint256 comparison is byte-by-byte from index 0 (least significant byte
-    // in our LE layout). For PoW comparison, we need to compare as big integers:
-    // hash <= target means the hash (as a 256-bit number) is at most the target.
     return hash <= target;
 }
 
@@ -240,9 +164,9 @@ std::string CBlockHeader::get_hash_hex() const {
 
 std::vector<uint8_t> CBlock::serialize() const {
     std::vector<uint8_t> buf;
-    buf.reserve(BLOCK_HEADER_SIZE + 9 + vtx.size() * 256 + delta_payload.size() + 9);
+    buf.reserve(BLOCK_HEADER_SIZE + 9 + vtx.size() * 256);
 
-    // Header (308 bytes)
+    // Header (188 bytes)
     auto hdr = CBlockHeader::serialize();
     buf.insert(buf.end(), hdr.begin(), hdr.end());
 
@@ -253,12 +177,6 @@ std::vector<uint8_t> CBlock::serialize() const {
     for (const auto& tx : vtx) {
         auto tx_data = tx.serialize();
         buf.insert(buf.end(), tx_data.begin(), tx_data.end());
-    }
-
-    // Delta payload length (CompactSize) + data
-    CompactSize::encode_to(delta_payload.size(), buf);
-    if (!delta_payload.empty()) {
-        buf.insert(buf.end(), delta_payload.begin(), delta_payload.end());
     }
 
     return buf;
@@ -290,26 +208,9 @@ bool CBlock::deserialize(const uint8_t* data, size_t len) {
 
     vtx.resize(static_cast<size_t>(tx_count));
     for (uint64_t i = 0; i < tx_count; ++i) {
-        // Each transaction needs to be deserialized from the byte stream.
-        // We use the CTransaction::deserialize method which returns bytes consumed.
         size_t tx_consumed = 0;
         if (!vtx[i].deserialize(data + pos, len - pos, tx_consumed)) return false;
         pos += tx_consumed;
-    }
-
-    // Delta payload
-    if (pos >= len) return true;  // no delta
-
-    uint64_t delta_len = 0;
-    consumed = CompactSize::decode(data + pos, len - pos, delta_len);
-    if (consumed == 0) return false;
-    pos += consumed;
-
-    if (delta_len > consensus::MAX_DELTA_SIZE) return false;
-    if (delta_len > 0) {
-        if (pos + delta_len > len) return false;
-        delta_payload.assign(data + pos, data + pos + delta_len);
-        pos += static_cast<size_t>(delta_len);
     }
 
     return true;
@@ -330,10 +231,6 @@ size_t CBlock::get_block_size() const {
         size += tx.get_serialize_size();
     }
 
-    // Delta
-    size += CompactSize::encoded_size(delta_payload.size());
-    size += delta_payload.size();
-
     return size;
 }
 
@@ -342,7 +239,7 @@ size_t CBlock::get_block_size() const {
 // ---------------------------------------------------------------------------
 
 size_t CBlock::get_block_weight() const {
-    return compute_block_weight(*this, vtx, delta_payload);
+    return compute_block_weight(*this, vtx);
 }
 
 // ---------------------------------------------------------------------------
@@ -361,7 +258,6 @@ CTransaction CBlock::make_coinbase(uint64_t cb_height, Amount reward,
     cb_in.prevout = COutPoint();  // null = coinbase marker
 
     // Encode height in the coinbase pubkey field (BIP34 style).
-    // First 8 bytes of pubkey = height as LE uint64.
     std::memset(cb_in.pubkey.data(), 0, 32);
     for (int i = 0; i < 8; ++i) {
         cb_in.pubkey[i] = static_cast<uint8_t>(cb_height >> (i * 8));
@@ -434,30 +330,22 @@ Amount CBlock::get_total_output_value() const {
 // ---------------------------------------------------------------------------
 
 bool CBlock::check_block() const {
-    // Must have at least one transaction (the coinbase).
     if (vtx.empty()) return false;
-
-    // First transaction must be coinbase.
     if (!vtx[0].is_coinbase()) return false;
 
-    // No other transaction may be coinbase.
     for (size_t i = 1; i < vtx.size(); ++i) {
         if (vtx[i].is_coinbase()) return false;
     }
 
-    // Check block size limit.
     size_t block_size = get_block_size();
     if (block_size > consensus::MAX_BLOCK_SIZE) return false;
 
-    // Check each transaction for basic validity.
     for (const auto& tx : vtx) {
         if (!tx.check_transaction()) return false;
     }
 
-    // Verify merkle root.
     if (!verify_merkle_root()) return false;
 
-    // Check for duplicate transactions.
     std::vector<uint256> txids;
     txids.reserve(vtx.size());
     for (const auto& tx : vtx) {
@@ -481,8 +369,7 @@ std::string CBlock::to_string() const {
        << " height=" << height
        << " txs=" << vtx.size()
        << " size=" << get_block_size()
-       << " delta=" << delta_payload.size()
-       << " val_loss=" << val_loss
+       << " nonce=" << nonce
        << ")";
     return ss.str();
 }
@@ -495,13 +382,9 @@ std::vector<uint8_t> CBlockLocator::serialize() const {
     std::vector<uint8_t> buf;
     buf.reserve(4 + 9 + hashes.size() * 32);
 
-    // Protocol version (4 bytes LE)
     append_u32(buf, consensus::PROTOCOL_VERSION);
-
-    // Hash count (CompactSize)
     CompactSize::encode_to(hashes.size(), buf);
 
-    // Hashes
     for (const auto& h : hashes) {
         append_bytes(buf, h.data(), 32);
     }
@@ -512,16 +395,14 @@ std::vector<uint8_t> CBlockLocator::serialize() const {
 bool CBlockLocator::deserialize(const uint8_t* data, size_t len) {
     if (len < 4) return false;
 
-    // Skip version
     size_t pos = 4;
 
-    // Hash count
     uint64_t count = 0;
     size_t consumed = CompactSize::decode(data + pos, len - pos, count);
     if (consumed == 0) return false;
     pos += consumed;
 
-    if (count > 100000) return false;  // sanity
+    if (count > 100000) return false;
 
     hashes.resize(static_cast<size_t>(count));
     for (uint64_t i = 0; i < count; ++i) {
@@ -537,19 +418,7 @@ bool CBlockLocator::deserialize(const uint8_t* data, size_t len) {
 // Free functions
 // ===========================================================================
 
-// ---------------------------------------------------------------------------
-// build_locator -- exponential step-back locator
-// ---------------------------------------------------------------------------
-
 CBlockLocator build_locator(const CBlockIndex* tip) {
-    // Forward-declared CBlockIndex -- we only need ->prev and ->hash.
-    // The actual struct is in chain/blockindex.h.
-    //
-    // Build strategy:
-    //   - First 10 hashes: consecutive (every block)
-    //   - After that: exponentially increasing step-back
-    //   - Always end with genesis (height 0)
-
     std::vector<uint256> hashes;
     if (!tip) return CBlockLocator(hashes);
 
@@ -560,13 +429,11 @@ CBlockLocator build_locator(const CBlockIndex* tip) {
     while (pindex) {
         hashes.push_back(pindex->hash);
 
-        // First 10 are consecutive, then exponential step-back
         if (count >= 10) {
             step *= 2;
         }
         ++count;
 
-        // Walk back 'step' blocks
         for (int i = 0; i < step && pindex; ++i) {
             pindex = pindex->prev;
         }
@@ -580,11 +447,10 @@ CBlockLocator build_locator(const CBlockIndex* tip) {
 // ---------------------------------------------------------------------------
 
 size_t compute_block_weight(const CBlockHeader& header,
-                             const std::vector<CTransaction>& vtx,
-                             const std::vector<uint8_t>& delta_payload) {
+                             const std::vector<CTransaction>& vtx) {
     (void)header;
 
-    // Header: full weight (308 * 4 = 1232 weight units)
+    // Header: full weight
     size_t weight = BLOCK_HEADER_SIZE * WITNESS_SCALE_FACTOR;
 
     // Transaction count compact size
@@ -595,34 +461,29 @@ size_t compute_block_weight(const CBlockHeader& header,
         weight += tx.get_serialize_size() * WITNESS_SCALE_FACTOR;
     }
 
-    // Delta payload: discounted (1 weight unit per byte)
-    // The compact size prefix counts at full weight
-    weight += CompactSize::encoded_size(delta_payload.size()) * WITNESS_SCALE_FACTOR;
-    weight += delta_payload.size();  // 1:1 weight (discount)
-
     return weight;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Block analysis
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 CBlock::BlockAnalysis CBlock::analyze() const {
     BlockAnalysis a;
 
-    // Header info
     a.height = height;
     a.hash = get_hash();
     a.prev_hash = prev_hash;
     a.timestamp = timestamp;
+    a.nonce = nonce;
 
     // Difficulty
     {
         arith_uint256 target;
-        arith_uint256 pow_limit;
-        pow_limit.SetCompact(consensus::INITIAL_NBITS);
         if (consensus::derive_target(nbits, target) && !target.IsNull()) {
-            // Approximate difficulty = powLimit / target
+            arith_uint256 pow_limit;
+            pow_limit.SetCompact(consensus::INITIAL_NBITS);
+            // Rough difficulty approximation
             a.difficulty = static_cast<double>(pow_limit.GetCompact() >> 24) /
                           static_cast<double>((nbits >> 24) > 0 ? (nbits >> 24) : 1);
         } else {
@@ -654,26 +515,11 @@ CBlock::BlockAnalysis CBlock::analyze() const {
             a.coinbase_value = out_value;
         }
 
-        // Count inputs for input value estimation
-        // (We don't have UTXO lookups here, so input value is not directly computable)
-
-        // Sigops: each input contributes 1 sigop (Ed25519 signature verification)
         if (!tx.is_coinbase()) {
             a.total_sigops += static_cast<int>(tx.vin.size());
+            a.p2pkh_count++;
         }
 
-        // Transaction type classification
-        // P2PKH: standard single-input, single/multi-output
-        if (!tx.is_coinbase()) {
-            if (tx.vin.size() >= 2) {
-                // Multiple inputs might indicate consolidated inputs
-                a.p2pkh_count++;
-            } else {
-                a.p2pkh_count++;
-            }
-        }
-
-        // Check for OP_RETURN-like outputs (zero-value outputs)
         for (const auto& out : tx.vout) {
             if (out.amount == 0) {
                 a.op_return_count++;
@@ -681,45 +527,20 @@ CBlock::BlockAnalysis CBlock::analyze() const {
         }
     }
 
-    // Training info
-    a.val_loss = val_loss;
-    a.d_model = d_model;
-    a.n_layers = n_layers;
-    a.n_slots = n_slots;
-    a.model_params = consensus::estimate_param_count(d_model, n_layers, d_ff, n_slots);
-    a.delta_size_compressed = delta_payload.size();
-
-    // Estimate uncompressed delta size from sparse_count
-    a.delta_size_uncompressed = static_cast<size_t>(sparse_count) * sizeof(float);
-    if (a.delta_size_uncompressed == 0 && !delta_payload.empty()) {
-        // If sparse_count is zero but we have a payload, approximate
-        a.delta_size_uncompressed = delta_payload.size() * 2;
-    }
-
-    // Delta sparsity: ratio of non-zero elements to total parameters
-    if (a.model_params > 0) {
-        a.delta_sparsity = 1.0f - (static_cast<float>(sparse_count) /
-                                    static_cast<float>(a.model_params));
-    } else {
-        a.delta_sparsity = 1.0f;
-    }
-
-    // Time since previous block (unknown without context, set to 0)
     a.time_since_prev = 0;
 
     return a;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Block comparison (for fork analysis)
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
+// Block comparison
+// ===========================================================================
 
 CBlock::BlockDiff CBlock::compare(const CBlock& a, const CBlock& b) {
     BlockDiff diff;
     diff.same_height = (a.height == b.height);
     diff.same_prev = (a.prev_hash == b.prev_hash);
 
-    // Compare transaction sets
     std::vector<uint256> txids_a;
     txids_a.reserve(a.vtx.size());
     for (const auto& tx : a.vtx) {
@@ -732,11 +553,9 @@ CBlock::BlockDiff CBlock::compare(const CBlock& a, const CBlock& b) {
         txids_b.push_back(tx.get_txid());
     }
 
-    // Sort for set operations
     std::sort(txids_a.begin(), txids_a.end());
     std::sort(txids_b.begin(), txids_b.end());
 
-    // Count shared transactions
     diff.shared_tx_count = 0;
     size_t ia = 0, ib = 0;
     while (ia < txids_a.size() && ib < txids_b.size()) {
@@ -754,19 +573,17 @@ CBlock::BlockDiff CBlock::compare(const CBlock& a, const CBlock& b) {
     diff.unique_a_count = static_cast<int>(txids_a.size()) - diff.shared_tx_count;
     diff.unique_b_count = static_cast<int>(txids_b.size()) - diff.shared_tx_count;
     diff.same_txs = (diff.unique_a_count == 0 && diff.unique_b_count == 0);
-    diff.val_loss_diff = a.val_loss - b.val_loss;
 
     return diff;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Coinbase creation helpers
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 CTransaction CBlock::create_coinbase(uint64_t cb_height, Amount reward,
                                        const std::array<uint8_t, 32>& miner_pubkey,
                                        const std::string& extra_data) {
-    // Delegate to existing make_coinbase
     return CBlock::make_coinbase(cb_height, reward, miner_pubkey, extra_data);
 }
 
@@ -778,11 +595,9 @@ CTransaction CBlock::create_coinbase_multi(
     coinbase.version = 1;
     coinbase.locktime = 0;
 
-    // Coinbase input: null prevout
     CTxIn cb_in;
     cb_in.prevout = COutPoint();
 
-    // Encode height in the coinbase pubkey field (BIP34 style)
     std::memset(cb_in.pubkey.data(), 0, 32);
     for (int i = 0; i < 8; ++i) {
         cb_in.pubkey[i] = static_cast<uint8_t>(cb_height >> (i * 8));
@@ -791,7 +606,6 @@ CTransaction CBlock::create_coinbase_multi(
 
     coinbase.vin.push_back(cb_in);
 
-    // Validate: sum of payee amounts must not exceed reward
     Amount total_allocated = 0;
     for (const auto& payee : payees) {
         if (payee.second <= 0) continue;
@@ -799,7 +613,6 @@ CTransaction CBlock::create_coinbase_multi(
     }
 
     if (total_allocated > reward) {
-        // Scale down proportionally
         for (const auto& payee : payees) {
             if (payee.second <= 0) continue;
 
@@ -808,13 +621,11 @@ CTransaction CBlock::create_coinbase_multi(
                           static_cast<double>(total_allocated);
             out.amount = static_cast<Amount>(static_cast<double>(reward) * ratio);
 
-            // Compute pubkey_hash = keccak256(pubkey)
             uint256 pkh = keccak256(payee.first.data(), 32);
             std::memcpy(out.pubkey_hash.data(), pkh.data(), 32);
             coinbase.vout.push_back(out);
         }
     } else {
-        // Allocate as specified
         Amount remaining = reward;
 
         for (size_t i = 0; i < payees.size(); i++) {
@@ -824,7 +635,6 @@ CTransaction CBlock::create_coinbase_multi(
             CTxOut out;
 
             if (i == payees.size() - 1) {
-                // Last payee gets the remainder (avoids rounding errors)
                 out.amount = remaining;
             } else {
                 out.amount = payee.second;
@@ -840,9 +650,9 @@ CTransaction CBlock::create_coinbase_multi(
     return coinbase;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Merkle proof generation and verification
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 CBlock::MerkleProof CBlock::get_tx_proof(uint32_t tx_index) const {
     MerkleProof proof;
@@ -851,7 +661,6 @@ CBlock::MerkleProof CBlock::get_tx_proof(uint32_t tx_index) const {
         return proof;
     }
 
-    // Compute all transaction hashes
     std::vector<uint256> hashes;
     hashes.reserve(vtx.size());
     for (const auto& tx : vtx) {
@@ -862,20 +671,14 @@ CBlock::MerkleProof CBlock::get_tx_proof(uint32_t tx_index) const {
     proof.root = merkle_root;
     proof.index = tx_index;
 
-    // Build merkle tree and extract proof branch
-    // The merkle tree is built bottom-up by pairwise hashing.
-    // For each level, we record which sibling hash is needed.
-
     std::vector<uint256> level = hashes;
     uint32_t idx = tx_index;
 
     while (level.size() > 1) {
-        // If odd number, duplicate the last element
         if (level.size() % 2 != 0) {
             level.push_back(level.back());
         }
 
-        // Record the sibling of the current index
         uint32_t sibling_idx;
         if (idx % 2 == 0) {
             sibling_idx = idx + 1;
@@ -887,12 +690,10 @@ CBlock::MerkleProof CBlock::get_tx_proof(uint32_t tx_index) const {
             proof.branch.push_back(level[sibling_idx]);
         }
 
-        // Move to the next level
         std::vector<uint256> next_level;
         next_level.reserve(level.size() / 2);
 
         for (size_t i = 0; i < level.size(); i += 2) {
-            // Hash pair: keccak256(left || right)
             std::vector<uint8_t> combined;
             combined.reserve(64);
             combined.insert(combined.end(),
@@ -911,7 +712,7 @@ CBlock::MerkleProof CBlock::get_tx_proof(uint32_t tx_index) const {
 
 bool CBlock::MerkleProof::verify() const {
     if (branch.empty() && root == txid) {
-        return true;  // Single-transaction tree
+        return true;
     }
 
     uint256 current = txid;
@@ -922,11 +723,9 @@ bool CBlock::MerkleProof::verify() const {
         combined.reserve(64);
 
         if (idx % 2 == 0) {
-            // Current is left child
             combined.insert(combined.end(), current.begin(), current.end());
             combined.insert(combined.end(), sibling.begin(), sibling.end());
         } else {
-            // Current is right child
             combined.insert(combined.end(), sibling.begin(), sibling.end());
             combined.insert(combined.end(), current.begin(), current.end());
         }
@@ -941,19 +740,11 @@ bool CBlock::MerkleProof::verify() const {
 std::vector<uint8_t> CBlock::MerkleProof::serialize() const {
     std::vector<uint8_t> out;
 
-    // txid (32 bytes)
     out.insert(out.end(), txid.begin(), txid.end());
-
-    // root (32 bytes)
     out.insert(out.end(), root.begin(), root.end());
-
-    // index (4 bytes LE)
     append_u32(out, index);
-
-    // branch count (4 bytes LE)
     append_u32(out, static_cast<uint32_t>(branch.size()));
 
-    // branch hashes (32 bytes each)
     for (const auto& h : branch) {
         append_bytes(out, h.data(), 32);
     }
@@ -965,7 +756,6 @@ CBlock::MerkleProof CBlock::MerkleProof::deserialize(
         const uint8_t* data, size_t len) {
     MerkleProof proof;
 
-    // Minimum: 32 (txid) + 32 (root) + 4 (index) + 4 (count) = 72
     if (len < 72) return proof;
 
     size_t pos = 0;
@@ -982,7 +772,7 @@ CBlock::MerkleProof CBlock::MerkleProof::deserialize(
     uint32_t count = read_u32_le(data + pos);
     pos += 4;
 
-    if (count > 256) return proof;  // sanity check
+    if (count > 256) return proof;
     if (pos + count * 32 > len) return proof;
 
     proof.branch.resize(count);
@@ -995,7 +785,6 @@ CBlock::MerkleProof CBlock::MerkleProof::deserialize(
 }
 
 bool CBlock::verify_tx_proof(const MerkleProof& proof) const {
-    // Verify the proof resolves to our merkle root
     if (proof.root != merkle_root) return false;
     return proof.verify();
 }

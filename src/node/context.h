@@ -38,7 +38,7 @@ class Mempool;
 class SyncManager;
 
 namespace consensus {
-class EvalEngine;
+
 }
 
 struct BlockAssembler;
@@ -94,7 +94,7 @@ struct NodeContext {
     std::unique_ptr<NetManager>            net;
     std::unique_ptr<RpcServer>             rpc;
     std::unique_ptr<Mempool>               mempool;
-    std::unique_ptr<consensus::EvalEngine> eval_engine;
+
     std::unique_ptr<SyncManager>           sync;
 
     // -- Configuration --------------------------------------------------------
@@ -416,7 +416,7 @@ struct NodeContext {
         bool ibd;
         double sync_progress;
         size_t model_params;
-        float model_loss;
+
         int64_t rss_mb;
         int64_t disk_free_mb;
         std::string datadir;

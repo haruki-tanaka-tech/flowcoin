@@ -33,7 +33,7 @@ struct UTXOEntry;
 }
 
 namespace flow::consensus {
-class EvalEngine;
+
 }
 
 namespace flow::kernel {
@@ -144,10 +144,10 @@ public:
     // ---- Consensus parameter queries ---------------------------------------
 
     /// Get the model dimensions for the current chain height.
-    const consensus::ModelDimensions& get_model_dims() const;
+
 
     /// Get the model dimensions for a specific height.
-    consensus::ModelDimensions get_model_dims_at(uint64_t height) const;
+
 
     /// Get the next required nbits value (difficulty target).
     uint32_t get_next_nbits() const;
@@ -197,10 +197,10 @@ private:
     std::unique_ptr<ChainState> chain_;
 
     // Consensus model evaluation engine
-    std::unique_ptr<consensus::EvalEngine> eval_;
+
 
     // Cached model dimensions for current height
-    consensus::ModelDimensions current_dims_;
+
 
     // Initialize genesis block if this is a fresh chain
     bool init_genesis();

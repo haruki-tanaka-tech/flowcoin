@@ -45,7 +45,7 @@ struct BlockTemplate {
 
     uint256 target;                    //!< 256-bit target (decoded from nbits)
     std::string target_hex;            //!< Target as hex string for RPC
-    consensus::ModelDimensions dims;   //!< Model architecture for the miner
+    int dims;   //!< Model architecture for the miner
 
     uint64_t template_id;             //!< Unique template identifier
     int64_t creation_time;             //!< When this template was created

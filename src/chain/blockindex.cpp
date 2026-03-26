@@ -4,7 +4,6 @@
 #include "chain/blockindex.h"
 #include "primitives/block.h"
 #include "consensus/validation.h"
-#include "consensus/growth.h"
 #include <algorithm>
 
 namespace flow {
@@ -18,16 +17,8 @@ void CBlockIndex::set_from_header(const CBlockHeader& hdr) {
     prev_hash       = hdr.prev_hash;
     height          = hdr.height;
     timestamp       = hdr.timestamp;
-    val_loss        = hdr.val_loss;
-    prev_val_loss   = hdr.prev_val_loss;
     nbits           = hdr.nbits;
-    d_model         = hdr.d_model;
-    n_layers        = hdr.n_layers;
-    d_ff            = hdr.d_ff;
-    n_slots         = hdr.n_slots;
-    n_heads         = hdr.n_heads;
-    gru_dim         = hdr.gru_dim;
-    stagnation_count = hdr.stagnation;
+    nonce           = hdr.nonce;
     merkle_root     = hdr.merkle_root;
     miner_pubkey    = PubKey(hdr.miner_pubkey.data());
 }
@@ -42,22 +33,11 @@ consensus::BlockContext CBlockIndex::make_child_context(int64_t adjusted_time) c
     ctx.prev_hash        = hash;
     ctx.prev_height      = height;
     ctx.prev_timestamp   = timestamp;
-    ctx.prev_val_loss    = val_loss;
     ctx.prev_nbits       = nbits;
-    ctx.improving_blocks = improving_blocks;
     ctx.adjusted_time    = adjusted_time;
-
-    // Child block height
-    uint64_t child_height = height + 1;
-
-    // Compute expected model dimensions for the child block
-    ctx.expected_dims = consensus::compute_growth(child_height);
-
-
 
     // For difficulty: at retarget boundaries the caller needs to compute
     // the new target. For now, carry forward the parent's nbits.
-    // The full difficulty retarget logic lives in consensus/difficulty.
     ctx.expected_nbits = nbits;
 
     return ctx;
@@ -85,11 +65,7 @@ CBlockIndex* BlockTree::insert(const CBlockHeader& header) {
     if (parent_it != index_.end()) {
         idx->prev = parent_it->second;
 
-        // Compute cumulative improving blocks
-        idx->improving_blocks = parent_it->second->improving_blocks;
-        if (idx->val_loss < idx->prev_val_loss) {
-            idx->improving_blocks++;
-        }
+        // Parent linkage established
     }
 
     // Track genesis

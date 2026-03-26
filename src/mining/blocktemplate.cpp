@@ -9,7 +9,6 @@
 #include "crypto/sign.h"
 #include "consensus/difficulty.h"
 #include "util/arith_uint256.h"
-#include "consensus/growth.h"
 #include "consensus/params.h"
 #include "consensus/reward.h"
 #include "crypto/bech32.h"
@@ -120,33 +119,12 @@ void BlockAssembler::fill_header(CBlockHeader& hdr, uint64_t next_height) {
         hdr.nbits = consensus::INITIAL_NBITS;
     }
 
-    // Model dimensions at next height
-    consensus::ModelDimensions dims = consensus::compute_growth(next_height);
+    // PoW: no model dimensions
 
-    hdr.d_model  = dims.d_model;
-    hdr.n_layers = dims.n_layers;
-    hdr.d_ff     = dims.d_ff;
-    hdr.n_heads  = dims.n_heads;
-    hdr.gru_dim  = dims.gru_dim;
-    hdr.n_slots  = dims.n_slots;
 
-    // Previous val_loss
-    if (tip) {
-        hdr.prev_val_loss = tip->val_loss;
-    } else {
-        hdr.prev_val_loss = consensus::MAX_VAL_LOSS;
-    }
 
-    // Stagnation counter
-    if (tip && tip->prev) {
-        if (tip->val_loss >= tip->prev_val_loss) {
-            hdr.stagnation = tip->stagnation_count + 1;
-        } else {
-            hdr.stagnation = 0;
-        }
-    } else {
-        hdr.stagnation = 0;
-    }
+
+    // PoW: no val_loss or stagnation fields
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +429,7 @@ BlockTemplate BlockAssembler::create_template(const std::string& coinbase_addres
     fill_header(tmpl.header, next_height);
 
     // Model dimensions
-    tmpl.dims = consensus::compute_growth(next_height);
+    tmpl.dims = 0;
 
     // Decode target
     arith_uint256 target_arith;
@@ -487,7 +465,7 @@ BlockTemplate BlockAssembler::create_template(const std::array<uint8_t, 32>& coi
 
     fill_header(tmpl.header, next_height);
 
-    tmpl.dims = consensus::compute_growth(next_height);
+    tmpl.dims = 0;
 
     arith_uint256 target_arith;
     consensus::derive_target(tmpl.header.nbits, target_arith);
@@ -538,30 +516,30 @@ CBlock BlockAssembler::assemble_full_block(
     std::memcpy(block.miner_pubkey.data(), miner_pubkey.data(), 32);
 
     // Step 3: Set training proof fields
-    block.val_loss = val_loss;
+
 
     // Step 4: Set delta from compressed delta
     uint256 delta_hash = keccak256(compressed_delta.data(), compressed_delta.size());
-    block.delta_length = static_cast<uint32_t>(compressed_delta.size());
-    block.delta_payload = compressed_delta;
-    block.delta_offset = 0;
+
+    std::vector<uint8_t>{} = compressed_delta;
+
 
     // Step 5: Set dataset hash
     // The dataset hash must match the deterministic evaluation data
     // generated from the block height using Keccak-256 counter mode.
     uint64_t height = block.height;
-    size_t eval_size = static_cast<size_t>(consensus::EVAL_TOKENS) * 4;
+    size_t eval_size = static_cast<size_t>(4096) * 4;
     std::vector<uint8_t> eval_data(eval_size);
     DeterministicRNG eval_rng(height * 1000 + 2);
     eval_rng.fill_bytes(eval_data.data(), eval_data.size());
-    block.dataset_hash = keccak256(eval_data.data(), eval_data.size());
+    uint256{} = keccak256(eval_data.data(), eval_data.size());
 
     // Step 6: Compute training hash
     // training_hash = Keccak256(delta_hash || dataset_hash)
     std::vector<uint8_t> combined(64);
     std::memcpy(combined.data(), delta_hash.data(), 32);
-    std::memcpy(combined.data() + 32, block.dataset_hash.data(), 32);
-    block.training_hash = keccak256(combined.data(), combined.size());
+    std::memcpy(combined.data() + 32, uint256{}.data(), 32);
+    uint256{} = keccak256(combined.data(), combined.size());
 
     // Step 7: Build coinbase transaction
     // The coinbase sends the block reward + fees to a fresh address
@@ -874,7 +852,7 @@ bool BlockAssembler::validate_template(const BlockTemplate& tmpl) const {
     if (tmpl.target.is_null()) return false;
 
     // 8. Check model dimensions are valid
-    if (tmpl.dims.d_model == 0 || tmpl.dims.n_layers == 0) return false;
+
 
     return true;
 }
@@ -899,12 +877,12 @@ std::vector<uint8_t> BlockAssembler::serialize_template_for_stratum(
     w.write_bytes(tmpl.target.data(), 32);
 
     // Model dimensions
-    w.write_u32_le(tmpl.dims.d_model);
-    w.write_u32_le(tmpl.dims.n_layers);
-    w.write_u32_le(tmpl.dims.d_ff);
-    w.write_u32_le(tmpl.dims.n_heads);
-    w.write_u32_le(tmpl.dims.gru_dim);
-    w.write_u32_le(tmpl.dims.n_slots);
+
+
+
+
+
+
 
     // Coinbase value
     w.write_i64_le(tmpl.coinbase_value);
@@ -1001,12 +979,12 @@ bool BlockAssembler::templates_compatible(const BlockTemplate& a,
     if (a.header.nbits != b.header.nbits) return false;
 
     // Model dimensions must also match
-    if (a.dims.d_model != b.dims.d_model) return false;
-    if (a.dims.n_layers != b.dims.n_layers) return false;
-    if (a.dims.d_ff != b.dims.d_ff) return false;
-    if (a.dims.n_heads != b.dims.n_heads) return false;
-    if (a.dims.gru_dim != b.dims.gru_dim) return false;
-    if (a.dims.n_slots != b.dims.n_slots) return false;
+
+
+
+
+
+
 
     return true;
 }
@@ -1417,12 +1395,12 @@ nlohmann::json BlockAssembler::template_to_json(const BlockTemplate& tmpl) const
 
     // Model dimensions
     j["model"] = {
-        {"d_model", tmpl.dims.d_model},
-        {"n_layers", tmpl.dims.n_layers},
-        {"d_ff", tmpl.dims.d_ff},
-        {"n_heads", tmpl.dims.n_heads},
-        {"gru_dim", tmpl.dims.gru_dim},
-        {"n_slots", tmpl.dims.n_slots}
+
+
+
+
+
+
     };
 
     // Coinbase info
@@ -1430,8 +1408,8 @@ nlohmann::json BlockAssembler::template_to_json(const BlockTemplate& tmpl) const
     j["totalfees"] = tmpl.total_fees;
 
     // Previous val_loss
-    j["prev_val_loss"] = tmpl.header.prev_val_loss;
-    j["stagnation"] = tmpl.header.stagnation;
+
+
 
     // Transaction list
     nlohmann::json txs_json = nlohmann::json::array();

@@ -10,9 +10,7 @@
 #include "chain/chainstate.h"
 #include "chain/chaindb.h"
 #include "consensus/difficulty.h"
-#include "consensus/eval.h"
 #include "consensus/genesis.h"
-#include "consensus/growth.h"
 #include "consensus/params.h"
 #include "consensus/reward.h"
 #include "hash/keccak.h"
@@ -38,7 +36,7 @@ ChainState::ChainState(const std::string& datadir)
     : datadir_(datadir)
     , utxo_(datadir + "/utxo.db")
     , store_(datadir)
-    , model_state_(datadir)
+    
 {
     assume_valid_hash_.set_null();
 }
@@ -49,11 +47,6 @@ ChainState::ChainState(const std::string& datadir)
 
 bool ChainState::init() {
     // Initialize model state (loads from checkpoint or creates from genesis)
-    if (!model_state_.init()) {
-        LogError("chain", "model state initialization failed");
-        return false;
-    }
-
     // Initialize optional transaction index
     if (txindex_enabled_) {
         txindex_ = std::make_unique<TxIndex>(datadir_ + "/txindex.db");
@@ -75,7 +68,6 @@ bool ChainState::init() {
         idx->hash = genesis_hash;
         idx->height = 0;
         idx->prev = nullptr;
-        idx->improving_blocks = 0;
         idx->n_tx = static_cast<int>(genesis.vtx.size());
         idx->status = BLOCK_HEADER_VALID | BLOCK_FULLY_VALIDATED;
 
@@ -110,8 +102,6 @@ bool ChainState::init() {
         utxo_.commit_transaction();
 
         // Process genesis block through model state (no delta, but registers height 0)
-        model_state_.process_block(genesis, 0);
-
         // Index genesis transactions
         if (txindex_) {
             txindex_->index_block(genesis, 0, genesis_hash);
@@ -143,24 +133,10 @@ CBlock ChainState::create_genesis_block() const {
     genesis.version     = 1;
 
     // PoUT fields: genesis has max loss (untrained model)
-    genesis.val_loss        = MAX_VAL_LOSS;
-    genesis.prev_val_loss   = MAX_VAL_LOSS;
-    genesis.reserved_field  = 0;
-    genesis.stagnation      = 0;
 
     // Model architecture: genesis dimensions
-    genesis.d_model  = GENESIS_D_MODEL;
-    genesis.n_layers = GENESIS_N_LAYERS;
-    genesis.d_ff     = GENESIS_D_FF;
-    genesis.n_heads  = GENESIS_N_HEADS;
-    genesis.gru_dim  = GENESIS_GRU_DIM;
-    genesis.n_slots  = GENESIS_N_SLOTS;
 
     // No delta payload in genesis
-    genesis.delta_offset    = 0;
-    genesis.delta_length    = 0;
-    genesis.sparse_count    = 0;
-    genesis.sparse_threshold = 0.0f;
     genesis.nonce           = 0;
 
     // No real miner for genesis
@@ -168,9 +144,6 @@ CBlock ChainState::create_genesis_block() const {
     genesis.miner_sig.fill(0);
 
     // Training/dataset hashes are null for genesis
-    genesis.training_hash.set_null();
-    genesis.dataset_hash.set_null();
-
     // -- Coinbase transaction --
     CTransaction coinbase;
     coinbase.version = 1;
@@ -183,7 +156,7 @@ CBlock ChainState::create_genesis_block() const {
     cb_in.signature.fill(0);
 
     // Embed the genesis message as the pubkey field (repurposed for coinbase)
-    const char* msg = GENESIS_COINBASE_MSG;
+    const char* msg = consensus::GENESIS_COINBASE_MSG;
     size_t msg_len = std::strlen(msg);
     uint256 msg_hash = keccak256(reinterpret_cast<const uint8_t*>(msg), msg_len);
     std::memcpy(cb_in.pubkey.data(), msg_hash.data(), 32);
@@ -199,8 +172,6 @@ CBlock ChainState::create_genesis_block() const {
     genesis.vtx.push_back(coinbase);
 
     // No delta payload
-    genesis.delta_payload.clear();
-
     // Compute merkle root from the single coinbase transaction
     std::vector<uint256> txids;
     txids.push_back(coinbase.get_txid());
@@ -261,27 +232,6 @@ bool ChainState::is_assumed_valid(const CBlockIndex* idx) const {
 // get_eval_function — determine whether to run Check 15
 // ---------------------------------------------------------------------------
 
-consensus::EvalFunction ChainState::get_eval_function(
-        const CBlockIndex* parent) const {
-    // If we're doing IBD (far from tip), skip Check 15 for performance
-    // unless assume-valid is specifically configured.
-    // The assume-valid optimization: skip Check 15 for blocks at or below
-    // the assume-valid hash.
-
-    if (parent && is_assumed_valid(parent)) {
-        // Parent is at or below assume-valid — skip forward evaluation
-        return nullptr;
-    }
-
-    // Use the global eval engine if available
-    consensus::EvalEngine* engine = consensus::EvalEngine::instance();
-    if (engine) {
-        return &consensus::EvalEngine::eval_function_adapter;
-    }
-
-    // No eval engine available (shouldn't happen after init)
-    return nullptr;
-}
 
 // ---------------------------------------------------------------------------
 // accept_header
@@ -378,10 +328,9 @@ bool ChainState::accept_block(const CBlock& block,
     consensus::BlockContext ctx = parent->make_child_context(adjusted_time);
 
     // Determine the eval function based on assume-valid status
-    consensus::EvalFunction eval_fn = get_eval_function(parent);
-
+    
     // Run full block validation with the appropriate eval function
-    if (!consensus::check_block(block, ctx, state, eval_fn)) {
+    if (!consensus::check_block(block, ctx, state)) {
         CBlockIndex* idx = tree_.find(block_hash);
         if (idx) {
             idx->status |= BLOCK_FAILED;
@@ -621,14 +570,6 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
     }
 
     // === Model state: apply training delta ===
-    if (!model_state_.process_block(block, index->height)) {
-        LogError("chain", "connect_block: model state update failed at height %lu",
-                static_cast<unsigned long>(index->height));
-        // Model state failure is non-fatal for UTXO consistency,
-        // but we log it prominently. The model may need to be
-        // rebuilt from a checkpoint.
-    }
-
     // === Transaction index ===
     if (txindex_) {
         uint256 block_hash = block.get_hash();
@@ -750,13 +691,6 @@ bool ChainState::disconnect_tip() {
     utxo_.commit_transaction();
 
     // === Model state: undo last delta ===
-    if (!model_state_.undo_block()) {
-        LogError("chain", "disconnect_tip: model state undo failed at height %lu",
-                static_cast<unsigned long>(tip_idx->height));
-        // Non-fatal for UTXO consistency, but the model state is now
-        // inconsistent. A checkpoint reload may be required.
-    }
-
     // === Transaction index: remove entries for this block ===
     if (txindex_) {
         if (!txindex_->deindex_block(tip_idx->height)) {
@@ -920,16 +854,6 @@ bool ChainState::rebuild_tree_from_db() {
         hdr.height          = loaded_idx.height;
         hdr.timestamp       = loaded_idx.timestamp;
         hdr.nbits           = loaded_idx.nbits;
-        hdr.val_loss        = loaded_idx.val_loss;
-        hdr.prev_val_loss   = loaded_idx.prev_val_loss;
-        hdr.reserved_field  = 0;
-        hdr.d_model         = loaded_idx.d_model;
-        hdr.n_layers        = loaded_idx.n_layers;
-        hdr.d_ff            = loaded_idx.d_ff;
-        hdr.n_heads         = loaded_idx.n_heads;
-        hdr.gru_dim         = loaded_idx.gru_dim;
-        hdr.n_slots         = loaded_idx.n_slots;
-        hdr.stagnation      = loaded_idx.stagnation_count;
         hdr.merkle_root     = loaded_idx.merkle_root;
         std::memcpy(hdr.miner_pubkey.data(), loaded_idx.miner_pubkey.data(), 32);
 
@@ -949,7 +873,7 @@ bool ChainState::rebuild_tree_from_db() {
             idx->status = loaded_idx.status;
             idx->pos = loaded_idx.pos;
             idx->n_tx = loaded_idx.n_tx;
-            idx->improving_blocks = loaded_idx.improving_blocks;
+            // improving_blocks removed in PoW transition
         }
     }
 
@@ -1314,11 +1238,6 @@ bool ChainState::disconnect_block(const CBlock& block, const BlockUndo& undo) {
     utxo_.commit_transaction();
 
     // Model state: undo last delta
-    if (!model_state_.undo_block()) {
-        LogError("chain", "disconnect_block: model state undo failed at height %lu",
-                static_cast<unsigned long>(tip_idx->height));
-    }
-
     // Transaction index: remove entries
     if (txindex_) {
         txindex_->deindex_block(tip_idx->height);
@@ -2210,11 +2129,8 @@ ChainState::ChainStats ChainState::get_chain_stats() const {
     // Transaction count from tip
     stats.total_transactions = 0;
 
-    // Model info from tip
-    stats.current_val_loss = t->val_loss;
-    stats.model_params = consensus::estimate_param_count(
-        t->d_model, t->n_layers, t->d_ff, t->n_slots);
-    stats.model_hash = model_state_.engine().model().get_weights_hash();
+    // PoW - no model info
+
 
     // Median time past: median of last 11 block timestamps
     {
@@ -2418,22 +2334,7 @@ ChainState::VerifyResult ChainState::verify_block_detailed(
               "invalid difficulty target encoding");
     }
 
-    // Check 12: val_loss bounds
-    check(block.val_loss >= 0.0f && block.val_loss <= consensus::MAX_VAL_LOSS,
-          "check-val-loss", "val_loss out of bounds");
-
-    // Check 13: Delta payload size
-    if (!block.delta_payload.empty()) {
-        check(block.delta_payload.size() <= consensus::MAX_DELTA_SIZE,
-              "check-delta-size",
-              "delta payload exceeds maximum size");
-    }
-
-    // Check 14: Architecture dimensions validity
-    check(consensus::is_valid_d_model(block.d_model), "check-d-model",
-          "d_model out of valid range");
-    check(consensus::is_valid_n_layers(block.n_layers), "check-n-layers",
-          "n_layers out of valid range");
+    // PoW: no val_loss, delta, or architecture checks
 
     // Check 15: Coinbase reward
     if (!block.vtx.empty() && block.vtx[0].is_coinbase()) {
@@ -2447,8 +2348,7 @@ ChainState::VerifyResult ChainState::verify_block_detailed(
 
     // Warnings for suboptimal blocks
     warn(block.vtx.size() > 1, "block contains only the coinbase transaction");
-    warn(block.delta_payload.size() >= consensus::MIN_DELTA_SIZE,
-         "empty or minimal delta payload");
+    // PoW: no delta payload warnings
 
     auto t1 = std::chrono::steady_clock::now();
     result.verify_time_ms = std::chrono::duration_cast<

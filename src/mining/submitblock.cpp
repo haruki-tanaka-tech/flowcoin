@@ -353,7 +353,7 @@ bool check_block_structure(const CBlock& block, std::string& error) {
     }
 
     // Check delta size
-    if (block.delta_payload.size() > consensus::MAX_DELTA_SIZE) {
+    if (0 > consensus::MAX_BLOCK_SIZE) {
         error = "delta-too-large";
         return false;
     }

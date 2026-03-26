@@ -3,39 +3,23 @@
 //
 // Block header and block primitives for FlowCoin.
 //
-// The block header contains standard blockchain fields plus Proof-of-Training
-// fields: val_loss, prev_val_loss, training_hash, dataset_hash, model
-// architecture dimensions, delta metadata, and the miner's Ed25519 identity.
+// The block header contains standard blockchain fields for Keccak-256d
+// Proof-of-Work, plus the miner's Ed25519 identity for signature verification.
 //
-// Header layout (fixed 308 bytes):
+// Header layout (fixed 188 bytes):
 //   Bytes   0- 31: prev_hash        (32 bytes)
 //   Bytes  32- 63: merkle_root      (32 bytes)
-//   Bytes  64- 95: training_hash    (32 bytes)
-//   Bytes  96-127: dataset_hash     (32 bytes)
-//   Bytes 128-135: height           (8 bytes, LE)
-//   Bytes 136-143: timestamp        (8 bytes, LE)
-//   Bytes 144-147: nbits            (4 bytes, LE)
-//   Bytes 148-151: val_loss         (4 bytes, IEEE 754 float)
-//   Bytes 152-155: prev_val_loss    (4 bytes, IEEE 754 float)
-//   Bytes 156-159: d_model          (4 bytes, LE)
-//   Bytes 160-163: n_layers         (4 bytes, LE)
-//   Bytes 164-167: d_ff             (4 bytes, LE)
-//   Bytes 168-171: n_heads          (4 bytes, LE)
-//   Bytes 172-175: gru_dim          (4 bytes, LE)
-//   Bytes 176-179: n_slots          (4 bytes, LE)
-//   Bytes 180-183: reserved         (4 bytes, zero)
-//   Bytes 184-187: stagnation       (4 bytes, LE)
-//   Bytes 188-191: delta_offset     (4 bytes, LE)
-//   Bytes 192-195: delta_length     (4 bytes, LE)
-//   Bytes 196-199: sparse_count     (4 bytes, LE)
-//   Bytes 200-203: sparse_threshold (4 bytes, IEEE 754 float)
-//   Bytes 204-207: nonce            (4 bytes, LE)
-//   Bytes 208-211: version          (4 bytes, LE)
-//   Bytes 212-243: miner_pubkey     (32 bytes)
-//   Bytes 244-307: miner_sig        (64 bytes)
+//   Bytes  64- 71: height           (8 bytes, LE)
+//   Bytes  72- 79: timestamp        (8 bytes, LE)
+//   Bytes  80- 83: nbits            (4 bytes, LE)
+//   Bytes  84- 87: nonce            (4 bytes, LE)
+//   Bytes  88- 91: version          (4 bytes, LE)
+//   Bytes  92-123: miner_pubkey     (32 bytes)
+//   Bytes 124-187: miner_sig        (64 bytes)
 //
-// The unsigned portion (for signing) is bytes 0-243 (244 bytes).
-// The block hash is keccak256d(bytes 0-243).
+// The unsigned portion (for signing and hashing) is bytes 0-91 (92 bytes).
+// The block hash is keccak256d(bytes 0-91).
+// Miner signs bytes 0-91 with Ed25519.
 
 #ifndef FLOWCOIN_PRIMITIVES_BLOCK_H
 #define FLOWCOIN_PRIMITIVES_BLOCK_H
@@ -56,92 +40,57 @@ namespace flow {
 // ---------------------------------------------------------------------------
 
 /// Fixed serialized size of a block header (bytes).
-static constexpr size_t BLOCK_HEADER_SIZE = 308;
+static constexpr size_t BLOCK_HEADER_SIZE = 188;
 
-/// Size of the unsigned portion of the header (bytes 0-243).
-static constexpr size_t BLOCK_HEADER_UNSIGNED_SIZE = 244;
+/// Size of the unsigned portion of the header (bytes 0-91).
+static constexpr size_t BLOCK_HEADER_UNSIGNED_SIZE = 92;
 
 /// Maximum block weight (for future weight-based accounting).
 static constexpr size_t MAX_BLOCK_WEIGHT = 4'000'000;
 
-/// Weight units per byte of non-delta data.
+/// Weight units per byte.
 static constexpr int WITNESS_SCALE_FACTOR = 4;
 
 // ---------------------------------------------------------------------------
-// Block header (308 bytes fixed)
+// Block header (188 bytes fixed)
 // ---------------------------------------------------------------------------
 
 struct CBlockHeader {
     // --- Chain linkage ---
     uint256  prev_hash;          //!< Hash of the previous block header
     uint256  merkle_root;        //!< Merkle root of transaction IDs
-    uint256  training_hash;      //!< Hash binding the training proof (model state)
-    uint256  dataset_hash;       //!< Hash of the evaluation dataset used
 
     // --- Metadata ---
-    uint64_t height;             //!< Block height (0 = genesis)
-    int64_t  timestamp;          //!< Block creation time (Unix seconds)
-    uint32_t nbits;              //!< Difficulty target in compact form
-    float    val_loss;           //!< Validation loss achieved by miner
-    float    prev_val_loss;      //!< Parent's validation loss (for continuity)
-
-    // --- Architecture dimensions (must match compute_growth) ---
-    uint32_t d_model;
-    uint32_t n_layers;
-    uint32_t d_ff;
-    uint32_t n_heads;
-    uint32_t gru_dim;
-    uint32_t n_slots;
-
-    // --- Training metadata ---
-    uint32_t reserved_field;     //!< Reserved (must be zero, preserves 308-byte layout)
-    uint32_t stagnation;         //!< Consecutive blocks without val_loss improvement
-
-    // --- Delta reference ---
-    uint32_t delta_offset;       //!< Byte offset of delta payload in block body
-    uint32_t delta_length;       //!< Length of compressed delta payload
-    uint32_t sparse_count;       //!< Number of non-zero elements in sparse delta
-    float    sparse_threshold;   //!< Threshold used for sparsification
+    uint64_t height = 0;         //!< Block height (0 = genesis)
+    int64_t  timestamp = 0;      //!< Block creation time (Unix seconds)
+    uint32_t nbits = 0;          //!< Difficulty target in compact form
+    uint32_t nonce = 0;          //!< PoW nonce -- iterated by miner
+    uint32_t version = 1;        //!< Block version
 
     // --- Mining identity ---
-    uint32_t nonce;              //!< Mining nonce
-    uint32_t version;            //!< Block version
+    std::array<uint8_t, 32> miner_pubkey{};  //!< Miner's Ed25519 public key
+    std::array<uint8_t, 64> miner_sig{};     //!< Ed25519 signature over unsigned header
 
-    std::array<uint8_t, 32> miner_pubkey;  //!< Miner's Ed25519 public key
-    std::array<uint8_t, 64> miner_sig;     //!< Ed25519 signature over unsigned header
+    CBlockHeader() = default;
 
-    CBlockHeader() :
-        height(0), timestamp(0), nbits(0),
-        val_loss(0.0f), prev_val_loss(0.0f),
-        d_model(0), n_layers(0), d_ff(0), n_heads(0), gru_dim(0), n_slots(0),
-        reserved_field(0), stagnation(0),
-        delta_offset(0), delta_length(0), sparse_count(0), sparse_threshold(0.0f),
-        nonce(0), version(1),
-        miner_pubkey{}, miner_sig{} {}
-
-    /** Serialize the unsigned portion of the header (bytes 0-243, 244 bytes).
+    /** Serialize the unsigned portion of the header (bytes 0-91, 92 bytes).
      *  This is the data that gets signed and hashed. */
     std::vector<uint8_t> get_unsigned_data() const;
 
     /** Compute the block hash: keccak256d of the unsigned header data. */
     uint256 get_hash() const;
 
-    /** Compute the training hash used for PoW comparison.
-     *  keccak256(training_hash || dataset_hash) — binds both training proof
-     *  fields into a single hash for target comparison. */
-    uint256 get_training_hash() const;
-
-    /** Serialize the full 308-byte header (unsigned portion + signature). */
+    /** Serialize the full 188-byte header (unsigned portion + pubkey + signature). */
     std::vector<uint8_t> serialize() const;
 
-    /** Deserialize a 308-byte header from raw bytes.
+    /** Deserialize a 188-byte header from raw bytes.
      *  @return true on success. */
     bool deserialize(const uint8_t* data, size_t len);
 
-    /** Check if the training hash meets the difficulty target.
-     *  @param target  256-bit target value (block hash must be less than this).
-     *  @return true if the block hash is below the target. */
-    bool is_proof_of_training_valid(const uint256& target) const;
+    /** Check if the PoW hash meets the difficulty target.
+     *  @param target  256-bit target value (block hash must be <= this).
+     *  @return true if the block hash is at or below the target. */
+    bool check_pow(const uint256& target) const;
 
     /** Check if this is a null/empty header (all zeros). */
     bool is_null() const { return prev_hash.is_null() && height == 0 && version == 0; }
@@ -160,19 +109,18 @@ struct CBlockHeader {
 };
 
 // ---------------------------------------------------------------------------
-// Full block = header + transactions + delta payload
+// Full block = header + transactions
 // ---------------------------------------------------------------------------
 
 struct CBlock : public CBlockHeader {
     std::vector<CTransaction>  vtx;             //!< Transactions (vtx[0] = coinbase)
-    std::vector<uint8_t>       delta_payload;   //!< Compressed sparse delta
 
     CBlock() = default;
 
     /** Construct a block from a header (no body). */
     explicit CBlock(const CBlockHeader& header) : CBlockHeader(header) {}
 
-    /** Serialize the full block (header + CompactSize(n_tx) + txs + delta). */
+    /** Serialize the full block (header + CompactSize(n_tx) + txs). */
     std::vector<uint8_t> serialize() const;
 
     /** Deserialize a full block from raw bytes.
@@ -185,10 +133,7 @@ struct CBlock : public CBlockHeader {
     /** Get total serialized block size in bytes. */
     size_t get_block_size() const;
 
-    /** Compute block weight for weight-based accounting.
-     *  weight = header_weight + transaction_weight + delta_weight
-     *  Delta payload counts as 1 weight unit per byte (discounted).
-     *  All other data counts as WITNESS_SCALE_FACTOR weight units per byte. */
+    /** Compute block weight for weight-based accounting. */
     size_t get_block_weight() const;
 
     /** Construct a coinbase transaction.
@@ -230,7 +175,7 @@ struct CBlock : public CBlockHeader {
         return cb ? cb->get_value_out() : 0;
     }
 
-    /** Extract the block header (strips transactions and delta). */
+    /** Extract the block header (strips transactions). */
     CBlockHeader get_header() const {
         return static_cast<const CBlockHeader&>(*this);
     }
@@ -243,7 +188,7 @@ struct CBlock : public CBlockHeader {
     /** Get a string representation for logging. */
     std::string to_string() const;
 
-    // ═══ Block analysis ═══
+    // --- Block analysis ---
 
     struct BlockAnalysis {
         uint64_t height;
@@ -258,14 +203,7 @@ struct CBlock : public CBlockHeader {
         Amount total_input_value;
         Amount total_fees;
         Amount coinbase_value;
-        float val_loss;
-        uint32_t d_model;
-        uint32_t n_layers;
-        uint32_t n_slots;
-        size_t model_params;
-        size_t delta_size_compressed;
-        size_t delta_size_uncompressed;
-        float delta_sparsity;
+        uint32_t nonce;
         int total_sigops;
         int p2pkh_count;
         int multisig_count;
@@ -274,7 +212,7 @@ struct CBlock : public CBlockHeader {
     };
     BlockAnalysis analyze() const;
 
-    // ═══ Block comparison ═══
+    // --- Block comparison ---
 
     struct BlockDiff {
         bool same_height;
@@ -283,11 +221,10 @@ struct CBlock : public CBlockHeader {
         int shared_tx_count;
         int unique_a_count;
         int unique_b_count;
-        float val_loss_diff;
     };
     static BlockDiff compare(const CBlock& a, const CBlock& b);
 
-    // ═══ Coinbase creation helpers ═══
+    // --- Coinbase creation helpers ---
 
     static CTransaction create_coinbase(uint64_t height, Amount reward,
                                           const std::array<uint8_t, 32>& miner_pubkey,
@@ -297,7 +234,7 @@ struct CBlock : public CBlockHeader {
         uint64_t height, Amount reward,
         const std::vector<std::pair<std::array<uint8_t, 32>, Amount>>& payees);
 
-    // ═══ Merkle proof generation ═══
+    // --- Merkle proof generation ---
 
     struct MerkleProof {
         uint256 txid;
@@ -316,11 +253,6 @@ struct CBlock : public CBlockHeader {
 // ---------------------------------------------------------------------------
 // CBlockLocator: sparse list of block hashes for getheaders
 // ---------------------------------------------------------------------------
-// Used during Initial Block Download to efficiently communicate chain position.
-// Contains an exponentially-spaced list of block hashes:
-//   - Hashes 0-9: every block (last 10 blocks)
-//   - Hashes 10+: exponentially increasing step-back
-//   - Final hash: genesis block
 
 struct CBlockLocator {
     std::vector<uint256> hashes;  //!< Ordered list of block hashes (tip first)
@@ -348,14 +280,11 @@ struct CBlockLocator {
 struct CBlockIndex;
 
 /// Build a block locator from a chain tip.
-/// Uses exponential step-back: first 10 hashes are consecutive,
-/// then each subsequent hash is 2x farther back, ending at genesis.
 CBlockLocator build_locator(const CBlockIndex* tip);
 
-/// Compute the block weight for a list of transactions + delta.
+/// Compute the block weight for a list of transactions.
 size_t compute_block_weight(const CBlockHeader& header,
-                             const std::vector<CTransaction>& vtx,
-                             const std::vector<uint8_t>& delta_payload);
+                             const std::vector<CTransaction>& vtx);
 
 } // namespace flow
 
