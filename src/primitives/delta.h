@@ -2,7 +2,7 @@
 // Distributed under the MIT software license.
 //
 // Delta payload compression, decompression, and manipulation for model
-// weight updates in FlowCoin's Proof-of-Useful-Training consensus.
+// weight updates in FlowCoin's Keccak-256d Proof-of-Work consensus.
 //
 // Each block contains a "delta" -- the difference between the model weights
 // before and after training. These deltas are typically sparse (most weights

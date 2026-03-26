@@ -261,7 +261,7 @@ public:
         return 0;
     }
 
-    // ---- Model (Proof-of-Training) -----------------------------------------
+    // ---- Model (Keccak-256d Proof-of-Work) -----------------------------------------
 
     size_t get_model_param_count() override {
         if (ctx_ && ctx_->chain) {

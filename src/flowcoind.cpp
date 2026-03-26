@@ -74,7 +74,7 @@ static void print_banner() {
               << "  ╔═══════════════════════════════════════╗\n"
               << "  ║         FlowCoin Core v"
               << CLIENT_VERSION_STRING << "            ║\n"
-              << "  ║   Proof-of-Useful-Training Consensus  ║\n"
+              << "  ║   Keccak-256d Proof-of-Work Consensus  ║\n"
               << "  ╚═══════════════════════════════════════╝\n"
               << "\n"
               << "  " << flow::version::COPYRIGHT << "\n"

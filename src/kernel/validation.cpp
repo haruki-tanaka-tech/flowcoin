@@ -290,7 +290,7 @@ double get_difficulty(uint32_t nbits) {
 }
 
 // ============================================================================
-// Proof-of-Training
+// Keccak-256d Proof-of-Work
 // ============================================================================
 
 bool check_proof_of_work(const uint256& training_hash, uint32_t nbits) {

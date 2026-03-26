@@ -1,7 +1,7 @@
 // Copyright (c) 2026 The FlowCoin Developers
 // Distributed under the MIT software license.
 //
-// Mining engine for FlowCoin's Proof-of-Useful-Training consensus.
+// Mining engine for FlowCoin's Keccak-256d Proof-of-Work consensus.
 //
 // The mining loop:
 //   1. Fetch a block template from the assembler
