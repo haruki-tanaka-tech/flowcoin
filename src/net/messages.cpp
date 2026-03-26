@@ -384,37 +384,51 @@ void MessageHandler::handle_getdata(Peer& peer, const uint8_t* data, size_t len)
     auto items = read_inv_items(data, len);
     if (items.empty()) return;
 
-    LogInfo("net", "getdata from peer %lu: %lu items",
+    LogInfo("net", "getdata from peer %lu: %lu items requested",
             (unsigned long)peer.id(), (unsigned long)items.size());
+
+    size_t blocks_sent = 0;
+    size_t not_found = 0;
 
     for (const auto& item : items) {
         if (item.type == INV_BLOCK) {
             CBlockIndex* index = chain_.block_tree().find(item.hash);
             if (!index || index->pos.is_null()) {
                 // Send notfound
-                LogInfo("net", "getdata: block %s not found on disk, sending notfound to peer %lu",
+                LogInfo("net", "getdata: block %s not found on disk (index=%s, pos_null=%s), "
+                        "sending notfound to peer %lu",
                         hex_encode(item.hash.data(), 8).c_str(),
+                        index ? "yes" : "no",
+                        index ? (index->pos.is_null() ? "yes" : "no") : "n/a",
                         (unsigned long)peer.id());
                 DataWriter w;
                 w.write_compact_size(1);
                 write_inv_item(w, item);
                 send(peer, NetCmd::NOTFOUND, w.release());
+                not_found++;
                 continue;
             }
 
             // Read block from disk and send it
             CBlock block;
             if (chain_.block_store().read_block(index->pos, block)) {
-                LogInfo("net", "sending block at height %lu to peer %lu",
-                        (unsigned long)index->height, (unsigned long)peer.id());
-                // Serialize the full block
+                LogInfo("net", "sending block at height %lu (hash=%s) to peer %lu [%lu/%lu]",
+                        (unsigned long)index->height,
+                        hex_encode(item.hash.data(), 8).c_str(),
+                        (unsigned long)peer.id(),
+                        (unsigned long)(blocks_sent + 1),
+                        (unsigned long)items.size());
                 auto block_data = serialize_block_for_wire(block);
                 send(peer, NetCmd::BLOCK, block_data);
+                blocks_sent++;
             } else {
+                LogError("net", "getdata: failed to read block at height %lu from disk",
+                        (unsigned long)index->height);
                 DataWriter w;
                 w.write_compact_size(1);
                 write_inv_item(w, item);
                 send(peer, NetCmd::NOTFOUND, w.release());
+                not_found++;
             }
         } else if (item.type == INV_TX) {
             // No mempool yet -- send notfound
@@ -422,8 +436,13 @@ void MessageHandler::handle_getdata(Peer& peer, const uint8_t* data, size_t len)
             w.write_compact_size(1);
             write_inv_item(w, item);
             send(peer, NetCmd::NOTFOUND, w.release());
+            not_found++;
         }
     }
+
+    LogInfo("net", "getdata from peer %lu complete: sent %lu blocks, %lu not found",
+            (unsigned long)peer.id(), (unsigned long)blocks_sent,
+            (unsigned long)not_found);
 }
 
 // ===========================================================================
@@ -538,8 +557,8 @@ static bool deserialize_block_from_wire(const uint8_t* data, size_t len, CBlock&
 void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
     CBlock block;
     if (!deserialize_block_from_wire(data, len, block)) {
-        LogError("net", "failed to deserialize block from peer %lu",
-                (unsigned long)peer.id());
+        LogError("net", "failed to deserialize block from peer %lu (%zu bytes)",
+                (unsigned long)peer.id(), len);
         peer.add_misbehavior(20);
         return;
     }
@@ -551,12 +570,18 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
     // so we must check for BLOCK_FULLY_VALIDATED rather than mere existence.
     CBlockIndex* existing = chain_.block_tree().find(block_hash);
     if (existing && (existing->status & BLOCK_FULLY_VALIDATED)) {
-        return;  // already fully validated
+        LogInfo("net", "block at height %lu already fully validated, skipping",
+                (unsigned long)block.height);
+        return;
     }
 
-    LogInfo("net", "processing block %s at height %lu from peer %lu",
+    LogInfo("net", "processing block %s at height %lu from peer %lu "
+            "(prev=%s, %zu txs, our tip=%lu)",
             hex_encode(block_hash.data(), 8).c_str(),
-            (unsigned long)block.height, (unsigned long)peer.id());
+            (unsigned long)block.height, (unsigned long)peer.id(),
+            hex_encode(block.prev_hash.data(), 8).c_str(),
+            block.vtx.size(),
+            (unsigned long)chain_.height());
 
     // Validate and accept the block
     consensus::ValidationState vstate;
@@ -566,9 +591,12 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
                 (unsigned long)chain_.height());
         relay_block(block_hash);
     } else {
-        LogError("net", "rejected block at height %lu from peer %lu: %s",
+        LogError("net", "rejected block at height %lu from peer %lu: %s "
+                "(prev_hash=%s, nbits=0x%08x)",
                 (unsigned long)block.height, (unsigned long)peer.id(),
-                vstate.reject_reason().c_str());
+                vstate.reject_reason().c_str(),
+                hex_encode(block.prev_hash.data(), 8).c_str(),
+                block.nbits);
         peer.add_misbehavior(10);
     }
 }
