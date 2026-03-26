@@ -563,13 +563,6 @@ std::string RpcServer::process_request(const std::string& request,
     }
 
     // Extract body
-    // Debug: log request headers
-    {
-        auto hend = request.find("\r\n\r\n");
-        if (hend != std::string::npos && hend < 500) {
-            LogInfo("rpc", "REQ HEADERS: %s", request.substr(0, hend).c_str());
-        }
-    }
     std::string body = get_body(request);
 
     // Handle chunked transfer encoding (cgminer/libcurl sends this)
