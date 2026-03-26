@@ -127,6 +127,7 @@ void MessageHandler::send_version(Peer& peer) {
     ver.nonce = netman_.local_nonce();
     ver.user_agent = "/FlowCoin:1.0.0/";
     ver.start_height = chain_.height();
+    ver.node_id = netman_.node_id();
 
     send(peer, NetCmd::VERSION, ver.serialize());
     peer.set_version_sent(true);
@@ -162,11 +163,27 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
     peer.set_start_height(ver.start_height);
     peer.set_user_agent(ver.user_agent);
     peer.set_nonce(ver.nonce);
+    peer.set_node_id(ver.node_id);
     peer.set_version_received(true);
 
-    LogInfo("net", "received version from peer %lu: %s height=%lu",
+    LogInfo("net", "received version from peer %lu: %s height=%lu node_id=%016llx",
             (unsigned long)peer.id(), ver.user_agent.c_str(),
-            (unsigned long)ver.start_height);
+            (unsigned long)ver.start_height, (unsigned long long)ver.node_id);
+
+    // Link peers with same node_id (same node via IPv4 + IPv6)
+    if (ver.node_id != 0) {
+        auto peers = netman_.get_peers();
+        for (const Peer* other : peers) {
+            if (other->id() != peer.id() &&
+                other->node_id() == ver.node_id &&
+                other->state() != PeerState::DISCONNECTED) {
+                LogInfo("net", "peer %lu shares node_id %016llx with peer %lu (same node, dual-stack)",
+                        (unsigned long)peer.id(), (unsigned long long)ver.node_id,
+                        (unsigned long)other->id());
+                break;
+            }
+        }
+    }
 
     // Send verack to acknowledge their version
     send(peer, NetCmd::VERACK);
@@ -180,8 +197,9 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
     if (peer.verack_received()) {
         peer.set_state(PeerState::HANDSHAKE_DONE);
         netman_.addrman().mark_good(peer.addr());
-        LogInfo("net", "handshake complete with peer %lu (%s)",
-                (unsigned long)peer.id(), peer.addr().to_string().c_str());
+        LogInfo("net", "handshake complete with peer %lu (%s) node_id=%016llx",
+                (unsigned long)peer.id(), peer.addr().to_string().c_str(),
+                (unsigned long long)peer.node_id());
     }
 }
 
@@ -197,8 +215,9 @@ void MessageHandler::handle_verack(Peer& peer) {
     if (peer.version_received()) {
         peer.set_state(PeerState::HANDSHAKE_DONE);
         netman_.addrman().mark_good(peer.addr());
-        LogInfo("net", "handshake complete with peer %lu (%s)",
-                (unsigned long)peer.id(), peer.addr().to_string().c_str());
+        LogInfo("net", "handshake complete with peer %lu (%s) node_id=%016llx",
+                (unsigned long)peer.id(), peer.addr().to_string().c_str(),
+                (unsigned long long)peer.node_id());
 
         // If peer has a higher chain, request headers
         uint64_t our_height = chain_.height();
