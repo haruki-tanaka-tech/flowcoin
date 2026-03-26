@@ -73,6 +73,8 @@ void MessageHandler::process_message(Peer& peer, const std::string& command,
         handle_getheaders(peer, payload, payload_len);
     } else if (command == NetCmd::HEADERS) {
         handle_headers(peer, payload, payload_len);
+    } else if (command == NetCmd::NOTFOUND) {
+        handle_notfound_full(peer, payload, payload_len);
     } else if (command == NetCmd::REJECT) {
         handle_reject(peer, payload, payload_len);
     } else if (command == NetCmd::SENDHEADERS) {
@@ -349,11 +351,13 @@ void MessageHandler::handle_inv(Peer& peer, const uint8_t* data, size_t len) {
     auto items = read_inv_items(data, len);
     if (items.empty()) return;
 
-    // Collect items we don't have and request them
+    // Collect items we don't have (or only have the header for) and request them
     std::vector<InvItem> needed;
     for (const auto& item : items) {
         if (item.type == INV_BLOCK) {
-            if (!chain_.block_tree().find(item.hash)) {
+            CBlockIndex* idx = chain_.block_tree().find(item.hash);
+            // Request if we don't have it at all, or only have the header
+            if (!idx || !(idx->status & BLOCK_FULLY_VALIDATED)) {
                 needed.push_back(item);
             }
         } else if (item.type == INV_TX) {
@@ -363,6 +367,9 @@ void MessageHandler::handle_inv(Peer& peer, const uint8_t* data, size_t len) {
     }
 
     if (needed.empty()) return;
+
+    LogInfo("net", "inv from peer %lu: requesting %lu items via getdata",
+            (unsigned long)peer.id(), (unsigned long)needed.size());
 
     // Send getdata for the items we need
     DataWriter w;
@@ -377,11 +384,17 @@ void MessageHandler::handle_getdata(Peer& peer, const uint8_t* data, size_t len)
     auto items = read_inv_items(data, len);
     if (items.empty()) return;
 
+    LogInfo("net", "getdata from peer %lu: %lu items",
+            (unsigned long)peer.id(), (unsigned long)items.size());
+
     for (const auto& item : items) {
         if (item.type == INV_BLOCK) {
             CBlockIndex* index = chain_.block_tree().find(item.hash);
             if (!index || index->pos.is_null()) {
                 // Send notfound
+                LogInfo("net", "getdata: block %s not found on disk, sending notfound to peer %lu",
+                        hex_encode(item.hash.data(), 8).c_str(),
+                        (unsigned long)peer.id());
                 DataWriter w;
                 w.write_compact_size(1);
                 write_inv_item(w, item);
@@ -392,6 +405,8 @@ void MessageHandler::handle_getdata(Peer& peer, const uint8_t* data, size_t len)
             // Read block from disk and send it
             CBlock block;
             if (chain_.block_store().read_block(index->pos, block)) {
+                LogInfo("net", "sending block at height %lu to peer %lu",
+                        (unsigned long)index->height, (unsigned long)peer.id());
                 // Serialize the full block
                 auto block_data = serialize_block_for_wire(block);
                 send(peer, NetCmd::BLOCK, block_data);
@@ -531,20 +546,29 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
 
     uint256 block_hash = block.get_hash();
 
-    // Check if we already have this block
-    if (chain_.block_tree().find(block_hash)) {
-        return;  // already have it
+    // Check if we already have this block fully validated.
+    // Note: accept_header() inserts header-only entries into the block tree,
+    // so we must check for BLOCK_FULLY_VALIDATED rather than mere existence.
+    CBlockIndex* existing = chain_.block_tree().find(block_hash);
+    if (existing && (existing->status & BLOCK_FULLY_VALIDATED)) {
+        return;  // already fully validated
     }
+
+    LogInfo("net", "processing block %s at height %lu from peer %lu",
+            hex_encode(block_hash.data(), 8).c_str(),
+            (unsigned long)block.height, (unsigned long)peer.id());
 
     // Validate and accept the block
     consensus::ValidationState vstate;
     if (chain_.accept_block(block, vstate)) {
-        LogInfo("net", "accepted block at height %lu from peer %lu",
-                (unsigned long)block.height, (unsigned long)peer.id());
+        LogInfo("net", "accepted block at height %lu from peer %lu (tip now %lu)",
+                (unsigned long)block.height, (unsigned long)peer.id(),
+                (unsigned long)chain_.height());
         relay_block(block_hash);
     } else {
-        LogError("net", "rejected block from peer %lu: %s",
-                (unsigned long)peer.id(), vstate.reject_reason().c_str());
+        LogError("net", "rejected block at height %lu from peer %lu: %s",
+                (unsigned long)block.height, (unsigned long)peer.id(),
+                vstate.reject_reason().c_str());
         peer.add_misbehavior(10);
     }
 }
@@ -643,6 +667,11 @@ void MessageHandler::handle_getheaders(Peer& peer, const uint8_t* data, size_t l
         }
     }
 
+    LogInfo("net", "getheaders from peer %lu: fork at height %lu, sending %lu headers",
+            (unsigned long)peer.id(),
+            (unsigned long)(fork ? fork->height : 0),
+            (unsigned long)actual_count);
+
     if (actual_count > 0) {
         DataWriter final_w;
         final_w.write_compact_size(actual_count);
@@ -659,6 +688,9 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         peer.add_misbehavior(20);
         return;
     }
+
+    LogInfo("net", "received %lu headers from peer %lu",
+            (unsigned long)count, (unsigned long)peer.id());
 
     bool got_new = false;
     std::vector<uint256> new_header_hashes;
@@ -818,6 +850,9 @@ void MessageHandler::handle_getblocks(Peer& peer, const uint8_t* data, size_t le
 // ===========================================================================
 
 void MessageHandler::relay_block(const uint256& hash) {
+    LogInfo("net", "relaying block %s via inv to all peers",
+            hex_encode(hash.data(), 8).c_str());
+
     DataWriter w;
     w.write_compact_size(1);
     InvItem item;
