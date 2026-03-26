@@ -606,7 +606,11 @@ void NetManager::on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
         return;
     }
 
-    // Append received data to the peer's buffer and process messages
+    // Append received data to the peer's buffer, then process messages
+    // outside the peers_mutex_ lock.  process_recv dispatches to message
+    // handlers that may call broadcast() or relay_block(), which also
+    // acquire peers_mutex_.  Holding the lock here would deadlock.
+    Peer* peer_ptr = nullptr;
     {
         std::lock_guard<std::mutex> lock(self->peers_mutex_);
         auto it = self->peers_.find(peer_id);
@@ -615,12 +619,19 @@ void NetManager::on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
             peer.recv_buffer().insert(peer.recv_buffer().end(),
                                       buf->base, buf->base + nread);
             peer.add_bytes_recv(static_cast<uint64_t>(nread));
-            self->process_recv(peer);
+            peer_ptr = &peer;
+        }
+    }
 
-            // Check if peer should be banned
-            if (peer.should_ban()) {
-                self->disconnect(peer, "misbehavior ban");
-            }
+    // Process messages without holding peers_mutex_.  This is safe
+    // because libuv callbacks run on a single thread, so no other
+    // callback can remove the peer while we are executing here.
+    if (peer_ptr) {
+        self->process_recv(*peer_ptr);
+
+        // Check if peer should be banned (no lock needed — single thread)
+        if (peer_ptr->should_ban()) {
+            self->disconnect(*peer_ptr, "misbehavior ban");
         }
     }
 
@@ -673,6 +684,7 @@ void NetManager::on_close(uv_handle_t* handle) {
 
 void NetManager::process_recv(Peer& peer) {
     auto& buf = peer.recv_buffer();
+    size_t messages_processed = 0;
 
     while (buf.size() >= MessageHeader::SIZE) {
         // Try to parse a header from the buffer
@@ -704,6 +716,9 @@ void NetManager::process_recv(Peer& peer) {
         // Check if we have the complete message (header + payload)
         size_t total_size = MessageHeader::SIZE + hdr.payload_size;
         if (buf.size() < total_size) {
+            LogDebug("net", "partial message '%s' from peer %lu: have %zu of %zu bytes",
+                    hdr.command_string().c_str(), (unsigned long)peer.id(),
+                    buf.size(), total_size);
             break;  // wait for more data
         }
 
@@ -722,11 +737,22 @@ void NetManager::process_recv(Peer& peer) {
         // Extract command string
         std::string command = hdr.command_string();
 
+        LogDebug("net", "recv msg '%s' (%u bytes payload) from peer %lu [msg #%lu in batch]",
+                command.c_str(), hdr.payload_size,
+                (unsigned long)peer.id(),
+                (unsigned long)(messages_processed + 1));
+
         // Dispatch to message handler
         handler_.process_message(peer, command, payload_ptr, hdr.payload_size);
 
         // Remove the processed message from the buffer
         buf.erase(buf.begin(), buf.begin() + static_cast<ptrdiff_t>(total_size));
+        messages_processed++;
+    }
+
+    if (messages_processed > 1) {
+        LogInfo("net", "processed %zu messages in batch from peer %lu",
+                messages_processed, (unsigned long)peer.id());
     }
 
     // Safety: if the buffer is growing too large without producing valid messages,
