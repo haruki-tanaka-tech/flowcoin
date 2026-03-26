@@ -13,6 +13,8 @@
 #include "../hash/keccak.h"
 #include "../hash/merkle.h"
 #include "../util/arith_uint256.h"
+#include "../util/strencodings.h"
+#include "../logging.h"
 
 #include <cmath>
 #include <cstring>
@@ -50,10 +52,10 @@ bool check_header(const CBlockHeader& header, const BlockContext& ctx,
                 "timestamp not after parent");
         }
 
-        // Check 4: timestamp must respect minimum spacing
-        if (header.timestamp < ctx.prev_timestamp + MIN_BLOCK_INTERVAL) {
+        // Check 4: timestamp must be > parent (like Bitcoin, no MIN_BLOCK_INTERVAL)
+        if (header.timestamp <= ctx.prev_timestamp) {
             return state.invalid(ValidationResult::HEADER_INVALID, "bad-time-spacing",
-                "timestamp too close to parent (MIN_BLOCK_INTERVAL)");
+                "timestamp must be greater than parent");
         }
 
         // Check 5: timestamp must not be too far in the future
@@ -81,9 +83,30 @@ bool check_header(const CBlockHeader& header, const BlockContext& ctx,
         }
 
         uint256 block_hash = header.get_hash();
-        arith_uint256 hash_val = UintToArith256(block_hash);
 
-        if (hash_val > target) {
+        // Convert the arith target back to a uint256 for comparison.
+        // The keccak hash output is big-endian (byte 0 = most significant),
+        // while UintToArith256 assumes little-endian (byte 0 = least
+        // significant). Comparing via uint256 (Blob) uses lexicographic
+        // order which matches the big-endian hash layout.
+        uint256 target_bytes = ArithToUint256(target);
+
+        // ArithToUint256 produces little-endian byte order (least significant
+        // byte first), but the hash is big-endian (most significant byte
+        // first). We must reverse the target bytes so both are in the same
+        // byte order for the lexicographic Blob comparison.
+        uint256 target_be;
+        for (int i = 0; i < 32; ++i) {
+            target_be[i] = target_bytes[31 - i];
+        }
+
+        if (block_hash > target_be) {
+            LogWarn("consensus", "PoW check FAILED at height %lu nbits=0x%08x",
+                    (unsigned long)header.height, header.nbits);
+            LogWarn("consensus", "  hash  : %s",
+                    hex_encode(block_hash.data(), 32).c_str());
+            LogWarn("consensus", "  target: %s",
+                    hex_encode(target_be.data(), 32).c_str());
             return state.invalid(ValidationResult::HEADER_INVALID, "high-hash",
                 "block hash exceeds difficulty target");
         }

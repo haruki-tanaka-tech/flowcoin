@@ -55,6 +55,9 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         uint256 target_bytes = ArithToUint256(target);
         j["target"] = hex_encode(target_bytes.data(), 32);
 
+        // Merkle root (pre-computed by the node so the miner doesn't have to)
+        j["merkle_root"] = hex_encode(tmpl.header.merkle_root.data(), 32);
+
         // Coinbase transaction as nested object (cgminer expects coinbasetxn.data)
         auto cb_data = tmpl.coinbase_tx.serialize();
         json cbtxn;

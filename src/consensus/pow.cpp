@@ -35,8 +35,15 @@ bool CheckProofOfWork(const CBlockHeader& header) {
     }
 
     uint256 block_hash = header.get_hash();
-    arith_uint256 hash_value = UintToArith256(block_hash);
-    return hash_value <= target;
+
+    // Convert the arith target to uint256, then reverse to big-endian
+    // byte order to match the keccak hash output (byte 0 = most significant).
+    uint256 target_le = ArithToUint256(target);
+    uint256 target_be;
+    for (int i = 0; i < 32; ++i) {
+        target_be[i] = target_le[31 - i];
+    }
+    return block_hash <= target_be;
 }
 
 // ---------------------------------------------------------------------------

@@ -416,13 +416,14 @@ void MessageHandler::handle_getdata(Peer& peer, const uint8_t* data, size_t len)
 // ===========================================================================
 
 // Serialize a full block for the wire protocol.
-// Layout: header (unsigned data + sig) + varint(tx_count) + txs + delta_payload
+// Layout: header (92 unsigned + 32 pubkey + 64 sig) + varint(tx_count) + txs
 static std::vector<uint8_t> serialize_block_for_wire(const CBlock& block) {
     DataWriter w(4096);
 
-    // Write the full header (244 bytes unsigned + 64 bytes sig = 308 bytes)
+    // Write the full 188-byte header: 92 unsigned + 32 pubkey + 64 sig
     auto unsigned_data = block.get_unsigned_data();
     w.write_bytes(unsigned_data.data(), unsigned_data.size());
+    w.write_bytes(block.miner_pubkey.data(), 32);
     w.write_bytes(block.miner_sig.data(), 64);
 
     // Transaction count
@@ -434,20 +435,14 @@ static std::vector<uint8_t> serialize_block_for_wire(const CBlock& block) {
         w.write_bytes(tx_data.data(), tx_data.size());
     }
 
-    // Delta payload length + data
-    w.write_compact_size(0);
-    if (!true) {
-        w.write_bytes(nullptr, 0);
-    }
-
     return w.release();
 }
 
-// Deserialize a block from wire data
+// Deserialize a block from wire data (188-byte header format)
 static bool deserialize_block_from_wire(const uint8_t* data, size_t len, CBlock& block) {
     DataReader r(data, len);
 
-    // Read the 244-byte unsigned header
+    // Read the 92-byte unsigned header
     // prev_hash (32)
     auto prev_hash_bytes = r.read_bytes(32);
     if (r.error()) return false;
@@ -458,33 +453,12 @@ static bool deserialize_block_from_wire(const uint8_t* data, size_t len, CBlock&
     if (r.error()) return false;
     std::memcpy(block.merkle_root.data(), merkle_bytes.data(), 32);
 
-    auto training_bytes = r.read_bytes(32);
-    if (r.error()) return false;
-
-    auto dataset_bytes = r.read_bytes(32);
-    if (r.error()) return false;
-
     // height (8)
     block.height = r.read_u64_le();
     // timestamp (8)
     block.timestamp = r.read_i64_le();
     // nbits (4)
     block.nbits = r.read_u32_le();
-
-
-
-
-
-
-
-
-    // reserved (4)
-
-
-
-
-
-
     // nonce (4)
     block.nonce = r.read_u32_le();
     // version (4)
@@ -541,17 +515,6 @@ static bool deserialize_block_from_wire(const uint8_t* data, size_t len, CBlock&
 
         tx.locktime = r.read_i64_le();
         if (r.error()) return false;
-    }
-
-    // Delta payload
-    uint64_t delta_len = r.read_compact_size();
-    if (r.error()) return false;
-    if (delta_len > consensus::MAX_BLOCK_SIZE) return false;
-
-    if (delta_len > 0) {
-        auto delta_bytes = r.read_bytes(static_cast<size_t>(delta_len));
-        if (r.error()) return false;
-        std::vector<uint8_t>{} = std::move(delta_bytes);
     }
 
     return true;
@@ -612,8 +575,10 @@ CBlockIndex* MessageHandler::find_fork_point(const std::vector<uint256>& locator
 }
 
 void MessageHandler::write_block_header(DataWriter& w, const CBlockHeader& hdr) {
+    // Write the full 188-byte header: 92 unsigned + 32 pubkey + 64 sig
     auto unsigned_data = hdr.get_unsigned_data();
     w.write_bytes(unsigned_data.data(), unsigned_data.size());
+    w.write_bytes(hdr.miner_pubkey.data(), 32);
     w.write_bytes(hdr.miner_sig.data(), 64);
 }
 
@@ -696,11 +661,13 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
     }
 
     bool got_new = false;
+    std::vector<uint256> new_header_hashes;
+
     for (uint64_t i = 0; i < count; ++i) {
-        // Each header is 308 bytes (244 unsigned + 64 sig)
+        // Each header is 188 bytes (92 unsigned + 32 pubkey + 64 sig)
         CBlockHeader hdr;
 
-        // Read the unsigned portion field by field
+        // Read the 92-byte unsigned portion field by field
         auto prev_hash_bytes = r.read_bytes(32);
         if (r.error()) return;
         std::memcpy(hdr.prev_hash.data(), prev_hash_bytes.data(), 32);
@@ -708,12 +675,6 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         auto merkle_bytes = r.read_bytes(32);
         if (r.error()) return;
         std::memcpy(hdr.merkle_root.data(), merkle_bytes.data(), 32);
-
-        auto training_bytes = r.read_bytes(32);
-        if (r.error()) return;
-
-        auto dataset_bytes = r.read_bytes(32);
-        if (r.error()) return;
 
         hdr.height = r.read_u64_le();
         hdr.timestamp = r.read_i64_le();
@@ -739,6 +700,7 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         CBlockIndex* new_idx = chain_.accept_header(hdr, vstate);
         if (new_idx) {
             got_new = true;
+            new_header_hashes.push_back(hdr_hash);
         } else {
             LogError("net", "rejected header from peer %lu: %s",
                     (unsigned long)peer.id(), vstate.reject_reason().c_str());
@@ -763,6 +725,21 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         uint256 zero_stop;
         w.write_bytes(zero_stop.data(), 32);
         send(peer, NetCmd::GETHEADERS, w.release());
+    }
+
+    // Request full blocks for all new headers we accepted
+    if (!new_header_hashes.empty()) {
+        LogInfo("net", "requesting %lu blocks from peer %lu",
+                (unsigned long)new_header_hashes.size(),
+                (unsigned long)peer.id());
+
+        DataWriter w;
+        w.write_compact_size(new_header_hashes.size());
+        for (const auto& hash : new_header_hashes) {
+            w.write_u32_le(static_cast<uint32_t>(INV_BLOCK));
+            w.write_bytes(hash.data(), 32);
+        }
+        send(peer, NetCmd::GETDATA, w.release());
     }
 }
 
@@ -1005,7 +982,7 @@ uint64_t MessageHandler::compute_short_txid(const uint256& txid,
 void MessageHandler::handle_cmpctblock(Peer& peer, const uint8_t* data, size_t len) {
     DataReader r(data, len);
 
-    // Read the block header (same format as in headers message)
+    // Read the 188-byte block header (92 unsigned + 32 pubkey + 64 sig)
     CBlockHeader hdr;
 
     auto prev_hash_bytes = r.read_bytes(32);
@@ -1015,12 +992,6 @@ void MessageHandler::handle_cmpctblock(Peer& peer, const uint8_t* data, size_t l
     auto merkle_bytes = r.read_bytes(32);
     if (r.error()) { peer.add_misbehavior(10); return; }
     std::memcpy(hdr.merkle_root.data(), merkle_bytes.data(), 32);
-
-    auto training_bytes = r.read_bytes(32);
-    if (r.error()) { peer.add_misbehavior(10); return; }
-
-    auto dataset_bytes = r.read_bytes(32);
-    if (r.error()) { peer.add_misbehavior(10); return; }
 
     hdr.height = r.read_u64_le();
     hdr.timestamp = r.read_i64_le();

@@ -451,6 +451,16 @@ BlockTemplate BlockAssembler::create_template(const std::string& coinbase_addres
     tmpl.coinbase_value = reward + tmpl.total_fees;
     tmpl.coinbase_tx = build_coinbase(next_height, tmpl.coinbase_value, coinbase_address);
 
+    // Compute merkle root from the coinbase (+ any selected transactions)
+    {
+        std::vector<uint256> tx_hashes;
+        tx_hashes.push_back(tmpl.coinbase_tx.get_txid());
+        for (const auto& tx : tmpl.transactions) {
+            tx_hashes.push_back(tx.get_txid());
+        }
+        tmpl.header.merkle_root = flow::compute_merkle_root(tx_hashes);
+    }
+
     // Template metadata
     tmpl.template_id = generate_template_id();
     tmpl.creation_time = GetTime();
@@ -481,6 +491,16 @@ BlockTemplate BlockAssembler::create_template(const std::array<uint8_t, 32>& coi
 
     tmpl.coinbase_value = reward + tmpl.total_fees;
     tmpl.coinbase_tx = build_coinbase(next_height, tmpl.coinbase_value, coinbase_pubkey);
+
+    // Compute merkle root from the coinbase (+ any selected transactions)
+    {
+        std::vector<uint256> tx_hashes;
+        tx_hashes.push_back(tmpl.coinbase_tx.get_txid());
+        for (const auto& tx : tmpl.transactions) {
+            tx_hashes.push_back(tx.get_txid());
+        }
+        tmpl.header.merkle_root = flow::compute_merkle_root(tx_hashes);
+    }
 
     tmpl.template_id = generate_template_id();
     tmpl.creation_time = GetTime();
