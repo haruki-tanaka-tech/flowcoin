@@ -665,6 +665,23 @@ int main(int argc, char *argv[])
     /* Read config file first (command-line overrides below) */
     read_config_file(&config);
 
+    /* Try cookie auth if no rpcuser/rpcpassword from config */
+    static char cookie_user[128];
+    static char cookie_pass[128];
+    if (config.rpc_pass[0] == '\0' ||
+        (strcmp(config.rpc_user, "flowcoin") == 0 && config.rpc_pass[0] == '\0')) {
+        const char *home = getenv("HOME");
+        if (home) {
+            char datadir[512];
+            snprintf(datadir, sizeof(datadir), "%s/.flowcoin", home);
+            if (rpc_read_cookie(datadir, cookie_user, sizeof(cookie_user),
+                                cookie_pass, sizeof(cookie_pass))) {
+                config.rpc_user = cookie_user;
+                config.rpc_pass = cookie_pass;
+            }
+        }
+    }
+
     /* Parse command-line arguments */
     for (int i = 1; i < argc; i++) {
         if ((strcmp(argv[i], "--rpcuser") == 0) && i + 1 < argc) {

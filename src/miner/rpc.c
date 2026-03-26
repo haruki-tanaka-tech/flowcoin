@@ -289,6 +289,49 @@ static char *rpc_call(rpc_client_t *rpc, const char *method, const char *params)
     return rpc_call_sized(rpc, method, params, (int)strlen(params));
 }
 
+/* ─── Cookie auth ────────────────────────────────────────────────────── */
+
+bool rpc_read_cookie(const char *datadir, char *user, int user_size,
+                     char *pass, int pass_size)
+{
+    char cookie_path[512];
+    snprintf(cookie_path, sizeof(cookie_path), "%s/.cookie", datadir);
+
+    FILE *f = fopen(cookie_path, "r");
+    if (!f) return false;
+
+    char line[256];
+    if (!fgets(line, sizeof(line), f)) {
+        fclose(f);
+        return false;
+    }
+    fclose(f);
+
+    /* Remove trailing newline/whitespace */
+    char *nl = strchr(line, '\n');
+    if (nl) *nl = '\0';
+    nl = strchr(line, '\r');
+    if (nl) *nl = '\0';
+
+    /* Parse "user:password" */
+    char *colon = strchr(line, ':');
+    if (!colon) return false;
+
+    *colon = '\0';
+    const char *cookie_user = line;
+    const char *cookie_pass = colon + 1;
+
+    if (cookie_user[0] == '\0' || cookie_pass[0] == '\0')
+        return false;
+
+    strncpy(user, cookie_user, (size_t)(user_size - 1));
+    user[user_size - 1] = '\0';
+    strncpy(pass, cookie_pass, (size_t)(pass_size - 1));
+    pass[pass_size - 1] = '\0';
+
+    return true;
+}
+
 /* ─── Public API ─────────────────────────────────────────────────────── */
 
 void rpc_init(rpc_client_t *rpc, const char *host, int port,

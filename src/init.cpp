@@ -1068,6 +1068,13 @@ bool Node::init() {
                                         config_.rpc_user,
                                         config_.rpc_password);
 
+    // If no rpcuser/rpcpassword configured, generate cookie auth
+    if (config_.rpc_user == "flowcoin" && config_.rpc_password == "flowcoin") {
+        if (rpc_->generate_cookie(config_.datadir)) {
+            LogInfo("init", "Cookie authentication enabled (no rpcuser/rpcpassword set)");
+        }
+    }
+
     register_rpcs();
 
     if (!rpc_->start(loop_)) {
@@ -1160,6 +1167,9 @@ void Node::shutdown() {
     if (rpc_) {
         rpc_->stop();
     }
+
+    // Remove cookie file
+    RpcServer::remove_cookie(config_.datadir);
 
     // Stop the RPC event loop
     if (loop_) {
