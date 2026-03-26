@@ -119,10 +119,32 @@ private:
     std::vector<ggml_tensor*> weight_tensors() const;
 
     // Build forward compute graph, returns loss tensor.
-    // All intermediate tensors are allocated in compute_ctx.
     ggml_tensor* build_forward(struct ggml_context* compute_ctx,
                                const uint8_t* input, const uint8_t* target,
                                int seq_len);
+
+#ifdef FLOWCOIN_USE_CUDA
+    // CUDA-accelerated forward pass
+    float eval_loss_cuda(const uint8_t* input, const uint8_t* target, int seq_len);
+    bool cuda_initialized_ = false;
+    void init_cuda_buffers(int seq_len);
+    void free_cuda_buffers();
+
+    // GPU weight mirrors
+    struct GPULayerWeights {
+        float *norm1_w, *norm2_w, *gru_wz, *gru_wh, *gru_bz, *gru_bh;
+        float *ffn_gate_w, *ffn_up_w, *ffn_down_w;
+    };
+    float* gpu_tok_emb_ = nullptr;
+    float* gpu_final_norm_w_ = nullptr;
+    std::vector<GPULayerWeights> gpu_layers_;
+
+    // GPU work buffers
+    float *gpu_x_ = nullptr, *gpu_tmp_ = nullptr, *gpu_logits_ = nullptr;
+    float *gpu_gate_ = nullptr, *gpu_up_ = nullptr, *gpu_normed_ = nullptr;
+    int32_t *gpu_tokens_ = nullptr;
+    uint8_t *gpu_targets_ = nullptr;
+#endif
 };
 
 } // namespace flow::miner
