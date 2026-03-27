@@ -955,7 +955,6 @@ bool Node::ensure_datadir() {
     try {
         std::filesystem::create_directories(config_.datadir);
         std::filesystem::create_directories(config_.datadir + "/blocks");
-        std::filesystem::create_directories(config_.datadir + "/model");
         return true;
     } catch (const std::filesystem::filesystem_error& e) {
         LogError("init", "Failed to create data directory '%s': %s",

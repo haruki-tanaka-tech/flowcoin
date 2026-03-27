@@ -582,12 +582,6 @@ void NodeContext::stop() {
                 static_cast<double>(t1 - t0) / 1000.0);
     }
 
-    // --- 3. Eval Engine ---
-    // Save the final model checkpoint before destroying the engine.
-        LogInfo("node", "[3/7] Saving model checkpoint...");
-        int64_t t0 = now_us();
-        // PoW: no model checkpoint to save
-
     // --- 2. Mempool ---
     // The mempool is purely in-memory; no persistence needed.
     // Transactions will need to be re-relayed after restart.
@@ -634,8 +628,6 @@ void NodeContext::stop() {
             format_bytes(perf.bytes_sent.load()).c_str());
     LogInfo("node", "  Bytes received:    %s",
             format_bytes(perf.bytes_recv.load()).c_str());
-    LogInfo("node", "  Model evals:       %lu",
-            static_cast<unsigned long>(perf.model_evals.load()));
     LogInfo("node", "  Shutdown duration: %.1f ms", total_ms);
 
     // Log stats
@@ -862,7 +854,6 @@ bool NodeContext::ensure_datadir() {
     try {
         std::filesystem::create_directories(datadir);
         std::filesystem::create_directories(blocks_dir());
-        std::filesystem::create_directories(model_dir());
         return true;
     } catch (const std::filesystem::filesystem_error& e) {
         LogError("node", "Failed to create data directory '%s': %s",
@@ -879,10 +870,6 @@ std::string NodeContext::datadir_path(const std::string& filename) const {
 
 std::string NodeContext::blocks_dir() const {
     return datadir_path("blocks");
-}
-
-std::string NodeContext::model_dir() const {
-    return datadir_path("model");
 }
 
 std::string NodeContext::wallet_path() const {
@@ -1030,22 +1017,6 @@ static void log_datadir_inventory(const std::string& datadir) {
                 count, static_cast<double>(total_size) / (1024.0 * 1024.0));
     }
 
-    // Check model directory
-    std::string model_dir = datadir + "/model";
-    if (std::filesystem::exists(model_dir)) {
-        int count = 0;
-        uint64_t total_size = 0;
-        try {
-            for (const auto& entry : std::filesystem::directory_iterator(model_dir)) {
-                if (entry.is_regular_file()) {
-                    ++count;
-                    total_size += entry.file_size();
-                }
-            }
-        } catch (...) {}
-        LogInfo("node", "  model/             %d files, %.1f MB total",
-                count, static_cast<double>(total_size) / (1024.0 * 1024.0));
-    }
 }
 
 // ============================================================================
@@ -1231,48 +1202,6 @@ int64_t NodeContext::get_disk_free_mb() const {
 }
 
 // ============================================================================
-// Reindex support
-// ============================================================================
-
-bool NodeContext::verify_chain_model_consistency() const {
-
-    uint64_t chain_h = chain->height();
-    // The eval engine should track the same height as the chain.
-    // For now, we just check both are initialized.
-    if (chain_h == 0) return true;  // Genesis is always consistent
-
-    // A full consistency check would compare the model weight hash at the
-    // chain tip with the stored expected hash in the block index.
-    // For now, assume consistent if both subsystems are initialized.
-    LogDebug("node", "Chain-model consistency: chain_height=%lu",
-             static_cast<unsigned long>(chain_h));
-    return true;
-}
-
-bool NodeContext::replay_model_from(uint64_t from_height) {
-
-    uint64_t tip = chain->height();
-    if (from_height > tip) return true;  // Nothing to replay
-
-    LogInfo("node", "Replaying model state from height %lu to %lu",
-            static_cast<unsigned long>(from_height),
-            static_cast<unsigned long>(tip));
-
-    // In a full implementation, this would:
-    // 1. Load the most recent model checkpoint at or below from_height
-    // 2. Iterate through blocks from from_height+1 to tip
-    // 3. Apply each block's delta to the model
-    // 4. Verify the resulting model weight hash matches the block's header
-
-    // For now, log the intent and return success.
-    // The actual replay logic lives in the eval engine and chain state modules.
-    LogInfo("node", "Model replay: %lu blocks to process",
-            static_cast<unsigned long>(tip - from_height));
-
-    return true;
-}
-
-// ============================================================================
 // Performance counters
 // ============================================================================
 
@@ -1284,7 +1213,6 @@ void NodeContext::PerfCounters::reset() {
     bytes_recv.store(0);
     rpc_requests.store(0);
     rpc_errors.store(0);
-    model_evals.store(0);
     start_time = static_cast<int64_t>(std::time(nullptr));
 }
 
@@ -1321,7 +1249,6 @@ std::string NodeContext::perf_report() const {
        << "  RPC requests:      " << perf.rpc_requests.load()
        << " (" << perf.rpc_per_second() << "/s)\n"
        << "  RPC errors:        " << perf.rpc_errors.load() << "\n"
-       << "  Model evals:       " << perf.model_evals.load() << "\n"
        << "  RSS:               " << get_rss_mb() << " MB\n"
        << "  Disk free:         " << get_disk_free_mb() << " MB\n";
     return ss.str();
@@ -1354,39 +1281,8 @@ void NodeContext::periodic_maintenance() {
             format_duration(uptime()).c_str(),
             static_cast<long long>(get_rss_mb()));
 
-    // 3. PoW: no model checkpoint
-
-    // 4. Log rotate if needed
+    // 3. Log rotate if needed
     log_rotate();
-
-    // 5. Trim old model checkpoints (keep only the 3 most recent)
-    if (std::filesystem::exists(model_dir())) {
-        std::vector<std::pair<uint64_t, std::string>> checkpoints;
-        try {
-            for (const auto& entry : std::filesystem::directory_iterator(model_dir())) {
-                std::string name = entry.path().filename().string();
-                if (name.compare(0, 11, "checkpoint_") == 0 &&
-                    name.size() > 15 && name.substr(name.size() - 4) == ".bin") {
-                    std::string height_str = name.substr(11, name.size() - 15);
-                    try {
-                        uint64_t h = std::stoull(height_str);
-                        checkpoints.emplace_back(h, entry.path().string());
-                    } catch (...) {}
-                }
-            }
-        } catch (...) {}
-
-        // Sort by height descending
-        std::sort(checkpoints.begin(), checkpoints.end(),
-                  [](const auto& a, const auto& b) { return a.first > b.first; });
-
-        // Keep the latest 3, delete the rest
-        for (size_t i = 3; i < checkpoints.size(); ++i) {
-            LogDebug("node", "Removing old checkpoint: %s",
-                     checkpoints[i].second.c_str());
-            std::filesystem::remove(checkpoints[i].second);
-        }
-    }
 }
 
 // ============================================================================
@@ -1524,8 +1420,6 @@ NodeContext::NodeHealthInfo NodeContext::get_node_health() const {
     health.peak_rss_bytes = 0;
     health.utxo_cache_bytes = 0;
     health.mempool_bytes = 0;
-    health.model_bytes = 0;
-
     // Read peak RSS from /proc/self/status
     {
         std::ifstream status_file("/proc/self/status");
@@ -1556,30 +1450,15 @@ NodeContext::NodeHealthInfo NodeContext::get_node_health() const {
         health.mempool_bytes = mempool->bytes();
     }
 
-    // PoW: no model memory
-
     // Disk stats
     health.blocks_disk_bytes = 0;
     health.chainstate_disk_bytes = 0;
-    health.model_disk_bytes = 0;
     health.available_disk_bytes = 0;
 
     // Compute block store disk usage
     if (chain) {
         health.blocks_disk_bytes = chain->block_store().get_disk_usage();
     }
-
-    // Compute model directory size
-    try {
-        std::string mdir = model_dir();
-        if (std::filesystem::exists(mdir)) {
-            for (const auto& entry : std::filesystem::directory_iterator(mdir)) {
-                if (entry.is_regular_file()) {
-                    health.model_disk_bytes += entry.file_size();
-                }
-            }
-        }
-    } catch (...) {}
 
     // Available disk space
     try {
@@ -1622,10 +1501,6 @@ NodeContext::NodeHealthInfo NodeContext::get_node_health() const {
             if (health.sync_progress > 1.0) health.sync_progress = 1.0;
         }
     }
-
-    // Model stats
-    health.model_params = 0;
-    health.model_hash.set_null();
 
     // Warnings
     health.is_healthy = true;
@@ -1680,9 +1555,7 @@ void NodeContext::run_maintenance() {
         }
     }
 
-    // 3. PoW: no model checkpoint
-
-    // 4. Prune old block files if pruning enabled
+    // 3. Prune old block files if pruning enabled
     if (chain && chain->is_pruning_enabled()) {
         chain->prune();
     }
@@ -1731,33 +1604,6 @@ void NodeContext::run_maintenance() {
             is_ibd.store(false);
             LogInfo("node", "Exiting Initial Block Download mode at height %lu",
                     static_cast<unsigned long>(h));
-        }
-    }
-
-    // 11. Trim old model checkpoints (keep latest 3)
-    if (std::filesystem::exists(model_dir())) {
-        std::vector<std::pair<uint64_t, std::string>> checkpoints;
-        try {
-            for (const auto& entry : std::filesystem::directory_iterator(model_dir())) {
-                std::string name = entry.path().filename().string();
-                if (name.compare(0, 11, "checkpoint_") == 0 &&
-                    name.size() > 15 && name.substr(name.size() - 4) == ".bin") {
-                    std::string height_str = name.substr(11, name.size() - 15);
-                    try {
-                        uint64_t h = std::stoull(height_str);
-                        checkpoints.emplace_back(h, entry.path().string());
-                    } catch (...) {}
-                }
-            }
-        } catch (...) {}
-
-        std::sort(checkpoints.begin(), checkpoints.end(),
-                  [](const auto& a, const auto& b) { return a.first > b.first; });
-
-        for (size_t i = 3; i < checkpoints.size(); ++i) {
-            LogDebug("node", "Maintenance: removing old checkpoint: %s",
-                     checkpoints[i].second.c_str());
-            std::filesystem::remove(checkpoints[i].second);
         }
     }
 
@@ -1897,7 +1743,6 @@ NodeContext::NodeInfo NodeContext::get_info() const {
     info.uptime_seconds = uptime();
     info.ibd = is_ibd.load();
     info.sync_progress = 1.0;
-    info.model_params = 0;
 
     info.rss_mb = get_rss_mb();
     info.disk_free_mb = get_disk_free_mb();
