@@ -30,14 +30,7 @@ CBlock create_genesis_block() {
     genesis.nonce        = 0;
     genesis.version     = 1;
 
-    // Genesis creator's Ed25519 public key (proof of authorship)
-    static constexpr uint8_t GENESIS_PUBKEY[32] = {
-        0x36, 0x4a, 0x0a, 0x94, 0x80, 0x08, 0x56, 0x8a,
-        0x1c, 0xe2, 0xfd, 0x77, 0x6b, 0x61, 0xc2, 0x26,
-        0x4c, 0x21, 0x36, 0x70, 0xda, 0xeb, 0xfe, 0x1d,
-        0x5d, 0xf8, 0x32, 0xba, 0x0c, 0xb5, 0xbb, 0x62
-    };
-    std::memcpy(genesis.miner_pubkey.data(), GENESIS_PUBKEY, 32);
+    genesis.miner_pubkey.fill(0);
     genesis.miner_sig.fill(0);
 
     // -- Coinbase transaction --
