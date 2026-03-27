@@ -428,8 +428,12 @@ void register_net_rpcs(RpcServer& server, NetManager& net) {
             if (peer->state() != PeerState::HANDSHAKE_DONE) continue;
 
             json addr;
-            addr["address"]  = peer->addr().to_string();
-            addr["port"]     = net.port();
+            CNetAddr peer_listen = peer->addr();
+            if (peer->listen_port() != 0) {
+                peer_listen.port = peer->listen_port();
+            }
+            addr["address"]  = peer_listen.to_string();
+            addr["port"]     = peer->listen_port() != 0 ? peer->listen_port() : peer->addr().port;
             addr["services"] = peer->services();
             addr["time"]     = peer->connect_time();
             result.push_back(addr);
