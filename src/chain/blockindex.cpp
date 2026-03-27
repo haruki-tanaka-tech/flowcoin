@@ -101,6 +101,25 @@ CBlockIndex* BlockTree::insert_genesis(std::unique_ptr<CBlockIndex> idx) {
 }
 
 // ---------------------------------------------------------------------------
+// BlockTree::insert_with_hash — insert a pre-built index with known hash
+// ---------------------------------------------------------------------------
+
+CBlockIndex* BlockTree::insert_with_hash(std::unique_ptr<CBlockIndex> idx,
+                                          const uint256& hash) {
+    auto it = index_.find(hash);
+    if (it != index_.end()) {
+        return it->second;
+    }
+
+    idx->hash = hash;
+    CBlockIndex* raw_ptr = idx.get();
+    index_[hash] = raw_ptr;
+    storage_.push_back(std::move(idx));
+
+    return raw_ptr;
+}
+
+// ---------------------------------------------------------------------------
 // BlockTree::find
 // ---------------------------------------------------------------------------
 

@@ -105,6 +105,7 @@ class BlockTree {
 public:
     CBlockIndex* insert(const CBlockHeader& header);
     CBlockIndex* insert_genesis(std::unique_ptr<CBlockIndex> idx);
+    CBlockIndex* insert_with_hash(std::unique_ptr<CBlockIndex> idx, const uint256& hash);
     CBlockIndex* find(const uint256& hash) const;
 
     CBlockIndex* genesis() const { return genesis_; }

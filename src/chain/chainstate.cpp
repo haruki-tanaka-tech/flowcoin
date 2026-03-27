@@ -110,6 +110,10 @@ bool ChainState::init() {
         // Set as the best tip
         update_tip(genesis_idx);
 
+        // Persist genesis to ChainDB
+        persist_block_index(genesis_idx);
+        persist_tip();
+
         LogInfo("chain", "genesis block created (height 0)");
     }
 
@@ -871,20 +875,23 @@ bool ChainState::rebuild_tree_from_db() {
         hdr.merkle_root     = loaded_idx.merkle_root;
         std::memcpy(hdr.miner_pubkey.data(), loaded_idx.miner_pubkey.data(), 32);
 
-        // Insert into tree (handles parent linking)
+        // Insert into tree directly with stored hash (not recomputed)
+        auto new_idx = std::make_unique<CBlockIndex>();
+        *new_idx = loaded_idx;
+        new_idx->prev = nullptr; // linked below
+
         CBlockIndex* idx = nullptr;
         if (loaded_idx.height == 0) {
-            auto genesis_idx = std::make_unique<CBlockIndex>();
-            *genesis_idx = loaded_idx;
-            genesis_idx->prev = nullptr;
-            idx = tree_.insert_genesis(std::move(genesis_idx));
+            idx = tree_.insert_genesis(std::move(new_idx));
         } else {
-            idx = tree_.insert(hdr);
+            // Find parent and link
+            CBlockIndex* parent = tree_.find(loaded_idx.prev_hash);
+            new_idx->prev = parent;
+            idx = tree_.insert_with_hash(std::move(new_idx), loaded_idx.hash);
         }
 
         if (idx) {
-            // Copy over non-header fields
-            idx->status = loaded_idx.status;
+            // Status already copied from loaded_idx
             idx->pos = loaded_idx.pos;
             idx->n_tx = loaded_idx.n_tx;
             // improving_blocks removed in PoW transition
