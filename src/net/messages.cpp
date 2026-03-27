@@ -124,7 +124,7 @@ void MessageHandler::send_version(Peer& peer) {
     ver.services = NODE_NETWORK;
     ver.timestamp = GetTime();
     ver.addr_recv = peer.addr();
-    ver.addr_from = CNetAddr("0.0.0.0", 0);
+    ver.addr_from = CNetAddr("0.0.0.0", netman_.port());
     ver.nonce = netman_.local_nonce();
     ver.user_agent = "/FlowCoin:1.0.0/";
     ver.start_height = chain_.height();
@@ -203,10 +203,20 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
         send_version(peer);
     }
 
+    // Store listen port from version message
+    if (ver.addr_from.port != 0) {
+        peer.set_listen_port(ver.addr_from.port);
+    }
+
     // If we've already received their verack, handshake is done
     if (peer.verack_received()) {
         peer.set_state(PeerState::HANDSHAKE_DONE);
-        netman_.addrman().mark_good(peer.addr());
+        // Add peer with listen port to addrman (not ephemeral TCP port)
+        CNetAddr listen_addr = peer.addr();
+        if (peer.listen_port() != 0) {
+            listen_addr.port = peer.listen_port();
+        }
+        netman_.addrman().mark_good(listen_addr);
         LogInfo("net", "handshake complete with peer %lu (%s) node_id=%016llx",
                 (unsigned long)peer.id(), peer.addr().to_string().c_str(),
                 (unsigned long long)peer.node_id());
@@ -247,7 +257,11 @@ void MessageHandler::handle_verack(Peer& peer) {
     // Handshake is complete once we have both version and verack
     if (peer.version_received()) {
         peer.set_state(PeerState::HANDSHAKE_DONE);
-        netman_.addrman().mark_good(peer.addr());
+        CNetAddr listen_addr = peer.addr();
+        if (peer.listen_port() != 0) {
+            listen_addr.port = peer.listen_port();
+        }
+        netman_.addrman().mark_good(listen_addr);
         LogInfo("net", "handshake complete with peer %lu (%s) node_id=%016llx",
                 (unsigned long)peer.id(), peer.addr().to_string().c_str(),
                 (unsigned long long)peer.node_id());
