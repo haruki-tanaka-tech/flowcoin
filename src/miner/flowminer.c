@@ -502,8 +502,12 @@ static void *mining_thread(void *arg)
     time_t last_template_time = 0;
 
     while (g_running) {
-        /* Get block template */
-        if (!rpc_getblocktemplate(&rpc, header, target, &nbits, &block_height)) {
+        /* Get a new address for this block's coinbase reward */
+        char coinbase_addr[128] = {0};
+        rpc_getnewaddress(&rpc, coinbase_addr, sizeof(coinbase_addr));
+
+        /* Get block template (with coinbase address) */
+        if (!rpc_getblocktemplate_addr(&rpc, header, target, &nbits, &block_height, coinbase_addr)) {
             tui_log("Failed to get block template, retrying in 5s...");
             for (int i = 0; i < 50 && g_running; i++)
                 usleep(100000); /* 5s in 100ms chunks */

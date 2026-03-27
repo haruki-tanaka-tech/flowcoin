@@ -178,8 +178,11 @@ CTransaction BlockAssembler::build_coinbase(uint64_t height, Amount reward_plus_
 
     if (!address.empty()) {
         auto decoded = bech32m_decode(address);
-        if (decoded.valid && decoded.program.size() == 20) {
-            std::memcpy(cb_out.pubkey_hash.data(), decoded.program.data(), 20);
+        if (decoded.valid) {
+            // Zero-fill then copy witness program (20 or 32 bytes)
+            cb_out.pubkey_hash.fill(0);
+            size_t copy_len = std::min(decoded.program.size(), (size_t)32);
+            std::memcpy(cb_out.pubkey_hash.data(), decoded.program.data(), copy_len);
         }
     }
 

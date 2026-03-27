@@ -380,8 +380,21 @@ bool rpc_getblocktemplate(rpc_client_t *rpc, uint8_t *header_out,
                           uint8_t *target_out, uint32_t *nbits_out,
                           uint64_t *height_out)
 {
-    char *resp = rpc_call(rpc, "getblocktemplate",
-        "[{\"capabilities\":[\"coinbasetxn\",\"workid\",\"coinbase/append\"]}]");
+    return rpc_getblocktemplate_addr(rpc, header_out, target_out, nbits_out, height_out, NULL);
+}
+
+bool rpc_getblocktemplate_addr(rpc_client_t *rpc, uint8_t *header_out,
+                          uint8_t *target_out, uint32_t *nbits_out,
+                          uint64_t *height_out, const char *coinbase_addr)
+{
+    char params[512];
+    if (coinbase_addr && coinbase_addr[0]) {
+        snprintf(params, sizeof(params), "[\"%s\"]", coinbase_addr);
+    } else {
+        snprintf(params, sizeof(params),
+            "[{\"capabilities\":[\"coinbasetxn\",\"workid\",\"coinbase/append\"]}]");
+    }
+    char *resp = rpc_call(rpc, "getblocktemplate", params);
     if (!resp) return false;
 
     /* Check for error */
