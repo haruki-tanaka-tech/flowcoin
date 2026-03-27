@@ -96,7 +96,7 @@ public:
         READING_HEADERS,
         READING_BODY,
         COMPLETE,
-        ERROR
+        PARSE_ERROR  // not ERROR — conflicts with Windows macro
     };
 
     size_t feed(const uint8_t* data, size_t len);
