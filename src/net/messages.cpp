@@ -634,11 +634,15 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
 
     // Validate and accept the block
     consensus::ValidationState vstate;
+    uint64_t tip_before = chain_.height();
     if (chain_.accept_block(block, vstate)) {
         LogInfo("net", "accepted block at height %lu from peer %lu (tip now %lu)",
                 (unsigned long)block.height, (unsigned long)peer.id(),
                 (unsigned long)chain_.height());
-        relay_block(block_hash);
+        // Only relay if this block actually advanced our tip
+        if (chain_.height() > tip_before) {
+            relay_block(block_hash, &peer);
+        }
     } else {
         LogError("net", "rejected block at height %lu from peer %lu: %s "
                 "(prev_hash=%s, nbits=0x%08x)",
@@ -926,7 +930,7 @@ void MessageHandler::handle_getblocks(Peer& peer, const uint8_t* data, size_t le
 // Relay
 // ===========================================================================
 
-void MessageHandler::relay_block(const uint256& hash) {
+void MessageHandler::relay_block(const uint256& hash, const Peer* exclude) {
     LogInfo("net", "relaying block %s via inv to all peers",
             hex_encode(hash.data(), 8).c_str());
 
@@ -937,7 +941,7 @@ void MessageHandler::relay_block(const uint256& hash) {
     item.hash = hash;
     write_inv_item(w, item);
 
-    netman_.broadcast(NetCmd::INV, w.release());
+    netman_.broadcast_except(NetCmd::INV, w.release(), exclude);
 }
 
 void MessageHandler::relay_tx(const uint256& txid) {

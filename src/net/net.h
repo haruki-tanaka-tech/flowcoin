@@ -97,6 +97,8 @@ public:
 
     // Broadcast a message to all handshaked peers
     void broadcast(const std::string& command, const std::vector<uint8_t>& payload);
+    void broadcast_except(const std::string& command, const std::vector<uint8_t>& payload,
+                          const Peer* exclude);
 
     // Broadcast a transaction to all connected peers via INV
     void broadcast_transaction(const CTransaction& tx);
