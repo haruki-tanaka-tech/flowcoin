@@ -108,21 +108,34 @@ bool NetManager::start() {
     uv_tcp_init(loop_, server_);
     server_->data = this;
 
-    // Bind to all interfaces (dual-stack: IPv4 + IPv6)
-    struct sockaddr_in6 bind_addr;
-    uv_ip6_addr("::", port_, &bind_addr);
-    int r = uv_tcp_bind(server_, reinterpret_cast<const struct sockaddr*>(&bind_addr), 0);
+    // Bind to all interfaces — try dual-stack (IPv6+IPv4) first, fallback to IPv4
+    int r;
+    struct sockaddr_in6 bind_addr6;
+    uv_ip6_addr("::", port_, &bind_addr6);
+    r = uv_tcp_bind(server_, reinterpret_cast<const struct sockaddr*>(&bind_addr6), 0);
     if (r < 0) {
-        LogError("net", "bind failed on port %u: %s", port_, uv_strerror(r));
-        // Close the handle properly before deleting the loop: schedule close,
-        // run the loop to let the callback fire, then delete.
+        // IPv6 not available — fallback to IPv4 only
+        LogInfo("net", "IPv6 bind failed (%s), falling back to IPv4", uv_strerror(r));
         uv_close(reinterpret_cast<uv_handle_t*>(server_), on_close);
-        server_ = nullptr;
-        uv_run(loop_, UV_RUN_DEFAULT);
-        uv_loop_close(loop_);
-        uv_loop_delete(loop_);
-        loop_ = nullptr;
-        return false;
+        uv_run(loop_, UV_RUN_NOWAIT);
+
+        server_ = new uv_tcp_t;
+        uv_tcp_init(loop_, server_);
+        server_->data = this;
+
+        struct sockaddr_in bind_addr4;
+        uv_ip4_addr("0.0.0.0", port_, &bind_addr4);
+        r = uv_tcp_bind(server_, reinterpret_cast<const struct sockaddr*>(&bind_addr4), 0);
+        if (r < 0) {
+            LogError("net", "bind failed on port %u: %s", port_, uv_strerror(r));
+            uv_close(reinterpret_cast<uv_handle_t*>(server_), on_close);
+            server_ = nullptr;
+            uv_run(loop_, UV_RUN_DEFAULT);
+            uv_loop_close(loop_);
+            uv_loop_delete(loop_);
+            loop_ = nullptr;
+            return false;
+        }
     }
 
     // Start listening
