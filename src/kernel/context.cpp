@@ -124,7 +124,7 @@ consensus::ValidationState Kernel::validate_header(const CBlockHeader& header) {
     consensus::ValidationState state;
 
     if (!initialized_) {
-        state.invalid(consensus::ValidationResult::INTERNAL_ERROR,
+        state.invalid(consensus::ValidationResult::INTERNAL_ERR,
                       "kernel-not-initialized",
                       "Kernel::validate_header called before init()");
         return state;
@@ -132,7 +132,7 @@ consensus::ValidationState Kernel::validate_header(const CBlockHeader& header) {
 
     // Get parent header from chain state
     if (!chain_) {
-        state.invalid(consensus::ValidationResult::INTERNAL_ERROR,
+        state.invalid(consensus::ValidationResult::INTERNAL_ERR,
                       "no-chain-state");
         return state;
     }
@@ -151,7 +151,7 @@ consensus::ValidationState Kernel::validate_header(
     consensus::ValidationState state;
 
     if (!initialized_) {
-        state.invalid(consensus::ValidationResult::INTERNAL_ERROR,
+        state.invalid(consensus::ValidationResult::INTERNAL_ERR,
                       "kernel-not-initialized");
         return state;
     }
@@ -172,7 +172,7 @@ consensus::ValidationState Kernel::validate_block(const CBlock& block) {
     consensus::ValidationState state;
 
     if (!initialized_) {
-        state.invalid(consensus::ValidationResult::INTERNAL_ERROR,
+        state.invalid(consensus::ValidationResult::INTERNAL_ERR,
                       "kernel-not-initialized");
         return state;
     }
@@ -191,7 +191,7 @@ consensus::ValidationState Kernel::accept_block(const CBlock& block) {
     consensus::ValidationState state;
 
     if (!initialized_) {
-        state.invalid(consensus::ValidationResult::INTERNAL_ERROR,
+        state.invalid(consensus::ValidationResult::INTERNAL_ERR,
                       "kernel-not-initialized");
         return state;
     }
@@ -204,7 +204,7 @@ consensus::ValidationState Kernel::accept_block(const CBlock& block) {
     // Accept block through ChainState (which handles connect_block internally)
     if (!chain_->accept_block(block, state)) {
         if (!state.is_invalid()) {
-            state.invalid(consensus::ValidationResult::INTERNAL_ERROR,
+            state.invalid(consensus::ValidationResult::INTERNAL_ERR,
                           "accept-block-failed",
                           "Failed to accept block to chain state");
         }
