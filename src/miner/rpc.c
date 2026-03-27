@@ -617,8 +617,7 @@ bool rpc_submitblock_full(rpc_client_t *rpc,
         /* Print rejection reason for debugging */
         char reason[256] = {0};
         json_find_string(resp, "result", reason, sizeof(reason));
-        if (reason[0])
-            fprintf(stderr, "submitblock rejected: %s\n", reason);
+        /* Rejection reason logged by caller via tui_log, don't print to stderr */
 
         /* Also check error field */
         char err_msg[512] = {0};

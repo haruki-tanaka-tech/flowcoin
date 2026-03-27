@@ -330,11 +330,14 @@ static void update_tui(void)
     mvwhline(info_win, 2, 0, ACS_HLINE, cols);
     wnoutrefresh(info_win);
 
-    /* ─── Drain log ring ─── */
+    /* ─── Log window ─── */
+    touchwin(log_win);
     drain_log_ring();
     wnoutrefresh(log_win);
 
-    /* Single atomic screen update */
+    /* Single atomic screen update — all three windows at once */
+    touchwin(stdscr);
+    wnoutrefresh(stdscr);
     doupdate();
 }
 
