@@ -13,6 +13,7 @@
 #include "consensus/reward.h"
 #include "util/strencodings.h"
 #include "net/net.h"
+#include "wallet/wallet.h"
 #include "logging.h"
 #include "mempool/mempool.h"
 
@@ -22,17 +23,20 @@
 
 namespace flow {
 
-void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net) {
+void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net, Wallet* wallet) {
 
     // -----------------------------------------------------------------------
     // getblocktemplate: return a template for mining
     // -----------------------------------------------------------------------
-    server.register_method("getblocktemplate", [&chain](const json& params) -> json {
+    server.register_method("getblocktemplate", [&chain, wallet](const json& params) -> json {
         // Optional coinbase_address parameter
         std::string coinbase_addr;
         if (!params.empty() && params[0].is_string()) {
             coinbase_addr = params[0].get<std::string>();
-            LogInfo("rpc", "getblocktemplate coinbase_addr=%s", coinbase_addr.c_str());
+        }
+        // Auto-generate address from wallet if not provided
+        if (coinbase_addr.empty() && wallet) {
+            coinbase_addr = wallet->get_new_address();
         }
 
 
