@@ -2,6 +2,7 @@
  * flowminer.c - FlowCoin solo miner with ncurses TUI.
  * Keccak-256d Proof-of-Work, cgminer-style display.
  */
+#define _DEFAULT_SOURCE
 
 #include <ncurses.h>
 #include <pthread.h>

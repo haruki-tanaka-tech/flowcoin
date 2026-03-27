@@ -14,18 +14,19 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libncurses-dev
 
       - name: Build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=ON
+          cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx flowcoin-miner
 
       - name: Package
         run: |
           mkdir -p flowcoin-${{ github.ref_name }}-linux-x86_64
-          cp build/flowcoind build/flowcoin-cli build/flowcoin-tx \
+          cp build/flowcoind build/flowcoin-cli build/flowcoin-tx build/flowcoin-miner \
              flowcoin-${{ github.ref_name }}-linux-x86_64/
+          cp src/miner/ocl_keccak.cl flowcoin-${{ github.ref_name }}-linux-x86_64/ 2>/dev/null || true
           cp whitepaper.txt flowcoin-${{ github.ref_name }}-linux-x86_64/ 2>/dev/null || true
           tar czf flowcoin-${{ github.ref_name }}-linux-x86_64.tar.gz \
              flowcoin-${{ github.ref_name }}-linux-x86_64/
@@ -43,14 +44,15 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j$(sysctl -n hw.ncpu) --target flowcoind flowcoin-cli flowcoin-tx
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=ON
+          cmake --build build -j$(sysctl -n hw.ncpu) --target flowcoind flowcoin-cli flowcoin-tx flowcoin-miner
 
       - name: Package
         run: |
           mkdir -p flowcoin-${{ github.ref_name }}-macos-arm64
-          cp build/flowcoind build/flowcoin-cli build/flowcoin-tx \
+          cp build/flowcoind build/flowcoin-cli build/flowcoin-tx build/flowcoin-miner \
              flowcoin-${{ github.ref_name }}-macos-arm64/
+          cp src/miner/ocl_keccak.cl flowcoin-${{ github.ref_name }}-macos-arm64/ 2>/dev/null || true
           cp whitepaper.txt flowcoin-${{ github.ref_name }}-macos-arm64/ 2>/dev/null || true
           tar czf flowcoin-${{ github.ref_name }}-macos-arm64.tar.gz \
              flowcoin-${{ github.ref_name }}-macos-arm64/
@@ -76,18 +78,20 @@ jobs:
           install: >-
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ncurses
             make
 
       - name: Build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles"
-          cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" -DBUILD_MINER=ON
+          cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx flowcoin-miner
 
       - name: Package
         run: |
           mkdir -p flowcoin-${{ github.ref_name }}-windows-x64
-          cp build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe \
+          cp build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe build/flowcoin-miner.exe \
              flowcoin-${{ github.ref_name }}-windows-x64/
+          cp src/miner/ocl_keccak.cl flowcoin-${{ github.ref_name }}-windows-x64/ 2>/dev/null || true
           cp whitepaper.txt flowcoin-${{ github.ref_name }}-windows-x64/ 2>/dev/null || true
 
       - name: Upload artifact
