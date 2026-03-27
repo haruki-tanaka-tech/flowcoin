@@ -537,6 +537,10 @@ if(BUILD_MINER)
             src/hash src/crypto src/miner ${CURSES_INCLUDE_DIRS})
         target_compile_definitions(flowcoin-miner PRIVATE
             ED25519_CUSTOMHASH ED25519_CUSTOMRNG)
+        # On Windows, compile C files as C++ to avoid MinGW C-mode header conflicts
+        if(WIN32)
+            set_source_files_properties(${MINER_SOURCES} PROPERTIES LANGUAGE CXX)
+        endif()
         target_link_libraries(flowcoin-miner PRIVATE
             ${CURSES_LIBRARIES} pthread m)
 
