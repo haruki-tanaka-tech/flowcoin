@@ -16,15 +16,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cmake g++ libncurses-dev
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=ON
 
       - name: Build
-        run: cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
+        run: cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx flowcoin-miner
 
       - name: Verify binaries
-        run: |
-          ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx
-          ./build/flowcoind --help 2>&1 | head -5 || true
+        run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx build/flowcoin-miner
 
   build-macos:
     runs-on: macos-14
@@ -32,13 +30,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=ON
 
       - name: Build
-        run: cmake --build build -j$(sysctl -n hw.ncpu) --target flowcoind flowcoin-cli flowcoin-tx
+        run: cmake --build build -j$(sysctl -n hw.ncpu) --target flowcoind flowcoin-cli flowcoin-tx flowcoin-miner
 
       - name: Verify binaries
-        run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx
+        run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx build/flowcoin-miner
 
   build-windows:
     runs-on: windows-2022
@@ -55,13 +53,14 @@ jobs:
           install: >-
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ncurses
             make
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles"
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" -DBUILD_MINER=ON
 
       - name: Build
-        run: cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
+        run: cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx flowcoin-miner
 
       - name: Verify binaries
-        run: ls -lh build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe
+        run: ls -lh build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe build/flowcoin-miner.exe

@@ -2,6 +2,7 @@
  * rpc.c - JSON-RPC client for FlowCoin solo miner.
  * Uses raw TCP sockets -- no libcurl, no jansson.
  */
+#define _DEFAULT_SOURCE
 
 #include "rpc.h"
 #include "keccak2.h"
