@@ -211,11 +211,12 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
     // If we've already received their verack, handshake is done
     if (peer.verack_received()) {
         peer.set_state(PeerState::HANDSHAKE_DONE);
-        // Add peer with listen port to addrman (not ephemeral TCP port)
+        // Register peer with listen port in addrman
         CNetAddr listen_addr = peer.addr();
         if (peer.listen_port() != 0) {
             listen_addr.port = peer.listen_port();
         }
+        netman_.addrman().add(listen_addr, GetTime());
         netman_.addrman().mark_good(listen_addr);
         LogInfo("net", "handshake complete with peer %lu (%s) node_id=%016llx",
                 (unsigned long)peer.id(), peer.addr().to_string().c_str(),
@@ -261,6 +262,7 @@ void MessageHandler::handle_verack(Peer& peer) {
         if (peer.listen_port() != 0) {
             listen_addr.port = peer.listen_port();
         }
+        netman_.addrman().add(listen_addr, GetTime());
         netman_.addrman().mark_good(listen_addr);
         LogInfo("net", "handshake complete with peer %lu (%s) node_id=%016llx",
                 (unsigned long)peer.id(), peer.addr().to_string().c_str(),
