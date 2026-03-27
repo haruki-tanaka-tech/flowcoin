@@ -53,7 +53,7 @@ ChainParams ChainParams::mainnet() {
     };
     // Static IP fallback
     p.seed_nodes = {
-        {"125.185.70.218", 9333},
+        {"211.205.13.203", 9333},
     };
 
     // Feature flags
@@ -103,7 +103,7 @@ ChainParams ChainParams::testnet() {
         "seed.flowcoin.org",
     };
     p.seed_nodes = {
-        {"125.185.70.218", 19333},
+        {"211.205.13.203", 19333},
     };
 
     // Feature flags: testnet allows min difficulty blocks after 20 minutes
