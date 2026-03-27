@@ -111,14 +111,13 @@ NodeContext::~NodeContext() {
 
 /// Verify that critical system resources are available.
 static bool check_system_resources() {
-    // Check available file descriptors
-    // Most systems default to 1024; we need at least 256 for connections + DBs.
+#ifndef _WIN32
+    // Check available file descriptors (POSIX only)
     struct rlimit rl;
     if (::getrlimit(RLIMIT_NOFILE, &rl) == 0) {
         if (rl.rlim_cur < 256) {
             LogWarn("node", "Low file descriptor limit: %lu (recommend >= 1024)",
                     static_cast<unsigned long>(rl.rlim_cur));
-            // Try to raise it
             rl.rlim_cur = std::min(static_cast<rlim_t>(4096), rl.rlim_max);
             if (::setrlimit(RLIMIT_NOFILE, &rl) == 0) {
                 LogInfo("node", "Raised file descriptor limit to %lu",
@@ -129,6 +128,7 @@ static bool check_system_resources() {
                      static_cast<unsigned long>(rl.rlim_cur));
         }
     }
+#endif
 
     // Check available disk space (at least 1 GB recommended)
     // This is checked again later after the data directory is set up.
