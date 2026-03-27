@@ -38,6 +38,11 @@ bool rpc_getblocktemplate(rpc_client_t *rpc, uint8_t *header_out,
                           uint8_t *target_out, uint32_t *nbits_out,
                           uint64_t *height_out);
 
+/* Same but with coinbase address for block reward. */
+bool rpc_getblocktemplate_addr(rpc_client_t *rpc, uint8_t *header_out,
+                          uint8_t *target_out, uint32_t *nbits_out,
+                          uint64_t *height_out, const char *coinbase_addr);
+
 /* Get a new address from the wallet. Returns true on success. */
 bool rpc_getnewaddress(rpc_client_t *rpc, char *addr_out, int addr_size);
 

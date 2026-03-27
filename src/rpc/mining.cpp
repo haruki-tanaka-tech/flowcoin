@@ -13,6 +13,7 @@
 #include "consensus/reward.h"
 #include "util/strencodings.h"
 #include "net/net.h"
+#include "logging.h"
 #include "mempool/mempool.h"
 
 #include <chrono>
@@ -31,7 +32,9 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         std::string coinbase_addr;
         if (!params.empty() && params[0].is_string()) {
             coinbase_addr = params[0].get<std::string>();
+            LogInfo("rpc", "getblocktemplate coinbase_addr=%s", coinbase_addr.c_str());
         }
+
 
         BlockTemplate tmpl = create_block_template(chain, coinbase_addr);
 

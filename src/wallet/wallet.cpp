@@ -98,7 +98,14 @@ std::string Wallet::get_new_address() {
 
     // Update caches
     our_pubkeys_.insert(kp.pubkey);
-    uint256 pkh = keccak256(kp.pubkey.data(), 32);
+    // Store 20-byte witness program hash as key (matches Bech32m address encoding)
+    uint256 pkh;
+    pkh.set_null();
+    auto decoded = bech32m_decode(address);
+    if (decoded.valid && !decoded.program.empty()) {
+        std::memcpy(pkh.data(), decoded.program.data(),
+                    std::min(decoded.program.size(), (size_t)32));
+    }
     hash_to_pubkey_[pkh.m_data] = kp.pubkey;
 
     return address;
