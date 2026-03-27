@@ -5,9 +5,8 @@
 #define _DEFAULT_SOURCE
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <wincrypt.h>
+#include <bcrypt.h>
 #include <direct.h>
 #include <io.h>
 #include <ncurses/ncurses.h>
@@ -120,18 +119,9 @@ static int load_miner_keypair(void)
 #if defined(__APPLE__)
     arc4random_buf(g_miner_privkey, 32);
 #elif defined(_WIN32)
-    {
-        HCRYPTPROV hProv;
-        if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
-            fprintf(stderr, "Failed to acquire crypto context\n");
-            return 0;
-        }
-        if (!CryptGenRandom(hProv, 32, g_miner_privkey)) {
-            CryptReleaseContext(hProv, 0);
-            fprintf(stderr, "Failed to get random bytes for keypair\n");
-            return 0;
-        }
-        CryptReleaseContext(hProv, 0);
+    if (BCryptGenRandom(NULL, g_miner_privkey, 32, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
+        fprintf(stderr, "Failed to get random bytes for keypair\n");
+        return 0;
     }
 #else
     if (getrandom(g_miner_privkey, 32, 0) != 32) {
