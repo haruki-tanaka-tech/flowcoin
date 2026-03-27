@@ -66,6 +66,8 @@ public:
     // Persistent node identity (exchanged in VERSION, used for multi-address dedup)
     uint64_t node_id() const { return node_id_; }
     void set_node_id(uint64_t id) { node_id_ = id; }
+    uint16_t listen_port() const { return listen_port_; }
+    void set_listen_port(uint16_t p) { listen_port_ = p; }
 
     // Service flags
     uint64_t services() const { return services_; }
@@ -432,6 +434,7 @@ private:
     std::string user_agent_;
     uint64_t nonce_ = 0;
     uint64_t node_id_ = 0;
+    uint16_t listen_port_ = 0;
     uint64_t services_ = 0;
     int64_t last_ping_time_ = 0;
     uint64_t ping_nonce_ = 0;
