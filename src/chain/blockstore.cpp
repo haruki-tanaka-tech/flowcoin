@@ -134,9 +134,17 @@ BlockStore::BlockStore(const std::string& datadir)
 {
     // Ensure the blocks/ and blocks/undo/ subdirectories exist
     std::string blocks_dir = datadir_ + "/blocks";
+#ifdef _WIN32
+    _mkdir(blocks_dir.c_str());
+#else
     ::mkdir(blocks_dir.c_str(), 0755);
+#endif
     std::string undo_dir = blocks_dir + "/undo";
+#ifdef _WIN32
+    _mkdir(undo_dir.c_str());
+#else
     ::mkdir(undo_dir.c_str(), 0755);
+#endif
 
     // Scan existing blk files to determine current file and offset.
     // Start from file 0 and find the last one that exists.
