@@ -4,7 +4,20 @@
  */
 #define _DEFAULT_SOURCE
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <wincrypt.h>
+#include <direct.h>
+#include <io.h>
+#include <ncurses/ncurses.h>
+#define usleep(us) Sleep((us) / 1000)
+#define mkdir(d, m) _mkdir(d)
+#else
 #include <curses.h>
+#include <unistd.h>
+#endif
+
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -13,17 +26,6 @@
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <wincrypt.h>
-#include <direct.h>
-#include <io.h>
-#define usleep(us) Sleep((us) / 1000)
-#define mkdir(d, m) _mkdir(d)
-#else
-#include <unistd.h>
-#endif
 
 #ifndef _WIN32
 #include <pwd.h>
