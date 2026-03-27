@@ -16,7 +16,6 @@
 
 #include "version.h"
 
-#include <arpa/inet.h>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -25,13 +24,23 @@
 #include <fstream>
 #include <iostream>
 #include <map>
-#include <netdb.h>
 #include <sstream>
 #include <string>
+#include <vector>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <io.h>
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#else
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <vector>
+#endif
 
 // ============================================================================
 // Exit codes
@@ -327,17 +336,27 @@ static std::string http_request(const std::string& host, uint16_t port,
     }
 
     // Set timeouts
+#ifdef _WIN32
+    DWORD tv_ms = static_cast<DWORD>(timeout_sec) * 1000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv_ms), sizeof(tv_ms));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&tv_ms), sizeof(tv_ms));
+#else
     struct timeval tv;
     tv.tv_sec = timeout_sec;
     tv.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif
 
     // Connect
     if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
         std::cerr << "error: could not connect to " << host << ":" << port
                   << " — " << strerror(errno) << std::endl;
+#ifdef _WIN32
+        closesocket(sock);
+#else
         close(sock);
+#endif
         freeaddrinfo(res);
         return "";
     }
@@ -369,7 +388,11 @@ static std::string http_request(const std::string& host, uint16_t port,
             } else {
                 std::cerr << "error: send failed: " << strerror(errno) << std::endl;
             }
+#ifdef _WIN32
+            closesocket(sock);
+#else
             close(sock);
+#endif
             return "";
         }
         total_sent += n;
@@ -384,7 +407,11 @@ static std::string http_request(const std::string& host, uint16_t port,
         response.append(buf, static_cast<size_t>(n));
     }
 
+#ifdef _WIN32
+    closesocket(sock);
+#else
     close(sock);
+#endif
     return response;
 }
 

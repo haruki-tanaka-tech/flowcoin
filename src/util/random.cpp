@@ -13,14 +13,42 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <process.h>
+// RtlGenRandom is exported from advapi32.dll as SystemFunction036.
+// Not all MinGW versions declare it, so we declare it manually.
+extern "C" BOOLEAN NTAPI SystemFunction036(PVOID, ULONG);
+#define RtlGenRandom SystemFunction036
+#else
 #include <fcntl.h>
 #include <unistd.h>
+#endif
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 namespace flow {
 
 // ===========================================================================
-// Internal: persistent /dev/urandom file descriptor
+// Raw entropy functions
 // ===========================================================================
+
+#ifdef _WIN32
+
+void GetRandBytes(uint8_t* buf, size_t len) {
+    // Use RtlGenRandom (SystemFunction036) which is simpler and always available.
+    // Defined in <ntsecapi.h> but we declare it directly to avoid header issues.
+    if (!RtlGenRandom(buf, static_cast<ULONG>(len))) {
+        LogFatal("default", "RtlGenRandom failed");
+        std::abort();
+    }
+}
+
+#else // !_WIN32
 
 static int GetUrandomFD() {
     static int fd = -1;
@@ -34,10 +62,6 @@ static int GetUrandomFD() {
     }
     return fd;
 }
-
-// ===========================================================================
-// Raw entropy functions
-// ===========================================================================
 
 void GetRandBytes(uint8_t* buf, size_t len) {
     int fd = GetUrandomFD();
@@ -58,6 +82,8 @@ void GetRandBytes(uint8_t* buf, size_t len) {
         total += static_cast<size_t>(n);
     }
 }
+
+#endif // _WIN32
 
 uint64_t GetRandUint64() {
     uint64_t v;
@@ -153,11 +179,18 @@ void CSPRNG::seed_from_system() {
     auto steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(steady).count();
     std::memcpy(entropy + 40, &steady_ns, 8);
 
-    // Source 3: PID and thread ID (16 bytes)
+    // Source 3: PID (16 bytes)
+#ifdef _WIN32
+    DWORD pid = GetCurrentProcessId();
+    std::memcpy(entropy + 48, &pid, sizeof(pid));
+    DWORD ppid = 0;  // No easy equivalent on Windows
+    std::memcpy(entropy + 48 + sizeof(pid), &ppid, sizeof(ppid));
+#else
     pid_t pid = getpid();
     std::memcpy(entropy + 48, &pid, sizeof(pid));
     pid_t ppid = getppid();
     std::memcpy(entropy + 48 + sizeof(pid), &ppid, sizeof(ppid));
+#endif
 
     // Source 4: more urandom (32 bytes)
     GetRandBytes(entropy + 64, 32);

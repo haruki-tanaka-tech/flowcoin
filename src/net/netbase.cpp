@@ -5,13 +5,19 @@
 
 #include "net/netbase.h"
 
-#include <arpa/inet.h>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#else
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
-#include <mutex>
 #include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -20,6 +26,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 namespace flow {
 
@@ -306,6 +313,44 @@ CNetAddr2 GetLocalAddress() {
     CNetAddr2 best;
     bool found = false;
 
+#ifdef _WIN32
+    // Use GetAdaptersAddresses on Windows
+    ULONG buf_size = 15000;
+    PIP_ADAPTER_ADDRESSES addrs = nullptr;
+    ULONG ret;
+    do {
+        addrs = (PIP_ADAPTER_ADDRESSES)malloc(buf_size);
+        if (!addrs) return best;
+        ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+                                   nullptr, addrs, &buf_size);
+        if (ret == ERROR_BUFFER_OVERFLOW) { free(addrs); addrs = nullptr; }
+    } while (ret == ERROR_BUFFER_OVERFLOW);
+
+    if (ret != NO_ERROR) { free(addrs); return best; }
+
+    for (auto* adapter = addrs; adapter; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp) continue;
+        if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
+            CNetAddr2 candidate;
+            if (unicast->Address.lpSockaddr->sa_family == AF_INET) {
+                auto* sin = reinterpret_cast<struct sockaddr_in*>(unicast->Address.lpSockaddr);
+                uint32_t ipv4;
+                std::memcpy(&ipv4, &sin->sin_addr.s_addr, 4);
+                candidate.SetIPv4(ipv4);
+            } else if (unicast->Address.lpSockaddr->sa_family == AF_INET6) {
+                auto* sin6 = reinterpret_cast<struct sockaddr_in6*>(unicast->Address.lpSockaddr);
+                candidate.SetIPv6(reinterpret_cast<const uint8_t*>(&sin6->sin6_addr));
+            } else {
+                continue;
+            }
+            if (!candidate.IsValid()) continue;
+            if (candidate.IsRoutable()) { best = candidate; found = true; }
+            else if (!found && !candidate.IsLoopback()) { best = candidate; }
+        }
+    }
+    free(addrs);
+#else
     struct ifaddrs* ifa_list = nullptr;
     if (getifaddrs(&ifa_list) != 0) {
         return best;
@@ -341,6 +386,7 @@ CNetAddr2 GetLocalAddress() {
     }
 
     freeifaddrs(ifa_list);
+#endif
     return best;
 }
 

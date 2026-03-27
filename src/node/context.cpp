@@ -27,17 +27,25 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
-#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <thread>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <direct.h>
+#include <process.h>
+#else
+#include <fcntl.h>
 #include <sys/file.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <thread>
 #include <unistd.h>
+#endif
 
 namespace flow {
 
@@ -771,6 +779,31 @@ void NodeContext::log_stop_timings() const {
 bool NodeContext::lock_datadir() {
     lock_file_path = datadir_path(".lock");
 
+#ifdef _WIN32
+    lockfile_handle = CreateFileA(lock_file_path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                   0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (lockfile_handle == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        if (err == ERROR_SHARING_VIOLATION) {
+            LogError("node", "Cannot obtain lock on data directory '%s'. "
+                     "FlowCoin is probably already running.",
+                     datadir.c_str());
+        } else {
+            LogError("node", "Lock file error: %lu", err);
+        }
+        return false;
+    }
+
+    // Write our PID to the lock file
+    char pid_buf[32];
+    int len = std::snprintf(pid_buf, sizeof(pid_buf), "%d\n", static_cast<int>(_getpid()));
+    if (len > 0) {
+        DWORD written;
+        WriteFile(lockfile_handle, pid_buf, static_cast<DWORD>(len), &written, nullptr);
+    }
+    return true;
+}
+#else
     lockfile_fd = ::open(lock_file_path.c_str(),
                          O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (lockfile_fd < 0) {
@@ -803,9 +836,22 @@ bool NodeContext::lock_datadir() {
 
     LogInfo("node", "Data directory locked: %s", lock_file_path.c_str());
     return true;
+#endif // !_WIN32
 }
 
 void NodeContext::unlock_datadir() {
+#ifdef _WIN32
+    if (lockfile_handle != INVALID_HANDLE_VALUE) {
+        CloseHandle(lockfile_handle);
+        lockfile_handle = INVALID_HANDLE_VALUE;
+
+        // Remove the lock file
+        if (!lock_file_path.empty()) {
+            DeleteFileA(lock_file_path.c_str());
+            lock_file_path.clear();
+        }
+    }
+#else
     if (lockfile_fd >= 0) {
         ::flock(lockfile_fd, LOCK_UN);
         ::close(lockfile_fd);
@@ -817,6 +863,7 @@ void NodeContext::unlock_datadir() {
             lock_file_path.clear();
         }
     }
+#endif
 }
 
 // ============================================================================
@@ -832,16 +879,21 @@ bool NodeContext::write_pid_file() {
                  pid_file_path.c_str(), strerror(errno));
         return false;
     }
-    f << getpid() << "\n";
+#ifdef _WIN32
+    int current_pid = static_cast<int>(_getpid());
+#else
+    int current_pid = static_cast<int>(getpid());
+#endif
+    f << current_pid << "\n";
     f.close();
 
-    LogInfo("node", "PID file written: %s (pid=%d)", pid_file_path.c_str(), getpid());
+    LogInfo("node", "PID file written: %s (pid=%d)", pid_file_path.c_str(), current_pid);
     return true;
 }
 
 void NodeContext::remove_pid_file() {
     if (!pid_file_path.empty()) {
-        ::unlink(pid_file_path.c_str());
+        std::remove(pid_file_path.c_str());
         pid_file_path.clear();
     }
 }

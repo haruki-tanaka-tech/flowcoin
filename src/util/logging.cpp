@@ -62,7 +62,11 @@ void Logger::format_timestamp(char* buf, size_t len) {
         now.time_since_epoch()).count() % 1000;
 
     struct tm tm_buf;
+#ifdef _WIN32
+    gmtime_s(&tm_buf, &time_t_now);
+#else
     gmtime_r(&time_t_now, &tm_buf);
+#endif
     std::snprintf(buf, len, "%04d-%02d-%02d %02d:%02d:%02d.%03d",
                   tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
                   tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,

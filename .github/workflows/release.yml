@@ -61,8 +61,43 @@ jobs:
           name: macos-arm64
           path: flowcoin-*.tar.gz
 
+  build-windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            make
+
+      - name: Build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles"
+          cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
+
+      - name: Package
+        run: |
+          mkdir -p flowcoin-${{ github.ref_name }}-windows-x64
+          cp build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe \
+             flowcoin-${{ github.ref_name }}-windows-x64/
+          cp whitepaper.txt flowcoin-${{ github.ref_name }}-windows-x64/ 2>/dev/null || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: flowcoin-${{ github.ref_name }}-windows-x64/
+
   create-release:
-    needs: [build-linux, build-macos]
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-22.04
     steps:
       - name: Download all artifacts
@@ -70,10 +105,16 @@ jobs:
         with:
           path: artifacts
 
+      - name: Package Windows
+        run: |
+          cd artifacts/windows-x64
+          zip -r ../../flowcoin-windows-x64.zip *
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/linux-x86_64/*.tar.gz
             artifacts/macos-arm64/*.tar.gz
+            flowcoin-windows-x64.zip
           generate_release_notes: true

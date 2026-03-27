@@ -198,6 +198,9 @@ add_library(flowcoin_crypto STATIC
 )
 target_include_directories(flowcoin_crypto PUBLIC src)
 target_link_libraries(flowcoin_crypto PUBLIC ed25519 flowcoin_hash)
+if(APPLE)
+    target_link_libraries(flowcoin_crypto PUBLIC "-framework Security")
+endif()
 
 # --- flowcoin_common ---
 add_library(flowcoin_common STATIC
