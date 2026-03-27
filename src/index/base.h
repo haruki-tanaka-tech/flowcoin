@@ -40,7 +40,7 @@ public:
         IDLE,       // Created but not started
         SYNCING,    // Background thread catching up to chain tip
         SYNCED,     // Fully caught up with the active chain
-        ERROR,      // Unrecoverable error encountered
+        IDX_ERROR,  // Unrecoverable error encountered
     };
 
     // ---- Construction / destruction ----------------------------------------

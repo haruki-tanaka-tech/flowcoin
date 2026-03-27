@@ -1013,7 +1013,7 @@ size_t HttpParser::feed(const uint8_t* data, size_t len) {
                     line_buffer_.pop_back();
                 }
                 if (!parse_request_line(line_buffer_)) {
-                    state_ = State::ERROR;
+                    state_ = State::PARSE_ERROR;
                     error_ = "Invalid request line";
                     return consumed;
                 }
@@ -1022,7 +1022,7 @@ size_t HttpParser::feed(const uint8_t* data, size_t len) {
             } else {
                 line_buffer_ += c;
                 if (line_buffer_.size() > 8192) {
-                    state_ = State::ERROR;
+                    state_ = State::PARSE_ERROR;
                     error_ = "Request line too long";
                     return consumed;
                 }
@@ -1047,7 +1047,7 @@ size_t HttpParser::feed(const uint8_t* data, size_t len) {
                     }
                 } else {
                     if (!parse_header_line(line_buffer_)) {
-                        state_ = State::ERROR;
+                        state_ = State::PARSE_ERROR;
                         error_ = "Invalid header line";
                         return consumed;
                     }
@@ -1056,7 +1056,7 @@ size_t HttpParser::feed(const uint8_t* data, size_t len) {
             } else {
                 line_buffer_ += c;
                 if (line_buffer_.size() > 8192) {
-                    state_ = State::ERROR;
+                    state_ = State::PARSE_ERROR;
                     error_ = "Header line too long";
                     return consumed;
                 }
@@ -1073,7 +1073,7 @@ size_t HttpParser::feed(const uint8_t* data, size_t len) {
             break;
 
         case State::COMPLETE:
-        case State::ERROR:
+        case State::PARSE_ERROR:
             return consumed;
         }
     }
@@ -1090,7 +1090,7 @@ bool HttpParser::is_complete() const {
 }
 
 bool HttpParser::has_error() const {
-    return state_ == State::ERROR;
+    return state_ == State::PARSE_ERROR;
 }
 
 std::string HttpParser::error_message() const {

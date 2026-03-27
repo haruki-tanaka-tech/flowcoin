@@ -24,7 +24,7 @@ const char* index_state_name(BaseIndex::State s) {
         case BaseIndex::State::IDLE:    return "IDLE";
         case BaseIndex::State::SYNCING: return "SYNCING";
         case BaseIndex::State::SYNCED:  return "SYNCED";
-        case BaseIndex::State::ERROR:   return "ERROR";
+        case BaseIndex::State::IDX_ERROR:   return "ERROR";
     }
     return "UNKNOWN";
 }
@@ -156,19 +156,19 @@ uint64_t BaseIndex::load_best_height() const {
 bool BaseIndex::start() {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    if (state_ != State::IDLE && state_ != State::ERROR) {
+    if (state_ != State::IDLE && state_ != State::IDX_ERROR) {
         return false;  // Already running
     }
 
     // Open the database
     if (!open_db()) {
-        state_ = State::ERROR;
+        state_ = State::IDX_ERROR;
         return false;
     }
 
     // Create meta table
     if (!create_meta_table()) {
-        state_ = State::ERROR;
+        state_ = State::IDX_ERROR;
         return false;
     }
 
@@ -180,7 +180,7 @@ bool BaseIndex::start() {
 
     // Initialize index-specific tables
     if (!init_db()) {
-        state_ = State::ERROR;
+        state_ = State::IDX_ERROR;
         return false;
     }
 
@@ -330,7 +330,7 @@ void BaseIndex::thread_main() {
         for (const auto& event : local_queue) {
             if (!process_event(event)) {
                 rollback_batch();
-                state_ = State::ERROR;
+                state_ = State::IDX_ERROR;
                 return;
             }
             batch_count_++;
