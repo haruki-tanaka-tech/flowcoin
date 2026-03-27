@@ -269,6 +269,19 @@ void AddrMan::add(const CNetAddr& addr, int64_t time_seen, const CNetAddr& sourc
         return;
     }
 
+    // Check if same IP exists with different port — update port instead of adding duplicate
+    for (auto& [id, info] : map_info_) {
+        if (std::memcmp(info.addr.ip, addr.ip, 16) == 0 && info.addr.port != addr.port) {
+            // Same IP, different port — update to listen port
+            std::string old_key = info.addr.to_string();
+            map_addr_.erase(old_key);
+            info.addr.port = addr.port;
+            map_addr_[info.addr.to_string()] = id;
+            info.last_seen = time_seen;
+            return;
+        }
+    }
+
     // Limit total entries to prevent memory exhaustion
     if (map_info_.size() >= 20480) {
         return;

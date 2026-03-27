@@ -218,8 +218,9 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
         }
         netman_.addrman().add(listen_addr, GetTime());
         netman_.addrman().mark_good(listen_addr);
-        LogInfo("net", "handshake complete with peer %lu (%s) node_id=%016llx",
+        LogInfo("net", "handshake complete with peer %lu (%s listen=%s) node_id=%016llx",
                 (unsigned long)peer.id(), peer.addr().to_string().c_str(),
+                listen_addr.to_string().c_str(),
                 (unsigned long long)peer.node_id());
 
         // If peer has a higher chain, request headers
@@ -264,8 +265,9 @@ void MessageHandler::handle_verack(Peer& peer) {
         }
         netman_.addrman().add(listen_addr, GetTime());
         netman_.addrman().mark_good(listen_addr);
-        LogInfo("net", "handshake complete with peer %lu (%s) node_id=%016llx",
+        LogInfo("net", "handshake complete with peer %lu (%s listen=%s) node_id=%016llx",
                 (unsigned long)peer.id(), peer.addr().to_string().c_str(),
+                listen_addr.to_string().c_str(),
                 (unsigned long long)peer.node_id());
 
         // If peer has a higher chain, request headers
