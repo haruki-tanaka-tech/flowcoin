@@ -40,7 +40,6 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         if (!tip) throw std::runtime_error("Chain is empty");
 
         uint64_t next_height = tip->height + 1;
-        auto dims = 0;
         Amount reward = consensus::compute_block_reward(next_height);
 
         json j;
@@ -51,19 +50,11 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         j["reward_flow"] = static_cast<double>(reward) /
                            static_cast<double>(consensus::COIN);
 
-        // Model dimensions
-        json m;
-        j["model"] = m;
-
         // Difficulty info
         j["nbits"] = tip->nbits;
         arith_uint256 target;
         consensus::derive_target(tip->nbits, target);
         j["target_hex"] = hex_encode(ArithToUint256(target).data(), 32);
-
-        // PoW: no model parameters
-        j["estimated_params"] = 0;
-        j["estimated_params_mb"] = 0.0;
 
         // Timing
         j["target_block_time"] = consensus::TARGET_BLOCK_TIME;
@@ -144,38 +135,8 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         j["block_tree_size"] = chain.block_tree().size();
 
         if (tip) {
-
-
-
-
-            // tip_train_steps removed (not a consensus field)
-
-
-
-            // Walk back to compute statistics
-            int total_improving = 0;
-            float total_loss = 0;
-
-
-            int count = 0;
-            CBlockIndex* idx = tip;
-
-            while (idx && count < 100) {
-
-
-
-
-                count++;
-                idx = idx->prev;
-            }
-
-            j["last_100_improving"] = total_improving;
-            j["last_100_avg_loss"] = (count > 0) ? total_loss / count : 0.0f;
-
-
-
             // Time between last 10 blocks
-            idx = tip;
+            CBlockIndex* idx = tip;
             std::vector<int64_t> timestamps;
             for (int i = 0; i < 11 && idx; ++i) {
                 timestamps.push_back(idx->timestamp);
@@ -211,9 +172,6 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         params["retarget_interval"] = consensus::RETARGET_INTERVAL;
         params["coinbase_maturity"] = consensus::COINBASE_MATURITY;
         params["max_block_size"] = consensus::MAX_BLOCK_SIZE;
-        params["max_delta_size"] = consensus::MAX_BLOCK_SIZE;
-        params["eval_tokens"] = 4096;
-        params["eval_seq_len"] = 256;
         j["consensus_params"] = params;
 
         // Assume-valid info
@@ -349,14 +307,10 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
 
         std::reverse(indices.begin(), indices.end());
 
-        float total_loss = 0;
         int total_tx = 0;
-        int improving = 0;
 
         for (CBlockIndex* bi : indices) {
-
             total_tx += bi->n_tx;
-
         }
 
         int count = static_cast<int>(indices.size());
@@ -365,10 +319,7 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
         j["start"] = start;
         j["end"] = end_h;
         j["block_count"] = count;
-        j["avg_val_loss"] = (count > 0) ? total_loss / count : 0.0f;
         j["total_transactions"] = total_tx;
-        j["improving_blocks"] = improving;
-        j["improving_pct"] = (count > 0) ? 100.0 * improving / count : 0.0;
 
         if (indices.size() >= 2) {
             int64_t time_span = indices.back()->timestamp - indices.front()->timestamp;
@@ -417,8 +368,6 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
             h["t"] = bi->timestamp;
 
             h["nb"] = bi->nbits;
-            // train_steps removed from consensus
-
 
             // First 8 hex chars of hash as a short identifier
             h["id"] = hex_encode(bi->hash.data(), 4);

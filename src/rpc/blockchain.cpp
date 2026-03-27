@@ -45,16 +45,6 @@ static json block_index_to_header_json(const CBlockIndex* idx) {
     j["height"]        = idx->height;
     j["timestamp"]     = idx->timestamp;
     j["nbits"]         = idx->nbits;
-
-
-
-
-
-
-
-
-    // train_steps removed from consensus
-
     j["merkle_root"]   = hash_to_hex(idx->merkle_root);
     j["miner_pubkey"]  = hex_encode(idx->miner_pubkey.data(), 32);
     j["n_tx"]          = idx->n_tx;
@@ -214,13 +204,6 @@ void register_blockchain_rpcs(RpcServer& server, ChainState& chain) {
         j["bestblockhash"] = tip ? hash_to_hex(tip->hash) : std::string(64, '0');
         j["difficulty"]    = tip ? tip->nbits : consensus::INITIAL_NBITS;
 
-        if (tip) {
-
-
-
-
-
-        }
 
         j["halving_interval"]  = consensus::HALVING_INTERVAL;
         j["target_block_time"] = consensus::TARGET_BLOCK_TIME;
@@ -486,22 +469,6 @@ void register_extended_blockchain_rpcs(RpcServer& server, ChainState& chain) {
         json j;
         j["height"] = tip ? static_cast<int64_t>(tip->height) : 0;
         j["blocks"] = tip ? static_cast<int64_t>(tip->height + 1) : 0;
-
-        // Compute cumulative improving blocks as a proxy for chain quality
-
-
-        // Average val_loss over last 10 blocks
-        if (tip) {
-            float total_loss = 0;
-            int count = 0;
-            CBlockIndex* idx = tip;
-            while (idx && count < 10) {
-
-                count++;
-                idx = idx->prev;
-            }
-            j["avg_val_loss_10"] = (count > 0) ? total_loss / count : 0.0f;
-        }
 
         return j;
     });

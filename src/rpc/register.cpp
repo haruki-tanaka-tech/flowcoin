@@ -7,7 +7,6 @@
 #include "rpc/mining.h"
 #include "rpc/net.h"
 #include "rpc/rawtransaction.h"
-#include "rpc/training.h"
 #include "rpc/util.h"
 #include "rpc/wallet.h"
 #include "rpc/debug.h"
@@ -232,7 +231,7 @@ static void register_core_help_entries() {
     register_help({"getblocktemplate", "mining",
         "Returns data needed to construct a block to work on.",
         "  coinbase_address (string, optional) Address for coinbase reward",
-        "{ height, previousblockhash, nbits, target, model, ... }",
+        "{ height, previousblockhash, nbits, target, ... }",
         "flowcoin-cli getblocktemplate"});
 
     register_help({"submitblock", "mining",
@@ -244,7 +243,7 @@ static void register_core_help_entries() {
     register_help({"getmininginfo", "mining",
         "Returns mining-related information.",
         "None",
-        "{ blocks, difficulty, reward, d_model, n_layers, ... }",
+        "{ blocks, difficulty, reward, ... }",
         "flowcoin-cli getmininginfo"});
 
     // Network
@@ -350,19 +349,6 @@ static void register_core_help_entries() {
         "{ walletname, walletversion, balance, txcount, ... }",
         "flowcoin-cli getwalletinfo"});
 
-    // Training
-    register_help({"gettraininginfo", "training",
-        "Returns current model training information from the tip block.",
-        "None",
-        "{ height, val_loss, d_model, n_layers, ... }",
-        "flowcoin-cli gettraininginfo"});
-
-    register_help({"getgrowthschedule", "training",
-        "Returns the model dimensions at a given height.",
-        "  height (numeric, optional) The block height",
-        "{ d_model, n_layers, n_heads, ... }",
-        "flowcoin-cli getgrowthschedule 10000"});
-
     // Utility
     register_help({"help", "util",
         "List all commands, or get help for a specific command.",
@@ -454,11 +440,6 @@ void register_all_rpcs(RpcServer& server, NodeContext& node) {
     if (node.chain && node.mempool && node.wallet && node.net) {
         register_rawtx_rpcs(server, *node.chain, *node.mempool,
                             *node.wallet, *node.net);
-    }
-
-    // Register training RPCs
-    if (node.chain) {
-        register_training_rpcs(server, *node.chain);
     }
 
     // Register utility RPCs

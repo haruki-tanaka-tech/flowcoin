@@ -172,9 +172,38 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
     server.register_method("getmininginfo", [&chain](const json& /*params*/) -> json {
         CBlockIndex* tip = chain.tip();
 
+        double difficulty = 1.0;
+        if (tip) {
+            difficulty = consensus::nbits_to_difficulty(tip->nbits);
+        }
+
         json j;
         j["blocks"]     = tip ? static_cast<int64_t>(tip->height) : 0;
-        j["difficulty"]  = tip ? tip->nbits : consensus::INITIAL_NBITS;
+        j["difficulty"]  = difficulty;
+
+        // Estimated network hashrate (same logic as getnetworkhashps, 120 block lookback)
+        double networkhashps = 0.0;
+        if (tip && tip->height > 0) {
+            int lookback = 120;
+            CBlockIndex* end_block = tip;
+            CBlockIndex* start_block = tip;
+            int blocks_walked = 0;
+
+            while (start_block->prev && blocks_walked < lookback) {
+                start_block = start_block->prev;
+                blocks_walked++;
+            }
+
+            if (blocks_walked > 0) {
+                int64_t time_span = end_block->timestamp - start_block->timestamp;
+                if (time_span > 0) {
+                    double avg_time = static_cast<double>(time_span) /
+                                      static_cast<double>(blocks_walked);
+                    networkhashps = difficulty * 4294967296.0 / avg_time;
+                }
+            }
+        }
+        j["networkhashps"] = networkhashps;
 
         // Current reward
         uint64_t next_height = tip ? tip->height + 1 : 0;
@@ -183,15 +212,7 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
                       static_cast<double>(consensus::COIN);
         j["reward_atomic"] = reward;
 
-        // Model dimensions at next height
-        auto dims = 0;
-
-        // min_train_steps removed: difficulty alone regulates mining
         j["chain"]   = "main";
-
-        // Growth phase
-        bool dims_growing = (next_height < 512);
-        j["growth_phase"] = dims_growing ? "dimension_growth" : "slot_growth";
 
         // Halving info
         uint64_t halving_interval = consensus::HALVING_INTERVAL;
@@ -205,23 +226,13 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         // Target block time
         j["target_block_time"] = consensus::TARGET_BLOCK_TIME;
 
-        // Current val_loss
-        if (tip) {
-
-
-        }
-
-        // Estimate parameter count
-
-
-
         return j;
     });
 
     // -----------------------------------------------------------------------
     // getnetworkhashps(blocks, height): estimated network hashrate
-    // For FlowCoin this represents "training throughput" rather than
-    // traditional PoW hashrate. We measure blocks per second as a proxy.
+    // Returns hashes per second based on difficulty and block times
+    // over the lookback window (Bitcoin Core algorithm).
     // -----------------------------------------------------------------------
     server.register_method("getnetworkhashps", [&chain](const json& params) -> json {
         int lookback = 120; // default: last 120 blocks
@@ -244,7 +255,7 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
                 idx = idx->prev;
             }
         }
-        if (!idx) return 0.0;
+        if (!idx || idx->height == 0) return 0.0;
 
         // Walk back 'lookback' blocks and measure time span
         CBlockIndex* end_block = idx;
@@ -261,10 +272,14 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net)
         int64_t time_span = end_block->timestamp - start_block->timestamp;
         if (time_span <= 0) return 0.0;
 
-        // Return blocks per second (scaled to look like a hashrate)
-        double blocks_per_second = static_cast<double>(blocks_walked) /
-                                    static_cast<double>(time_span);
-        return blocks_per_second;
+        // Compute estimated hashrate: difficulty * 2^32 / avg_block_time
+        // This uses the difficulty at the tip of the lookback window.
+        double difficulty = consensus::nbits_to_difficulty(end_block->nbits);
+        double avg_time = static_cast<double>(time_span) /
+                          static_cast<double>(blocks_walked);
+        double hashrate = difficulty * 4294967296.0 / avg_time;
+
+        return hashrate;
     });
 
     // -----------------------------------------------------------------------
@@ -445,14 +460,6 @@ void register_mining_mempool_rpcs(RpcServer& server, ChainState& chain,
         Amount reward = consensus::compute_block_reward(tmpl.header.height);
         j["coinbase_value"] = reward;
 
-        // Model info
-        CBlockIndex* tip = chain.tip();
-        if (tip) {
-
-        }
-
-        // min_train_steps removed: difficulty alone regulates mining
-
         return j;
     });
 
@@ -465,7 +472,6 @@ void register_mining_mempool_rpcs(RpcServer& server, ChainState& chain,
         if (!tip) throw std::runtime_error("Chain is empty");
 
         uint64_t next_height = tip->height + 1;
-        auto dims = 0;
 
         json j;
         j["height"]          = next_height;
@@ -473,12 +479,8 @@ void register_mining_mempool_rpcs(RpcServer& server, ChainState& chain,
         j["nbits"]           = tip->nbits;
 
         j["reward"]          = consensus::compute_block_reward(next_height);
-        // min_train_steps removed: difficulty alone regulates mining
         j["mempool_txs"]     = mempool.size();
         j["mempool_bytes"]   = mempool.total_bytes();
-
-        json model;
-        j["model"]           = model;
 
         // Target as hex
         arith_uint256 target;
