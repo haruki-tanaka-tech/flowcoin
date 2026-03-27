@@ -802,7 +802,6 @@ bool NodeContext::lock_datadir() {
         WriteFile(lockfile_handle, pid_buf, static_cast<DWORD>(len), &written, nullptr);
     }
     return true;
-}
 #else
     lockfile_fd = ::open(lock_file_path.c_str(),
                          O_RDWR | O_CREAT | O_TRUNC, 0644);
@@ -827,16 +826,15 @@ bool NodeContext::lock_datadir() {
     }
 
     // Write our PID to the lock file
-    char pid_buf[32];
-    int len = std::snprintf(pid_buf, sizeof(pid_buf), "%d\n", getpid());
-    if (len > 0) {
-        // Ignore write errors — the lock itself is what matters
-        if (::write(lockfile_fd, pid_buf, static_cast<size_t>(len)) < 0) {}
+    char pid_buf2[32];
+    int len2 = std::snprintf(pid_buf2, sizeof(pid_buf2), "%d\n", getpid());
+    if (len2 > 0) {
+        if (::write(lockfile_fd, pid_buf2, static_cast<size_t>(len2)) < 0) {}
     }
 
     LogInfo("node", "Data directory locked: %s", lock_file_path.c_str());
     return true;
-#endif // !_WIN32
+#endif
 }
 
 void NodeContext::unlock_datadir() {
