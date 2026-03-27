@@ -37,12 +37,12 @@ namespace flow::consensus {
 // ---------------------------------------------------------------------------
 
 enum class ValidationResult {
-    OK = 0,
+    VALID = 0,
     HEADER_INVALID,
     BLOCK_INVALID,
     TX_INVALID,
-    DUPLICATE,
-    INTERNAL_ERROR,
+    ALREADY_HAVE,
+    INTERNAL_ERR,
 };
 
 // ---------------------------------------------------------------------------
@@ -53,13 +53,13 @@ class ValidationState {
 public:
     ValidationState() = default;
 
-    bool is_valid() const { return result_ == ValidationResult::OK; }
+    bool is_valid() const { return result_ == ValidationResult::VALID; }
     bool is_invalid() const {
         return result_ == ValidationResult::HEADER_INVALID
             || result_ == ValidationResult::BLOCK_INVALID
             || result_ == ValidationResult::TX_INVALID;
     }
-    bool is_error() const { return result_ == ValidationResult::INTERNAL_ERROR; }
+    bool is_error() const { return result_ == ValidationResult::INTERNAL_ERR; }
 
     ValidationResult result() const { return result_; }
     const std::string& reject_reason() const { return reject_reason_; }
@@ -74,11 +74,11 @@ public:
     }
 
     bool error(const std::string& reject_reason) {
-        return invalid(ValidationResult::INTERNAL_ERROR, reject_reason);
+        return invalid(ValidationResult::INTERNAL_ERR, reject_reason);
     }
 
     void clear() {
-        result_ = ValidationResult::OK;
+        result_ = ValidationResult::VALID;
         reject_reason_.clear();
         debug_message_.clear();
     }
@@ -93,7 +93,7 @@ public:
     }
 
 private:
-    ValidationResult result_ = ValidationResult::OK;
+    ValidationResult result_ = ValidationResult::VALID;
     std::string reject_reason_;
     std::string debug_message_;
 };
