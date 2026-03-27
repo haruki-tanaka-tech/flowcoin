@@ -671,13 +671,17 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
             relay_block(block_hash, &peer);
         }
     } else {
-        LogError("net", "rejected block at height %lu from peer %lu: %s "
-                "(prev_hash=%s, nbits=0x%08x)",
-                (unsigned long)block.height, (unsigned long)peer.id(),
-                vstate.reject_reason().c_str(),
-                hex_encode(block.prev_hash.data(), 8).c_str(),
-                block.nbits);
-        peer.add_misbehavior(10);
+        // Don't penalize for bad-prevblk or reorg failures — normal during forks
+        std::string reason = vstate.reject_reason();
+        if (reason != "bad-prevblk" && reason != "reorg-disconnect-failed") {
+            LogError("net", "rejected block at height %lu from peer %lu: %s "
+                    "(prev_hash=%s, nbits=0x%08x)",
+                    (unsigned long)block.height, (unsigned long)peer.id(),
+                    reason.c_str(),
+                    hex_encode(block.prev_hash.data(), 8).c_str(),
+                    block.nbits);
+            peer.add_misbehavior(10);
+        }
     }
 }
 
