@@ -199,7 +199,7 @@ static void create_tui_windows(void)
     int log_rows = rows - 11;
     if (log_rows < 3) log_rows = 3;
     log_win = newwin(log_rows, cols, 11, 0);
-    scrollok(log_win, TRUE);
+    /* No scrollok — we redraw log from ring buffer each frame */
 }
 
 static void resize_tui(void)
@@ -241,13 +241,33 @@ static void cleanup_tui(void)
     endwin();
 }
 
-static void drain_log_ring(void)
+static void redraw_log_win(void)
 {
+    /* Completely redraw log window from ring buffer — no scrollok needed */
+    int rows, cols;
+    getmaxyx(log_win, rows, cols);
+    (void)cols;
+
+    werase(log_win);
+
     pthread_mutex_lock(&g_log_mutex);
-    while (g_log_tail != g_log_head) {
-        wprintw(log_win, " %s\n", g_log_ring[g_log_tail]);
-        g_log_tail = (g_log_tail + 1) % LOG_RING_SIZE;
+
+    /* Count how many lines we have */
+    int count = g_log_head - g_log_tail;
+    if (count < 0) count += LOG_RING_SIZE;
+
+    /* Show only the last 'rows' lines */
+    int start = g_log_tail;
+    if (count > rows) {
+        start = (g_log_head - rows + LOG_RING_SIZE) % LOG_RING_SIZE;
     }
+    int display_count = (count < rows) ? count : rows;
+
+    for (int i = 0; i < display_count; i++) {
+        int idx = (start + i) % LOG_RING_SIZE;
+        mvwprintw(log_win, i, 1, "%s", g_log_ring[idx]);
+    }
+
     pthread_mutex_unlock(&g_log_mutex);
 }
 
@@ -330,14 +350,11 @@ static void update_tui(void)
     mvwhline(info_win, 2, 0, ACS_HLINE, cols);
     wnoutrefresh(info_win);
 
-    /* ─── Log window ─── */
-    touchwin(log_win);
-    drain_log_ring();
+    /* ─── Log window (full redraw from ring buffer) ─── */
+    redraw_log_win();
     wnoutrefresh(log_win);
 
-    /* Single atomic screen update — all three windows at once */
-    touchwin(stdscr);
-    wnoutrefresh(stdscr);
+    /* Single atomic screen update */
     doupdate();
 }
 
