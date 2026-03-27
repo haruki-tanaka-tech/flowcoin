@@ -423,7 +423,7 @@ void register_all_rpcs(RpcServer& server, NodeContext& node) {
 
     // Register mining RPCs
     if (node.chain && node.net) {
-        register_mining_rpcs(server, *node.chain, *node.net);
+        register_mining_rpcs(server, *node.chain, *node.net, node.wallet);
     }
 
     // Register network RPCs

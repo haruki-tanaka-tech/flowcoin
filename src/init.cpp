@@ -747,7 +747,8 @@ bool step9_initialize_rpc(NodeContext& node, const AppArgs& args) {
     if (node.wallet) {
         register_wallet_rpcs(*node.rpc, *node.wallet, *node.chain, *node.net);
     }
-    register_mining_rpcs(*node.rpc, *node.chain, *node.net);
+    register_mining_rpcs(*node.rpc, *node.chain, *node.net,
+                         node.wallet ? node.wallet.get() : nullptr);
     register_net_rpcs(*node.rpc, *node.net);
 
     // Built-in RPC methods
@@ -1113,7 +1114,7 @@ bool Node::init() {
 void Node::register_rpcs() {
     register_blockchain_rpcs(*rpc_, *chain_);
     register_wallet_rpcs(*rpc_, *wallet_, *chain_, *net_);
-    register_mining_rpcs(*rpc_, *chain_, *net_);
+    register_mining_rpcs(*rpc_, *chain_, *net_, &*wallet_);
     register_net_rpcs(*rpc_, *net_);
 
     // stop: graceful shutdown via RPC
