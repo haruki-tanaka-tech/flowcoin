@@ -793,8 +793,16 @@ bool ChainState::load_from_disk() {
         LogInfo("chain", "stored tip not found in tree, "
                 "attempting crash recovery");
 
-        // Step 5: Crash recovery
+        // Step 5: Crash recovery — find highest block in tree
         CBlockIndex* recovered = recover_tip();
+        if (!recovered) {
+            // Fallback: use the highest tip in tree regardless of validation status
+            auto tips = tree_.get_all_tips();
+            for (auto* t : tips) {
+                if (!recovered || t->height > recovered->height)
+                    recovered = t;
+            }
+        }
         if (!recovered) {
             LogError("chain", "crash recovery failed, "
                     "no valid tip found");

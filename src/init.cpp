@@ -583,6 +583,10 @@ bool step6_initialize_chain(NodeContext& node, const AppArgs& args) {
 
     try {
         node.chain = std::make_unique<ChainState>(node.datadir);
+        if (!node.chain->load_from_disk()) {
+            LogError("init", "ChainState::load_from_disk() failed");
+            return false;
+        }
         if (!node.chain->init()) {
             LogError("init", "ChainState::init() failed");
             return false;
