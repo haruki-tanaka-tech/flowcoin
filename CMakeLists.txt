@@ -470,9 +470,12 @@ target_link_libraries(flowcoin-cli PRIVATE
     json
     uv_a
     pthread
-    dl
+    $<$<NOT:$<PLATFORM_ID:Windows>>:dl>
     m
 )
+if(WIN32)
+    target_link_libraries(flowcoin-cli PRIVATE ws2_32)
+endif()
 
 # --- flowcoin-tx (offline transaction utility) ---
 add_executable(flowcoin-tx
@@ -488,9 +491,12 @@ target_link_libraries(flowcoin-tx PRIVATE
     xkcp
     zstd
     pthread
-    dl
+    $<$<NOT:$<PLATFORM_ID:Windows>>:dl>
     m
 )
+if(WIN32)
+    target_link_libraries(flowcoin-tx PRIVATE ws2_32 bcrypt)
+endif()
 
 # =============================================================================
 # FlowCoin Miner (standalone, native C++)
