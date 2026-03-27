@@ -33,7 +33,8 @@ constexpr const char* MAINNET_HRP      = "fl";
 constexpr const char* TESTNET_HRP      = "tfl";
 constexpr const char* REGTEST_HRP      = "rfl";
 
-constexpr uint32_t PROTOCOL_VERSION    = 1;
+constexpr uint32_t PROTOCOL_VERSION    = 2;
+constexpr uint32_t MIN_PROTOCOL_VERSION = 2;  // reject peers with older protocol
 
 // BIP-44 coin type for HD derivation path: m/44'/9555'/...
 constexpr uint32_t BIP44_COIN_TYPE     = 9555;

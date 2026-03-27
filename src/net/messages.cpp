@@ -158,6 +158,15 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
         return;
     }
 
+    // Reject peers with incompatible protocol version
+    if (ver.protocol_version < consensus::MIN_PROTOCOL_VERSION) {
+        LogInfo("net", "peer %lu has old protocol version %u (min %u), disconnecting",
+                (unsigned long)peer.id(), ver.protocol_version,
+                consensus::MIN_PROTOCOL_VERSION);
+        netman_.disconnect(peer, "obsolete-version");
+        return;
+    }
+
     // Store peer info
     peer.set_version(ver.protocol_version);
     peer.set_services(ver.services);
