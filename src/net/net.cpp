@@ -13,12 +13,18 @@
 #include "uv.h"
 
 #include <algorithm>
-#include <arpa/inet.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <set>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#endif
 #include "logging.h"
 
 namespace flow {

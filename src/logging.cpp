@@ -111,7 +111,11 @@ static void format_timestamp(char* buf, size_t len) {
         now.time_since_epoch()) % 1000;
 
     struct tm tm_buf;
+#ifdef _WIN32
+    gmtime_s(&tm_buf, &time_t_now);
+#else
     gmtime_r(&time_t_now, &tm_buf);
+#endif
 
     int written = static_cast<int>(std::strftime(buf, len, "%Y-%m-%d %H:%M:%S", &tm_buf));
     if (written > 0 && static_cast<size_t>(written) + 5 < len) {

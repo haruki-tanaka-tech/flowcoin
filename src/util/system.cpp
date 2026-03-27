@@ -13,10 +13,20 @@
 #include <fstream>
 #include <map>
 #include <sstream>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <windows.h>
+#include <io.h>
+#include <process.h>
+#include <psapi.h>
+#else
 #include <fcntl.h>
+#include <pthread.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#endif
 
 namespace flow {
 namespace sys {
@@ -44,12 +54,16 @@ void set_signal_handler(int signum, SignalHandler handler) {
         g_signal_handlers[signum] = std::move(handler);
     }
 
+#ifdef _WIN32
+    signal(signum, signal_dispatch);
+#else
     struct sigaction sa;
     std::memset(&sa, 0, sizeof(sa));
     sa.sa_handler = signal_dispatch;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART;
     sigaction(signum, &sa, nullptr);
+#endif
 }
 
 void install_default_handlers() {
@@ -61,18 +75,22 @@ void install_default_handlers() {
     set_signal_handler(SIGTERM, shutdown_handler);
     set_signal_handler(SIGINT, shutdown_handler);
 
+#ifndef _WIN32
     // SIGPIPE is ignored (broken pipe on network I/O is handled per-socket)
     struct sigaction sa;
     std::memset(&sa, 0, sizeof(sa));
     sa.sa_handler = SIG_IGN;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGPIPE, &sa, nullptr);
+#endif
 }
 
 void block_all_signals() {
+#ifndef _WIN32
     sigset_t set;
     sigfillset(&set);
     pthread_sigmask(SIG_BLOCK, &set, nullptr);
+#endif
 }
 
 // ===========================================================================
@@ -82,13 +100,17 @@ void block_all_signals() {
 bool write_pid_file(const std::string& path) {
     std::FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return false;
+#ifdef _WIN32
+    std::fprintf(f, "%d\n", static_cast<int>(_getpid()));
+#else
     std::fprintf(f, "%d\n", getpid());
+#endif
     std::fclose(f);
     return true;
 }
 
 bool remove_pid_file(const std::string& path) {
-    return unlink(path.c_str()) == 0 || errno == ENOENT;
+    return std::remove(path.c_str()) == 0 || errno == ENOENT;
 }
 
 int read_pid_file(const std::string& path) {
@@ -106,6 +128,15 @@ bool check_pid_file(const std::string& path) {
     int pid = read_pid_file(path);
     if (pid <= 0) return false;
 
+#ifdef _WIN32
+    // Check if process exists using OpenProcess
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (h != nullptr) {
+        CloseHandle(h);
+        return true;
+    }
+    return false;
+#else
     // Check if process exists
     if (kill(static_cast<pid_t>(pid), 0) == 0) {
         return true;   // process exists
@@ -114,6 +145,7 @@ bool check_pid_file(const std::string& path) {
         return true;   // process exists but we lack permission to signal it
     }
     return false;      // process does not exist
+#endif
 }
 
 // ===========================================================================
@@ -121,6 +153,13 @@ bool check_pid_file(const std::string& path) {
 // ===========================================================================
 
 size_t get_memory_usage() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        return static_cast<size_t>(pmc.WorkingSetSize);
+    }
+    return 0;
+#else
     // Read /proc/self/statm for RSS on Linux
     std::FILE* f = std::fopen("/proc/self/statm", "r");
     if (!f) return 0;
@@ -137,9 +176,17 @@ size_t get_memory_usage() {
     if (page_size <= 0) page_size = 4096;
 
     return static_cast<size_t>(rss) * static_cast<size_t>(page_size);
+#endif
 }
 
 size_t get_peak_memory() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        return static_cast<size_t>(pmc.PeakWorkingSetSize);
+    }
+    return 0;
+#else
     // Read VmHWM from /proc/self/status
     std::FILE* f = std::fopen("/proc/self/status", "r");
     if (!f) return 0;
@@ -155,18 +202,29 @@ size_t get_peak_memory() {
     }
     std::fclose(f);
     return peak;
+#endif
 }
 
 int get_num_cores() {
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return static_cast<int>(si.dwNumberOfProcessors);
+#else
     long cores = sysconf(_SC_NPROCESSORS_ONLN);
     if (cores <= 0) return 1;
     return static_cast<int>(cores);
+#endif
 }
 
 std::string get_platform() {
+#ifdef _WIN32
+    return "Windows x86_64";
+#else
     struct utsname info;
     if (uname(&info) != 0) return "Unknown";
     return std::string(info.sysname) + " " + info.machine;
+#endif
 }
 
 std::string get_hostname() {
@@ -177,7 +235,11 @@ std::string get_hostname() {
 }
 
 int get_pid() {
+#ifdef _WIN32
+    return static_cast<int>(_getpid());
+#else
     return static_cast<int>(getpid());
+#endif
 }
 
 // ===========================================================================
@@ -185,6 +247,10 @@ int get_pid() {
 // ===========================================================================
 
 bool daemonize() {
+#ifdef _WIN32
+    // Daemonization is not supported on Windows
+    return false;
+#else
     pid_t pid = fork();
     if (pid < 0) return false;
     if (pid > 0) {
@@ -216,6 +282,7 @@ bool daemonize() {
     umask(0);
 
     return true;
+#endif
 }
 
 // ===========================================================================
@@ -229,9 +296,18 @@ std::string get_env(const std::string& name, const std::string& default_val) {
 }
 
 std::string get_home_dir() {
+#ifdef _WIN32
+    const char* userprofile = getenv("USERPROFILE");
+    if (userprofile && userprofile[0]) return std::string(userprofile);
+    const char* homedrive = getenv("HOMEDRIVE");
+    const char* homepath = getenv("HOMEPATH");
+    if (homedrive && homepath) return std::string(homedrive) + std::string(homepath);
+    return "C:\\";
+#else
     const char* home = getenv("HOME");
     if (home && home[0]) return std::string(home);
     return "/root";
+#endif
 }
 
 std::string get_data_dir() {
@@ -239,8 +315,14 @@ std::string get_data_dir() {
     std::string env_dir = get_env("FLOWCOIN_DATADIR");
     if (!env_dir.empty()) return env_dir;
 
+#ifdef _WIN32
+    const char* appdata = getenv("APPDATA");
+    if (appdata && appdata[0]) return std::string(appdata) + "\\FlowCoin";
+    return get_home_dir() + "\\FlowCoin";
+#else
     // Platform default: ~/.flowcoin
     return get_home_dir() + "/.flowcoin";
+#endif
 }
 
 std::string get_config_path() {
@@ -288,7 +370,11 @@ int64_t get_monotonic_micros() {
 std::string format_time(int64_t timestamp) {
     std::time_t t = static_cast<std::time_t>(timestamp);
     std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &t);
+#else
     gmtime_r(&t, &utc);
+#endif
 
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",

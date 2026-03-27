@@ -8,11 +8,19 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <direct.h>
+#include <sys/stat.h>
+#else
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 #include "logging.h"
 
 namespace flow {
@@ -525,6 +533,28 @@ int BlockStore::prune_files(uint64_t below_height) {
 
     // Delete per-height undo files
     std::string undo_dir = datadir_ + "/blocks/undo";
+#ifdef _WIN32
+    {
+        WIN32_FIND_DATAA fd;
+        std::string pattern = undo_dir + "\\*";
+        HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                char* endp = nullptr;
+                unsigned long file_height = std::strtoul(fd.cFileName, &endp, 10);
+                if (endp && std::strcmp(endp, ".dat") == 0) {
+                    if (file_height < below_height) {
+                        std::string full_path = undo_dir + "\\" + fd.cFileName;
+                        if (std::remove(full_path.c_str()) == 0) {
+                            files_deleted++;
+                        }
+                    }
+                }
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+    }
+#else
     DIR* dir = ::opendir(undo_dir.c_str());
     if (dir) {
         struct dirent* entry;
@@ -535,7 +565,7 @@ int BlockStore::prune_files(uint64_t below_height) {
             if (endp && std::strcmp(endp, ".dat") == 0) {
                 if (file_height < below_height) {
                     std::string full_path = undo_dir + "/" + entry->d_name;
-                    if (::unlink(full_path.c_str()) == 0) {
+                    if (std::remove(full_path.c_str()) == 0) {
                         files_deleted++;
                     }
                 }
@@ -543,6 +573,7 @@ int BlockStore::prune_files(uint64_t below_height) {
         }
         ::closedir(dir);
     }
+#endif
 
     return files_deleted;
 }
@@ -568,6 +599,21 @@ size_t BlockStore::get_disk_usage() const {
 
     // Sum undo/<height>.dat files
     std::string undo_dir = datadir_ + "/blocks/undo";
+#ifdef _WIN32
+    {
+        WIN32_FIND_DATAA fd;
+        std::string pattern = undo_dir + "\\*";
+        HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (fd.cFileName[0] == '.') continue;
+                std::string full_path = undo_dir + "\\" + fd.cFileName;
+                total += get_file_size(full_path);
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+    }
+#else
     DIR* dir = ::opendir(undo_dir.c_str());
     if (dir) {
         struct dirent* entry;
@@ -578,6 +624,7 @@ size_t BlockStore::get_disk_usage() const {
         }
         ::closedir(dir);
     }
+#endif
 
     return total;
 }
@@ -603,6 +650,17 @@ int BlockStore::scan_block_files() {
 
 bool BlockStore::acquire_lock() {
     std::string lock_path = get_lock_path();
+#ifdef _WIN32
+    lock_handle_ = CreateFileA(lock_path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (lock_handle_ == INVALID_HANDLE_VALUE) {
+        LogError("chain", "failed to acquire lock on %s (error %lu).\n"
+                "Another FlowCoin instance may be using this data directory.",
+                lock_path.c_str(), GetLastError());
+        return false;
+    }
+    return true;
+#else
     lock_fd_ = ::open(lock_path.c_str(), O_CREAT | O_RDWR, 0644);
     if (lock_fd_ < 0) {
         LogError("chain", "failed to open lock file %s: %s",
@@ -620,6 +678,7 @@ bool BlockStore::acquire_lock() {
     }
 
     return true;
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -627,11 +686,18 @@ bool BlockStore::acquire_lock() {
 // ---------------------------------------------------------------------------
 
 void BlockStore::release_lock() {
+#ifdef _WIN32
+    if (lock_handle_ != INVALID_HANDLE_VALUE) {
+        CloseHandle(lock_handle_);
+        lock_handle_ = INVALID_HANDLE_VALUE;
+    }
+#else
     if (lock_fd_ >= 0) {
         ::flock(lock_fd_, LOCK_UN);
         ::close(lock_fd_);
         lock_fd_ = -1;
     }
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -858,7 +924,7 @@ size_t BlockStore::prune_files_below(uint64_t min_height) {
             // Delete the blk file
             std::string blk_path = get_block_path(info.file_num);
             size_t blk_size = get_file_size(blk_path);
-            if (::unlink(blk_path.c_str()) == 0) {
+            if (std::remove(blk_path.c_str()) == 0) {
                 bytes_freed += blk_size;
                 LogInfo("chain", "pruned %s (heights %lu-%lu, %zu bytes)",
                         blk_path.c_str(),
@@ -871,7 +937,7 @@ size_t BlockStore::prune_files_below(uint64_t min_height) {
             std::string rev_path = get_undo_path(info.file_num);
             size_t rev_size = get_file_size(rev_path);
             if (rev_size > 0) {
-                if (::unlink(rev_path.c_str()) == 0) {
+                if (std::remove(rev_path.c_str()) == 0) {
                     bytes_freed += rev_size;
                 }
             }
@@ -1164,10 +1230,10 @@ bool BlockStore::compact(int file_num) {
 
     // Replace original with compacted file
     if (blocks_written > 0) {
-        ::unlink(path.c_str());
+        std::remove(path.c_str());
         ::rename(tmp_path.c_str(), path.c_str());
     } else {
-        ::unlink(tmp_path.c_str());
+        std::remove(tmp_path.c_str());
     }
 
     return true;

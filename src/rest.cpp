@@ -1019,8 +1019,13 @@ bool is_valid_hash_hex(const std::string& hex) {
 std::string format_timestamp(int64_t timestamp) {
     time_t t = static_cast<time_t>(timestamp);
     struct tm tm_buf;
+#ifdef _WIN32
+    if (gmtime_s(&tm_buf, &t) != 0) return "unknown";
+    struct tm* tm_result = &tm_buf;
+#else
     struct tm* tm_result = gmtime_r(&t, &tm_buf);
     if (!tm_result) return "unknown";
+#endif
 
     char buf[64];
     std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", tm_result);

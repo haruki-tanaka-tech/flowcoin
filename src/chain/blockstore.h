@@ -76,13 +76,21 @@ public:
     void release_lock();
 
     /// Check if the lock is currently held.
+#ifdef _WIN32
+    bool is_locked() const { return lock_handle_ != reinterpret_cast<void*>(static_cast<intptr_t>(-1)); }
+#else
     bool is_locked() const { return lock_fd_ >= 0; }
+#endif
 
 private:
     std::string datadir_;
     int current_file_ = 0;
     uint32_t current_offset_ = 0;
+#ifdef _WIN32
+    void* lock_handle_ = reinterpret_cast<void*>(static_cast<intptr_t>(-1)); // INVALID_HANDLE_VALUE
+#else
     int lock_fd_ = -1;     // File descriptor for advisory lock
+#endif
 
     /// Maximum file size before rolling to a new blk file (128 MB).
     static constexpr size_t MAX_FILE_SIZE = 128 * 1024 * 1024;

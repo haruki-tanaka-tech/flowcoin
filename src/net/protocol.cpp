@@ -4,9 +4,15 @@
 #include "net/protocol.h"
 #include "hash/keccak.h"
 
-#include <arpa/inet.h>
 #include <cstdio>
 #include <cstring>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#endif
 
 namespace flow {
 

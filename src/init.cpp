@@ -27,10 +27,17 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <thread>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <direct.h>
+#else
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <thread>
 #include <unistd.h>
+#endif
 
 using json = nlohmann::json;
 
@@ -318,6 +325,10 @@ static void signal_handler(int signum) {
 }
 
 void install_default_handlers() {
+#ifdef _WIN32
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+#else
     struct sigaction sa;
     std::memset(&sa, 0, sizeof(sa));
     sa.sa_handler = signal_handler;
@@ -331,6 +342,7 @@ void install_default_handlers() {
 
     // Ignore SIGHUP by default (daemon mode)
     signal(SIGHUP, SIG_IGN);
+#endif
 }
 
 std::string get_default_datadir() {
@@ -381,7 +393,11 @@ int get_pid() {
 }
 
 bool is_terminal(int fd) {
+#ifdef _WIN32
+    return ::_isatty(fd) != 0;
+#else
     return ::isatty(fd) != 0;
+#endif
 }
 
 } // namespace sys
@@ -542,7 +558,11 @@ bool step4_initialize_logging(NodeContext& node, const AppArgs& args) {
     }
 
     // Console output
+#ifdef _WIN32
+    log_cfg.print_to_console = args.print_to_console || sys::is_terminal(_fileno(stdout));
+#else
     log_cfg.print_to_console = args.print_to_console || sys::is_terminal(STDOUT_FILENO);
+#endif
 
     log_init_config(log_cfg);
 

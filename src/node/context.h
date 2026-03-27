@@ -116,7 +116,11 @@ struct NodeContext {
     uv_loop_t* loop = nullptr;
 
     // -- PID and lock file management -----------------------------------------
+#ifdef _WIN32
+    void* lockfile_handle = reinterpret_cast<void*>(static_cast<intptr_t>(-1)); // INVALID_HANDLE_VALUE
+#else
     int lockfile_fd = -1;
+#endif
     std::string pid_file_path;
     std::string lock_file_path;
 
