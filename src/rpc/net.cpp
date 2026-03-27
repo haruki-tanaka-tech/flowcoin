@@ -10,6 +10,7 @@
 #include "version.h"
 
 #include <chrono>
+#include <map>
 #include <stdexcept>
 
 namespace flow {
@@ -21,87 +22,88 @@ void register_net_rpcs(RpcServer& server, NetManager& net) {
     // -----------------------------------------------------------------------
     server.register_method("getpeerinfo", [&net](const json& /*params*/) -> json {
         json result = json::array();
+        auto peers = net.get_peers();
 
-        auto peer_infos = net.get_peer_info();
-        for (const auto& pi : peer_infos) {
-            json p;
-            p["id"]              = pi.id;
-            p["addr"]            = pi.addr;
-            p["services"]        = pi.services;
-            p["services_str"]    = "";
-
-            // Build services string
-            std::string services_str;
-            if (pi.services & PEER_NODE_NETWORK) services_str += "NETWORK ";
-            if (pi.services & PEER_NODE_BLOOM) services_str += "BLOOM ";
-            if (pi.services & PEER_NODE_COMPACT_FILTERS) services_str += "COMPACT_FILTERS ";
-            if (pi.services & PEER_NODE_NETWORK_LIMITED) services_str += "NETWORK_LIMITED ";
-            if (!services_str.empty()) services_str.pop_back(); // trailing space
-            p["services_str"] = services_str;
-
-            p["lastsend"]        = pi.last_send;
-            p["lastrecv"]        = pi.last_recv;
-            p["bytessent"]       = pi.bytes_sent;
-            p["bytesrecv"]       = pi.bytes_recv;
-            p["conntime"]        = pi.conntime;
-            p["timeoffset"]      = 0;
-            p["pingtime"]        = static_cast<double>(pi.ping_time) / 1e6;
-            p["minping"]         = static_cast<double>(pi.min_ping) / 1e6;
-            p["version"]         = pi.version;
-            p["subver"]          = pi.subver;
-            p["inbound"]         = pi.inbound;
-            p["startingheight"]  = pi.startingheight;
-            p["banscore"]        = pi.banscore;
-            p["synced_headers"]  = pi.synced_headers;
-            p["synced_blocks"]   = pi.synced_blocks;
-            p["send_bandwidth"]  = pi.send_bandwidth;
-            p["recv_bandwidth"]  = pi.recv_bandwidth;
-            p["prefers_headers"] = pi.prefers_headers;
-            p["compact_blocks"]  = pi.compact_blocks;
-            p["fee_filter"]      = pi.fee_filter;
-            p["whitelisted"]     = false;
-            p["addnode"]         = false;
-
-            // Calculate connection duration
-            auto now = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            p["connection_duration"] = now - pi.conntime;
-
-            result.push_back(p);
+        // Group peers by node_id (same node via IPv4+IPv6 = one entry)
+        std::map<uint64_t, std::vector<const Peer*>> grouped;
+        std::vector<const Peer*> ungrouped; // node_id == 0
+        for (const Peer* peer : peers) {
+            uint64_t nid = peer->node_id();
+            if (nid != 0) {
+                grouped[nid].push_back(peer);
+            } else {
+                ungrouped.push_back(peer);
+            }
         }
 
-        // If get_peer_info returns empty, fall back to the basic peer list
-        if (result.empty()) {
-            auto peers = net.get_peers();
-            for (const Peer* peer : peers) {
-                json p;
-                p["id"]              = peer->id();
-                p["addr"]            = peer->addr().to_string();
-                p["inbound"]         = peer->is_inbound();
-                p["version"]         = peer->protocol_version();
-                p["subver"]          = peer->user_agent();
-                p["startingheight"]  = peer->start_height();
-                p["conntime"]        = peer->connect_time();
-                p["lastrecv"]        = peer->last_recv_time();
-                p["lastsend"]        = peer->last_send_time();
-                p["bytesrecv"]       = peer->bytes_recv();
-                p["bytessent"]       = peer->bytes_sent();
-                p["pingtime"]        = static_cast<double>(peer->ping_latency_us()) / 1e6;
-                p["minping"]         = static_cast<double>(peer->min_ping_us()) / 1e6;
-                p["misbehavior"]     = peer->misbehavior_score();
-                p["services"]        = peer->services();
+        auto now_secs = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
 
-                std::string state_str;
-                switch (peer->state()) {
-                    case PeerState::CONNECTING:      state_str = "connecting"; break;
-                    case PeerState::VERSION_SENT:    state_str = "version_sent"; break;
-                    case PeerState::HANDSHAKE_DONE:  state_str = "connected"; break;
-                    case PeerState::DISCONNECTED:    state_str = "disconnected"; break;
-                }
-                p["state"] = state_str;
+        auto make_peer_json = [&](const std::vector<const Peer*>& conns) -> json {
+            const Peer* primary = conns[0];
+            json p;
+            p["id"] = primary->id();
 
-                result.push_back(p);
+            // node_id hex string
+            char nid_hex[17];
+            snprintf(nid_hex, sizeof(nid_hex), "%016llx",
+                     (unsigned long long)primary->node_id());
+            p["node_id"] = nid_hex;
+
+            // Multiple addresses if dual-stack
+            if (conns.size() == 1) {
+                p["addr"] = primary->addr().to_string();
+            } else {
+                json addrs = json::array();
+                for (const Peer* c : conns)
+                    addrs.push_back(c->addr().to_string());
+                p["addr"] = addrs;
             }
+
+            p["inbound"]        = primary->is_inbound();
+            p["version"]        = primary->protocol_version();
+            p["subver"]         = primary->user_agent();
+            p["startingheight"] = primary->start_height();
+            p["conntime"]       = primary->connect_time();
+            p["lastrecv"]       = primary->last_recv_time();
+            p["lastsend"]       = primary->last_send_time();
+            p["pingtime"]       = static_cast<double>(primary->ping_latency_us()) / 1e6;
+            p["minping"]        = static_cast<double>(primary->min_ping_us()) / 1e6;
+            p["misbehavior"]    = primary->misbehavior_score();
+            p["services"]       = primary->services();
+            p["connections"]    = static_cast<int>(conns.size());
+
+            // Sum bandwidth across all connections
+            uint64_t total_recv = 0, total_sent = 0;
+            for (const Peer* c : conns) {
+                total_recv += c->bytes_recv();
+                total_sent += c->bytes_sent();
+            }
+            p["bytesrecv"] = total_recv;
+            p["bytessent"] = total_sent;
+
+            std::string state_str;
+            switch (primary->state()) {
+                case PeerState::CONNECTING:      state_str = "connecting"; break;
+                case PeerState::VERSION_SENT:    state_str = "version_sent"; break;
+                case PeerState::HANDSHAKE_DONE:  state_str = "connected"; break;
+                case PeerState::DISCONNECTED:    state_str = "disconnected"; break;
+            }
+            p["state"] = state_str;
+            p["connection_duration"] = now_secs - primary->connect_time();
+
+            return p;
+        };
+
+        // Grouped peers (same node_id)
+        for (const auto& [nid, conns] : grouped) {
+            result.push_back(make_peer_json(conns));
+        }
+
+        // Ungrouped peers (no node_id)
+        for (const Peer* peer : ungrouped) {
+            std::vector<const Peer*> single = {peer};
+            result.push_back(make_peer_json(single));
         }
 
         return result;
