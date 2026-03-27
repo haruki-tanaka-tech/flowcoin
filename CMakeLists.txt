@@ -200,6 +200,8 @@ target_include_directories(flowcoin_crypto PUBLIC src)
 target_link_libraries(flowcoin_crypto PUBLIC ed25519 flowcoin_hash)
 if(APPLE)
     target_link_libraries(flowcoin_crypto PUBLIC "-framework Security")
+elseif(WIN32)
+    target_link_libraries(flowcoin_crypto PUBLIC bcrypt)
 endif()
 
 # --- flowcoin_common ---
@@ -453,6 +455,8 @@ target_link_libraries(flowcoind PRIVATE
 )
 if(APPLE)
     target_link_libraries(flowcoind PRIVATE "-framework Security" "-framework CoreFoundation")
+elseif(WIN32)
+    target_link_libraries(flowcoind PRIVATE ws2_32 iphlpapi bcrypt psapi)
 endif()
 
 # --- flowcoin-cli (RPC client) ---
