@@ -18,6 +18,7 @@
 #include <windows.h>
 #include <io.h>
 #include <direct.h>
+#include <fcntl.h>
 #include <process.h>
 #ifndef PATH_MAX
 #define PATH_MAX MAX_PATH
