@@ -200,6 +200,29 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
         LogInfo("net", "handshake complete with peer %lu (%s) node_id=%016llx",
                 (unsigned long)peer.id(), peer.addr().to_string().c_str(),
                 (unsigned long long)peer.node_id());
+
+        // If peer has a higher chain, request headers
+        uint64_t our_height = chain_.height();
+        uint64_t their_height = peer.start_height();
+        if (their_height > our_height) {
+            LogInfo("net", "peer %lu has height %lu (ours: %lu), requesting headers",
+                    (unsigned long)peer.id(), (unsigned long)their_height,
+                    (unsigned long)our_height);
+
+            DataWriter w;
+            w.write_u32_le(consensus::PROTOCOL_VERSION);
+            w.write_compact_size(1);
+            CBlockIndex* tip = chain_.tip();
+            if (tip) {
+                w.write_bytes(tip->hash.data(), 32);
+            } else {
+                uint256 zero;
+                w.write_bytes(zero.data(), 32);
+            }
+            uint256 zero_stop;
+            w.write_bytes(zero_stop.data(), 32);
+            send(peer, NetCmd::GETHEADERS, w.data());
+        }
     }
 }
 
