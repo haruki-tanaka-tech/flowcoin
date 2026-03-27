@@ -19,6 +19,10 @@
 
 #include <filesystem>
 
+#ifdef _WIN32
+#include <io.h>
+#endif
+
 #ifndef _WIN32
 #include <csignal>
 #include <fcntl.h>
@@ -246,9 +250,15 @@ static void crash_signal_handler(int sig) {
     // Use async-signal-safe write() instead of fprintf
     static const char crash_prefix[] = "\n*** FlowCoin crashed with signal ";
     static const char crash_suffix[] = " ***\n";
+#ifdef _WIN32
+    (void)!_write(_fileno(stderr), crash_prefix, sizeof(crash_prefix) - 1);
+    (void)!_write(_fileno(stderr), name, (unsigned)std::strlen(name));
+    (void)!_write(_fileno(stderr), crash_suffix, sizeof(crash_suffix) - 1);
+#else
     (void)!write(STDERR_FILENO, crash_prefix, sizeof(crash_prefix) - 1);
     (void)!write(STDERR_FILENO, name, std::strlen(name));
     (void)!write(STDERR_FILENO, crash_suffix, sizeof(crash_suffix) - 1);
+#endif
 
 #ifdef HAVE_BACKTRACE
     std::string trace = get_stack_trace();

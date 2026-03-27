@@ -23,6 +23,13 @@
 #include <iostream>
 #include <thread>
 
+#ifdef _WIN32
+#include <io.h>
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 // ============================================================================
 // Global state for signal handling
 // ============================================================================
@@ -36,19 +43,32 @@ static void signal_handler(int signum) {
 
         if (g_signal_count == 1) {
             const char* msg = "\nShutting down...\n";
+#ifdef _WIN32
+            if (::_write(_fileno(stderr), msg, (unsigned)strlen(msg)) < 0) {}
+#else
             if (::write(STDERR_FILENO, msg, strlen(msg)) < 0) {}
+#endif
             if (g_node) g_node->interrupt();
             flow::get_shutdown_state().request_shutdown();
         } else {
             // Second signal: force exit
             const char* msg = "Forced exit.\n";
+#ifdef _WIN32
+            if (::_write(_fileno(stderr), msg, (unsigned)strlen(msg)) < 0) {}
+            ::_exit(0);
+#else
             if (::write(STDERR_FILENO, msg, strlen(msg)) < 0) {}
             _exit(0);
+#endif
         }
     }
 }
 
 static void install_signal_handlers() {
+#ifdef _WIN32
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+#else
     struct sigaction sa;
     std::memset(&sa, 0, sizeof(sa));
     sa.sa_handler = signal_handler;
@@ -63,6 +83,7 @@ static void install_signal_handlers() {
 
     // Ignore SIGHUP in daemon mode (terminal hangup)
     signal(SIGHUP, SIG_IGN);
+#endif
 }
 
 // ============================================================================
