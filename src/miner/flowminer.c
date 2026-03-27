@@ -5,24 +5,22 @@
 #define _DEFAULT_SOURCE
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define _WIN32_WINNT 0x0600
-#include <windows.h>
-#undef WIN32_LEAN_AND_MEAN
-#include <ntstatus.h>
 #include <direct.h>
 #include <io.h>
 #include <ncurses/ncurses.h>
+/* Minimal Windows defs to avoid RPC/COM header conflicts in C mode */
+#include <windef.h>
+#include <winbase.h>
 #define usleep(us) Sleep((us) / 1000)
 #define mkdir(d, m) _mkdir(d)
-/* RtlGenRandom from advapi32.dll — no RPC header conflicts */
-typedef BOOLEAN (WINAPI *RtlGenRandomFunc)(PVOID, ULONG);
+/* Generate random bytes via RtlGenRandom (advapi32.dll) */
 static int win_gen_random(uint8_t *buf, size_t len) {
-    HMODULE hLib = LoadLibraryA("advapi32.dll");
-    if (!hLib) return 0;
-    RtlGenRandomFunc fn = (RtlGenRandomFunc)GetProcAddress(hLib, "SystemFunction036");
-    int ok = fn && fn(buf, (ULONG)len);
-    FreeLibrary(hLib);
+    typedef int (__stdcall *RtlGenRandomFn)(void*, unsigned long);
+    HMODULE h = LoadLibraryA("advapi32.dll");
+    if (!h) return 0;
+    RtlGenRandomFn fn = (RtlGenRandomFn)(void*)GetProcAddress(h, "SystemFunction036");
+    int ok = fn && fn(buf, (unsigned long)len);
+    FreeLibrary(h);
     return ok;
 }
 #else
