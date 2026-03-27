@@ -102,7 +102,7 @@ private:
     void send(Peer& peer, const std::string& command);
 
     // Announce a new block to all connected peers via INV
-    void relay_block(const uint256& hash);
+    void relay_block(const uint256& hash, const Peer* exclude = nullptr);
 
     // Announce a new transaction to all connected peers via INV
     void relay_tx(const uint256& txid);

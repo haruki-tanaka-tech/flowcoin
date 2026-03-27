@@ -490,6 +490,27 @@ void NetManager::broadcast(const std::string& command, const std::vector<uint8_t
     }
 }
 
+void NetManager::broadcast_except(const std::string& command, const std::vector<uint8_t>& payload,
+                                   const Peer* exclude) {
+    auto msg = build_message(magic_, command, payload);
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    std::set<uint64_t> sent_node_ids;
+    for (auto& [id, peer] : peers_) {
+        if (peer->state() == PeerState::HANDSHAKE_DONE) {
+            // Skip the peer that sent us this block
+            if (exclude && peer->id() == exclude->id()) continue;
+            uint64_t nid = peer->node_id();
+            if (nid != 0) {
+                // Skip if same node_id as exclude (dual-stack)
+                if (exclude && nid == exclude->node_id()) continue;
+                if (sent_node_ids.count(nid)) continue;
+                sent_node_ids.insert(nid);
+            }
+            send_to(*peer, msg);
+        }
+    }
+}
+
 // ===========================================================================
 // Peer creation / removal
 // ===========================================================================
