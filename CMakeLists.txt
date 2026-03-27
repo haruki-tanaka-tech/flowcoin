@@ -445,9 +445,12 @@ target_link_libraries(flowcoind PRIVATE
     uv_a
     json
     pthread
-    dl
+    $<$<NOT:$<PLATFORM_ID:Windows>>:dl>
     m
 )
+if(APPLE)
+    target_link_libraries(flowcoind PRIVATE "-framework Security" "-framework CoreFoundation")
+endif()
 
 # --- flowcoin-cli (RPC client) ---
 add_executable(flowcoin-cli
