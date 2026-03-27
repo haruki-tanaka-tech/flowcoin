@@ -39,7 +39,6 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net,
             coinbase_addr = wallet->get_new_address();
         }
 
-
         BlockTemplate tmpl = create_block_template(chain, coinbase_addr);
 
         json j;
