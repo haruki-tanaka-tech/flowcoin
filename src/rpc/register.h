@@ -8,6 +8,7 @@
 #ifndef FLOWCOIN_RPC_REGISTER_H
 #define FLOWCOIN_RPC_REGISTER_H
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
