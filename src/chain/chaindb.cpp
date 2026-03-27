@@ -36,8 +36,8 @@ ChainDB::ChainDB(const std::string& db_path)
     sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, &errmsg);
     if (errmsg) sqlite3_free(errmsg);
 
-    // NORMAL synchronous is safe with WAL
-    sqlite3_exec(db_, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, &errmsg);
+    // FULL synchronous ensures WAL data survives kill -9
+    sqlite3_exec(db_, "PRAGMA synchronous=FULL;", nullptr, nullptr, &errmsg);
     if (errmsg) sqlite3_free(errmsg);
 
     // Larger page size for block index rows
@@ -350,7 +350,12 @@ std::vector<uint8_t> ChainDB::load_meta(const std::string& key) const {
 }
 
 bool ChainDB::save_tip(const uint256& hash) {
-    return save_meta("tip", hash.data(), 32);
+    bool ok = save_meta("tip", hash.data(), 32);
+    // Force WAL checkpoint so data survives kill -9
+    if (ok && db_) {
+        sqlite3_wal_checkpoint_v2(db_, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
+    }
+    return ok;
 }
 
 uint256 ChainDB::load_tip() const {
