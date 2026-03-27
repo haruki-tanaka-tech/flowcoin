@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include "logging.h"
 
 namespace flow {
@@ -393,17 +394,22 @@ void MessageHandler::handle_inv(Peer& peer, const uint8_t* data, size_t len) {
     auto items = read_inv_items(data, len);
     if (items.empty()) return;
 
-    // Collect items we don't have (or only have the header for) and request them
+    // Collect items we don't have, with dedup
     std::vector<InvItem> needed;
+    std::set<uint256> seen;
     for (const auto& item : items) {
+        if (seen.count(item.hash)) continue;  // dedup within batch
+        seen.insert(item.hash);
+
         if (item.type == INV_BLOCK) {
             CBlockIndex* idx = chain_.block_tree().find(item.hash);
-            // Request if we don't have it at all, or only have the header
             if (!idx || !(idx->status & BLOCK_FULLY_VALIDATED)) {
+                // Skip if we already requested this block from this peer
+                if (peer.has_inflight(item.hash)) continue;
+                peer.mark_inflight(item.hash);
                 needed.push_back(item);
             }
         } else if (item.type == INV_TX) {
-            // We don't have a mempool yet, so request all txs
             needed.push_back(item);
         }
     }
@@ -606,6 +612,7 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
     }
 
     uint256 block_hash = block.get_hash();
+    peer.clear_inflight(block_hash);
 
     // Check if we already have this block fully validated.
     // Note: accept_header() inserts header-only entries into the block tree,

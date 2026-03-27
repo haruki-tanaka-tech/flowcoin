@@ -396,6 +396,11 @@ public:
     bool has_announced_block(const uint256& hash) const { return announced_blocks_.count(hash) > 0; }
     void mark_announced_block(const uint256& hash) { announced_blocks_.insert(hash); }
 
+    // Inflight block tracking (prevent duplicate getdata requests)
+    bool has_inflight(const uint256& hash) const { return inflight_blocks_.count(hash) > 0; }
+    void mark_inflight(const uint256& hash) { inflight_blocks_.insert(hash); }
+    void clear_inflight(const uint256& hash) { inflight_blocks_.erase(hash); }
+
     // Trickle relay queue
     void add_to_trickle_queue(const uint256& txid) { trickle_queue_.push_back(txid); }
     int64_t last_trickle_time() const { return last_trickle_time_; }
@@ -487,6 +492,7 @@ private:
     std::set<uint256> announced_txs_;
     std::set<uint256> requested_txs_;
     std::set<uint256> announced_blocks_;
+    std::set<uint256> inflight_blocks_;  // blocks we've requested via getdata
 
     // Trickle relay queue
     std::vector<uint256> trickle_queue_;
