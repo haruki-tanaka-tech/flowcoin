@@ -353,7 +353,7 @@ bool ChainDB::save_tip(const uint256& hash) {
     bool ok = save_meta("tip", hash.data(), 32);
     // Force WAL checkpoint so data survives kill -9
     if (ok && db_) {
-        sqlite3_wal_checkpoint_v2(db_, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
+        sqlite3_wal_checkpoint_v2(db_, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
     }
     return ok;
 }
