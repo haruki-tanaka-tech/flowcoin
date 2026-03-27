@@ -74,7 +74,11 @@ int64_t GetMonotonicMicros() {
 std::string DateTimeStrFormat(int64_t timestamp) {
     std::time_t t = static_cast<std::time_t>(timestamp);
     std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &t);
+#else
     gmtime_r(&t, &utc);
+#endif
 
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
@@ -86,7 +90,11 @@ std::string DateTimeStrFormat(int64_t timestamp) {
 std::string FormatISO8601DateTime(int64_t timestamp) {
     std::time_t t = static_cast<std::time_t>(timestamp);
     std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &t);
+#else
     gmtime_r(&t, &utc);
+#endif
 
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02dZ",
@@ -122,7 +130,11 @@ int64_t ParseISO8601DateTime(const std::string& str) {
     utc.tm_sec = second;
 
     // timegm converts struct tm (UTC) to time_t
+#ifdef _WIN32
+    return static_cast<int64_t>(_mkgmtime(&utc));
+#else
     return static_cast<int64_t>(timegm(&utc));
+#endif
 }
 
 std::string FormatDuration(int64_t seconds) {
@@ -151,7 +163,11 @@ std::string FormatDuration(int64_t seconds) {
 std::string FormatDate(int64_t timestamp) {
     std::time_t t = static_cast<std::time_t>(timestamp);
     std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &t);
+#else
     gmtime_r(&t, &utc);
+#endif
 
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
