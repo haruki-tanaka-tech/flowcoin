@@ -14,6 +14,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
+#define CLOSE_SOCKET closesocket
 #else
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -26,6 +27,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#define CLOSE_SOCKET close
 #endif
 
 namespace flow {
@@ -152,7 +154,7 @@ int ConnectSocket(const CService& addr, int timeout_ms) {
 
     // Set non-blocking for connect with timeout
     if (!SetSocketNonBlocking(fd)) {
-        close(fd);
+        CLOSE_SOCKET(fd);
         return -1;
     }
 
@@ -180,72 +182,99 @@ int ConnectSocket(const CService& addr, int timeout_ms) {
     if (ret == 0) {
         // Connected immediately (unlikely for non-blocking)
         // Set back to blocking
+#ifdef _WIN32
+        u_long bmode = 0;
+        ioctlsocket(fd, FIONBIO, &bmode);
+#else
         int flags = fcntl(fd, F_GETFL, 0);
         fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+#endif
         SetSocketNoDelay(fd);
         SetSocketKeepAlive(fd);
         return fd;
     }
 
+#ifdef _WIN32
+    if (WSAGetLastError() != WSAEWOULDBLOCK) {
+#else
     if (errno != EINPROGRESS) {
-        close(fd);
+#endif
+        CLOSE_SOCKET(fd);
         return -1;
     }
 
     // Wait for connection with timeout
+#ifdef _WIN32
+    WSAPOLLFD pfd;
+#else
     struct pollfd pfd;
+#endif
     pfd.fd = fd;
     pfd.events = POLLOUT;
     pfd.revents = 0;
 
+#ifdef _WIN32
+    ret = WSAPoll(&pfd, 1, timeout_ms);
+#else
     ret = poll(&pfd, 1, timeout_ms);
+#endif
     if (ret <= 0) {
         // Timeout or error
-        close(fd);
+        CLOSE_SOCKET(fd);
         return -1;
     }
 
     // Check for connection error
     int err = 0;
     socklen_t err_len = sizeof(err);
-    getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &err_len);
+    getsockopt(fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &err_len);
     if (err != 0) {
-        close(fd);
+        CLOSE_SOCKET(fd);
         return -1;
     }
 
     // Set back to blocking mode
+#ifdef _WIN32
+    u_long bmode2 = 0;
+    ioctlsocket(fd, FIONBIO, &bmode2);
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+#endif
     SetSocketNoDelay(fd);
     SetSocketKeepAlive(fd);
     return fd;
 }
 
 bool SetSocketNonBlocking(int fd) {
+#ifdef _WIN32
+    u_long mode = 1;
+    return ioctlsocket(fd, FIONBIO, &mode) == 0;
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) return false;
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+#endif
 }
 
 bool SetSocketNoDelay(int fd) {
     int opt = 1;
-    return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) == 0;
+    return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&opt), sizeof(opt)) == 0;
 }
 
 bool SetSocketReuseAddr(int fd) {
     int opt = 1;
-    return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == 0;
+    return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt)) == 0;
 }
 
 bool SetSocketKeepAlive(int fd) {
     int opt = 1;
-    return setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt)) == 0;
+    return setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const char*>(&opt), sizeof(opt)) == 0;
 }
 
 void CloseSocket(int fd) {
     if (fd >= 0) {
-        close(fd);
+        CLOSE_SOCKET(fd);
     }
 }
 
@@ -417,13 +446,13 @@ CNetAddr2 GetLocalAddressForPeer(const CNetAddr2& peer) {
     }
 
     if (connect(fd, reinterpret_cast<struct sockaddr*>(&ss), ss_len) != 0) {
-        close(fd);
+        CLOSE_SOCKET(fd);
         return GetLocalAddress();
     }
 
     CService local;
     bool ok = GetSocketLocalAddr(fd, local);
-    close(fd);
+    CLOSE_SOCKET(fd);
 
     if (ok && local.IsValid()) {
         return local;
@@ -500,17 +529,22 @@ int ConnectThroughProxy(const ProxyConfig& proxy,
     // SOCKS5 handshake
     // 1. Send greeting: version(1) + nmethods(1) + methods(1..255)
     uint8_t greeting[3] = { 0x05, 0x01, 0x00 };  // No authentication
-    ssize_t n = send(fd, greeting, sizeof(greeting), MSG_NOSIGNAL);
+#ifdef MSG_NOSIGNAL
+    int send_flags = MSG_NOSIGNAL;
+#else
+    int send_flags = 0;
+#endif
+    int n = send(fd, reinterpret_cast<const char*>(greeting), sizeof(greeting), send_flags);
     if (n != sizeof(greeting)) {
-        close(fd);
+        CLOSE_SOCKET(fd);
         return -1;
     }
 
     // 2. Receive server choice
     uint8_t response[2];
-    n = recv(fd, response, sizeof(response), 0);
+    n = recv(fd, reinterpret_cast<char*>(response), sizeof(response), 0);
     if (n != 2 || response[0] != 0x05 || response[1] != 0x00) {
-        close(fd);
+        CLOSE_SOCKET(fd);
         return -1;
     }
 
@@ -524,7 +558,7 @@ int ConnectThroughProxy(const ProxyConfig& proxy,
 
     // Domain name: length + name
     if (target_host.size() > 255) {
-        close(fd);
+        CLOSE_SOCKET(fd);
         return -1;
     }
     connect_req.push_back(static_cast<uint8_t>(target_host.size()));
@@ -534,17 +568,17 @@ int ConnectThroughProxy(const ProxyConfig& proxy,
     connect_req.push_back(static_cast<uint8_t>(target_port >> 8));
     connect_req.push_back(static_cast<uint8_t>(target_port & 0xff));
 
-    n = send(fd, connect_req.data(), connect_req.size(), MSG_NOSIGNAL);
-    if (n != static_cast<ssize_t>(connect_req.size())) {
-        close(fd);
+    n = send(fd, reinterpret_cast<const char*>(connect_req.data()), connect_req.size(), send_flags);
+    if (n != static_cast<int>(connect_req.size())) {
+        CLOSE_SOCKET(fd);
         return -1;
     }
 
     // 4. Receive connect response
     uint8_t resp_header[4];
-    n = recv(fd, resp_header, sizeof(resp_header), 0);
+    n = recv(fd, reinterpret_cast<char*>(resp_header), sizeof(resp_header), 0);
     if (n != 4 || resp_header[0] != 0x05 || resp_header[1] != 0x00) {
-        close(fd);
+        CLOSE_SOCKET(fd);
         return -1;
     }
 
@@ -553,19 +587,19 @@ int ConnectThroughProxy(const ProxyConfig& proxy,
     if (atyp == 0x01) {
         // IPv4: 4 bytes + 2 port
         uint8_t discard[6];
-        recv(fd, discard, sizeof(discard), 0);
+        recv(fd, reinterpret_cast<char*>(discard), sizeof(discard), 0);
     } else if (atyp == 0x04) {
         // IPv6: 16 bytes + 2 port
         uint8_t discard[18];
-        recv(fd, discard, sizeof(discard), 0);
+        recv(fd, reinterpret_cast<char*>(discard), sizeof(discard), 0);
     } else if (atyp == 0x03) {
         // Domain: 1 len + name + 2 port
         uint8_t dlen;
-        recv(fd, &dlen, 1, 0);
+        recv(fd, reinterpret_cast<char*>(&dlen), 1, 0);
         uint8_t discard[257];
-        recv(fd, discard, dlen + 2, 0);
+        recv(fd, reinterpret_cast<char*>(discard), dlen + 2, 0);
     } else {
-        close(fd);
+        CLOSE_SOCKET(fd);
         return -1;
     }
 
