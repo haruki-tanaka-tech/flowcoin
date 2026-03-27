@@ -40,28 +40,7 @@ jobs:
       - name: Verify binaries
         run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx
 
-  build-windows:
-    runs-on: windows-2022
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            make
-
-      - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles"
-
-      - name: Build
-        run: cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
-
-      - name: Verify binaries
-        run: ls -lh build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe
+  # Windows build — requires additional porting work (POSIX compat layer)
+  # Will be added in a future release
+  # build-windows:
+  #   runs-on: windows-2022
