@@ -384,7 +384,7 @@ void register_util_rpcs(RpcServer& server, ChainState& chain,
     // -----------------------------------------------------------------------
     add_help("getdifficulty", "blockchain",
         "getdifficulty\n"
-        "Returns the proof-of-training difficulty as a float.\n"
+        "Returns the proof-of-work difficulty as a float.\n"
         "\nResult:\n"
         "  n.nnn (numeric) The difficulty as a float.\n");
 
@@ -528,7 +528,6 @@ void register_util_rpcs(RpcServer& server, ChainState& chain,
 
 
 
-        // train_steps removed from consensus
         j["delta_size"]    = 0;
 
         return j;
@@ -725,13 +724,6 @@ void register_util_rpcs(RpcServer& server, ChainState& chain,
     add_help("decoderawtransaction", "rawtx", "decoderawtransaction \"hex\"\nDecode raw tx hex.\n");
     add_help("sendrawtransaction", "rawtx", "sendrawtransaction \"hex\"\nSubmit raw tx.\n");
     add_help("gettransaction", "rawtx", "gettransaction \"txid\"\nGet tx with wallet info.\n");
-
-    add_help("gettraininginfo", "training", "gettraininginfo\nModel training info from tip.\n");
-    add_help("getmodelweights", "training", "getmodelweights\nGet tip block delta payload.\n");
-    add_help("getmodelhash", "training", "getmodelhash\nGet model state hashes.\n");
-    add_help("getdeltapayload", "training", "getdeltapayload \"blockhash\"\nGet delta from block.\n");
-    add_help("getgrowthschedule", "training", "getgrowthschedule ( height )\nModel dims at height.\n");
-    add_help("getvalidationdata", "training", "getvalidationdata\nEvaluation dataset metadata.\n");
 
     // -----------------------------------------------------------------------
     // createmultisig(n, pubkeys): create a multisig address (informational)

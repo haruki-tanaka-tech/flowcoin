@@ -155,11 +155,10 @@ bool NetManager::start() {
     // Load or generate persistent node identity
     if (!data_dir_.empty()) {
         std::string node_id_path = data_dir_ + "/node_id.dat";
-        std::ifstream in(node_id_path, std::ios::binary);
-        if (in.good()) {
+        FILE* f = fopen(node_id_path.c_str(), "rb");
+        if (f) {
             uint8_t buf[8];
-            in.read(reinterpret_cast<char*>(buf), 8);
-            if (in.gcount() == 8) {
+            if (fread(buf, 1, 8, f) == 8) {
                 node_id_ = static_cast<uint64_t>(buf[0])
                          | (static_cast<uint64_t>(buf[1]) << 8)
                          | (static_cast<uint64_t>(buf[2]) << 16)
@@ -169,15 +168,17 @@ bool NetManager::start() {
                          | (static_cast<uint64_t>(buf[6]) << 48)
                          | (static_cast<uint64_t>(buf[7]) << 56);
             }
+            fclose(f);
         }
         if (node_id_ == 0) {
             node_id_ = GetRandUint64();
-            std::ofstream out(node_id_path, std::ios::binary | std::ios::trunc);
-            if (out.good()) {
+            f = fopen(node_id_path.c_str(), "wb");
+            if (f) {
                 uint8_t buf[8];
                 for (int i = 0; i < 8; ++i)
                     buf[i] = static_cast<uint8_t>(node_id_ >> (i * 8));
-                out.write(reinterpret_cast<const char*>(buf), 8);
+                fwrite(buf, 1, 8, f);
+                fclose(f);
             }
         }
     } else {

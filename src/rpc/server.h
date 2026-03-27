@@ -213,7 +213,7 @@ private:
 
     // Configuration
     int timeout_seconds_ = 30;
-    size_t max_body_size_ = 256 * 1024 * 1024; // 256 MB (blocks contain sparse model delta)
+    size_t max_body_size_ = 256 * 1024 * 1024; // 256 MB
     bool cors_enabled_ = false;
     std::string cors_origin_ = "*";
     int rate_limit_ = 0; // 0 = no limit

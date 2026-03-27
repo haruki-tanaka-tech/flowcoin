@@ -349,6 +349,7 @@ bool NodeContext::init() {
         uint16_t p2p_port = static_cast<uint16_t>(
             config.get_int("port", get_port()));
         net = std::make_unique<NetManager>(*chain, p2p_port, get_magic());
+        net->set_data_dir(datadir);
     }
     set_subsystem_state(idx_net, SubsystemState::RUNNING);
     mark_init_end(idx_net);

@@ -634,6 +634,7 @@ bool step8_initialize_network(NodeContext& node, const AppArgs& args) {
     try {
         node.net = std::make_unique<NetManager>(
             *node.chain, p2p_port, node.get_magic());
+        node.net->set_data_dir(node.datadir);
     } catch (const std::exception& e) {
         LogError("init", "Network initialization error: %s", e.what());
         return false;

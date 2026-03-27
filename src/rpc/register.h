@@ -39,7 +39,7 @@ struct NodeContext {
 
 /// Register all RPC methods with the server.
 /// This is the single entry point that calls all individual registration
-/// functions for blockchain, wallet, mining, network, training, utility,
+/// functions for blockchain, wallet, mining, network, utility,
 /// raw transaction, and debug RPCs.
 void register_all_rpcs(RpcServer& server, NodeContext& node);
 
