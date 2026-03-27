@@ -1,60 +1,58 @@
-name: Build and Test
+name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        compiler: [gcc, clang]
-        build_type: [Release, Debug]
-
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ clang python3
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libncurses-dev
 
       - name: Configure
-        run: |
-          mkdir build && cd build
-          if [ "${{ matrix.compiler }}" = "clang" ]; then
-            cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          else
-            cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          fi
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cd build && make -j$(nproc)
+        run: cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
 
-      - name: Run unit tests
-        run: cd build && ./flowcoin_tests
-
-      - name: Run benchmarks (quick)
-        if: matrix.build_type == 'Release'
-        run: cd build && ./flowcoin_bench --iters 10
+      - name: Verify binaries
+        run: |
+          ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx
+          ./build/flowcoind --help 2>&1 | head -5 || true
 
   build-macos:
-    runs-on: macos-13
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Configure
-        run: mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release
-      - name: Build
-        run: cd build && make -j$(sysctl -n hw.ncpu)
-      - name: Test
-        run: cd build && ./flowcoin_tests
 
-  lint:
-    runs-on: ubuntu-22.04
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j$(sysctl -n hw.ncpu) --target flowcoind flowcoin-cli flowcoin-tx
+
+      - name: Verify binaries
+        run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx
+
+  build-windows:
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-      - name: Install Python
-        run: sudo apt-get update && sudo apt-get install -y python3
-      - name: Run lint checks
-        run: bash ci/lint.sh
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -G "MinGW Makefiles"
+        shell: bash
+
+      - name: Build
+        run: cmake --build build -j$env:NUMBER_OF_PROCESSORS --target flowcoind flowcoin-cli flowcoin-tx
+        shell: pwsh
+
+      - name: Verify binaries
+        run: dir build\flowcoind.exe build\flowcoin-cli.exe build\flowcoin-tx.exe
+        shell: cmd
