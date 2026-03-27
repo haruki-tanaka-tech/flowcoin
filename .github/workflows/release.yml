@@ -80,7 +80,8 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" -DBUILD_MINER=OFF
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" -DBUILD_MINER=OFF \
+                -DCMAKE_EXE_LINKER_FLAGS="-static" -DCMAKE_C_FLAGS="-static" -DCMAKE_CXX_FLAGS="-static"
           cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
 
       - name: Package
