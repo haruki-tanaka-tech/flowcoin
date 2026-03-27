@@ -140,9 +140,6 @@ CBlock ChainState::create_genesis_block() const {
     genesis.nonce           = 0;
 
     // Genesis creator's Ed25519 public key (proof of authorship)
-    // Private key kept offline by the creator. Coinbase is still
-    // unspendable (pubkey_hash = 0x00...00), but this signature
-    // proves who created FlowCoin.
     static constexpr uint8_t GENESIS_PUBKEY[32] = {
         0x36, 0x4a, 0x0a, 0x94, 0x80, 0x08, 0x56, 0x8a,
         0x1c, 0xe2, 0xfd, 0x77, 0x6b, 0x61, 0xc2, 0x26,
