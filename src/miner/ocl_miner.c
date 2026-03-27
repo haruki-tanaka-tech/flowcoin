@@ -8,6 +8,10 @@
 
 #define CL_TARGET_OPENCL_VERSION 120
 
+#ifdef _WIN32
+__declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(void*, char*, unsigned long);
+#endif
+
 #ifdef __APPLE__
 #include <OpenCL/opencl.h>
 #else
@@ -31,14 +35,21 @@ static char *load_kernel_source(void) {
         NULL
     };
 
-    /* Try the binary's directory first via /proc/self/exe */
+    /* Try the binary's directory first */
     char exe_dir[512] = {0};
     char exe_cl[600] = {0};
+#ifdef _WIN32
+    int len = (int)GetModuleFileNameA(NULL, exe_dir, sizeof(exe_dir) - 1);
+#else
     ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+#endif
     if (len > 0) {
         exe_dir[len] = '\0';
         /* Strip binary name to get directory */
         char *slash = strrchr(exe_dir, '/');
+#ifdef _WIN32
+        if (!slash) slash = strrchr(exe_dir, '\\');
+#endif
         if (slash) {
             *(slash + 1) = '\0';
             snprintf(exe_cl, sizeof(exe_cl), "%socl_keccak.cl", exe_dir);
