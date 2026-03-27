@@ -805,8 +805,14 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
 
         // Try to accept the header
         uint256 hdr_hash = hdr.get_hash();
-        if (chain_.block_tree().find(hdr_hash)) {
-            continue;  // already have it
+        CBlockIndex* existing = chain_.block_tree().find(hdr_hash);
+        if (existing) {
+            // Already have header — but if not fully validated, we still need the block
+            if (!(existing->status & BLOCK_FULLY_VALIDATED)) {
+                new_header_hashes.push_back(hdr_hash);
+                got_new = true;
+            }
+            continue;
         }
 
         consensus::ValidationState vstate;
@@ -840,15 +846,35 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         send(peer, NetCmd::GETHEADERS, w.release());
     }
 
-    // Request full blocks for all new headers we accepted
-    if (!new_header_hashes.empty()) {
+    // Request full blocks for new headers AND any header-only entries
+    // Combine newly accepted + scan tree for header-only above our tip
+    std::vector<uint256> blocks_needed = new_header_hashes;
+
+    // Also scan for any header-only entries above our tip
+    uint64_t our_height = chain_.height();
+    uint64_t peer_height = peer.start_height();
+    for (uint64_t h = our_height + 1; h <= peer_height && h <= our_height + 500; ++h) {
+        auto at_height = chain_.block_tree().get_at_height(h);
+        for (auto* idx : at_height) {
+            if (!(idx->status & BLOCK_FULLY_VALIDATED)) {
+                // Check not already in blocks_needed
+                bool already = false;
+                for (const auto& bh : blocks_needed) {
+                    if (bh == idx->hash) { already = true; break; }
+                }
+                if (!already) blocks_needed.push_back(idx->hash);
+            }
+        }
+    }
+
+    if (!blocks_needed.empty()) {
         LogInfo("net", "requesting %lu blocks from peer %lu",
-                (unsigned long)new_header_hashes.size(),
+                (unsigned long)blocks_needed.size(),
                 (unsigned long)peer.id());
 
         DataWriter w;
-        w.write_compact_size(new_header_hashes.size());
-        for (const auto& hash : new_header_hashes) {
+        w.write_compact_size(blocks_needed.size());
+        for (const auto& hash : blocks_needed) {
             w.write_u32_le(static_cast<uint32_t>(INV_BLOCK));
             w.write_bytes(hash.data(), 32);
         }
