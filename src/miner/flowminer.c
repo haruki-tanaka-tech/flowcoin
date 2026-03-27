@@ -8,17 +8,18 @@
 #include <direct.h>
 #include <io.h>
 #include <ncurses/ncurses.h>
-/* Minimal Windows defs to avoid RPC/COM header conflicts in C mode */
-#include <windef.h>
-#include <winbase.h>
+/* Minimal Windows declarations — avoid windows.h in C mode (COM/RPC conflicts) */
+__declspec(dllimport) void __stdcall Sleep(unsigned long);
+__declspec(dllimport) void* __stdcall LoadLibraryA(const char*);
+__declspec(dllimport) void* __stdcall GetProcAddress(void*, const char*);
+__declspec(dllimport) int   __stdcall FreeLibrary(void*);
 #define usleep(us) Sleep((us) / 1000)
 #define mkdir(d, m) _mkdir(d)
-/* Generate random bytes via RtlGenRandom (advapi32.dll) */
 static int win_gen_random(uint8_t *buf, size_t len) {
     typedef int (__stdcall *RtlGenRandomFn)(void*, unsigned long);
-    HMODULE h = LoadLibraryA("advapi32.dll");
+    void *h = LoadLibraryA("advapi32.dll");
     if (!h) return 0;
-    RtlGenRandomFn fn = (RtlGenRandomFn)(void*)GetProcAddress(h, "SystemFunction036");
+    RtlGenRandomFn fn = (RtlGenRandomFn)GetProcAddress(h, "SystemFunction036");
     int ok = fn && fn(buf, (unsigned long)len);
     FreeLibrary(h);
     return ok;
