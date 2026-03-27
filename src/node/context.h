@@ -235,9 +235,6 @@ struct NodeContext {
     /// Get the blocks subdirectory path.
     std::string blocks_dir() const;
 
-    /// Get the model subdirectory path.
-    std::string model_dir() const;
-
     /// Get the wallet file path.
     std::string wallet_path() const;
 
@@ -291,16 +288,6 @@ struct NodeContext {
     /// Get available disk space in the data directory (MB).
     int64_t get_disk_free_mb() const;
 
-    // -- Reindex support ------------------------------------------------------
-
-    /// Check if the chain tip matches the model state.
-    /// If not, a reindex may be needed.
-    bool verify_chain_model_consistency() const;
-
-    /// Replay model state from the given height to the current tip.
-    /// Returns false if the replay fails (corrupt data).
-    bool replay_model_from(uint64_t from_height);
-
     // -- Performance counters -------------------------------------------------
 
     struct PerfCounters {
@@ -311,7 +298,6 @@ struct NodeContext {
         std::atomic<uint64_t> bytes_recv{0};
         std::atomic<uint64_t> rpc_requests{0};
         std::atomic<uint64_t> rpc_errors{0};
-        std::atomic<uint64_t> model_evals{0};
         int64_t start_time = 0;
 
         void reset();
@@ -350,10 +336,8 @@ struct NodeContext {
         size_t peak_rss_bytes = 0;
         size_t utxo_cache_bytes = 0;
         size_t mempool_bytes = 0;
-        size_t model_bytes = 0;
         size_t blocks_disk_bytes = 0;
         size_t chainstate_disk_bytes = 0;
-        size_t model_disk_bytes = 0;
         size_t available_disk_bytes = 0;
         int outbound_peers = 0;
         int inbound_peers = 0;
@@ -364,9 +348,6 @@ struct NodeContext {
         uint64_t headers_height = 0;
         double sync_progress = 0.0;
         int64_t time_since_last_block = 0;
-        size_t model_params = 0;
-        float last_val_loss = 0.0f;
-        uint256 model_hash;
         std::vector<std::string> warnings;
         bool is_healthy = false;
     };
@@ -415,7 +396,6 @@ struct NodeContext {
         int64_t uptime_seconds;
         bool ibd;
         double sync_progress;
-        size_t model_params;
 
         int64_t rss_mb;
         int64_t disk_free_mb;
