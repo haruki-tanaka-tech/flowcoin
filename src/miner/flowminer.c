@@ -4,7 +4,7 @@
  */
 #define _DEFAULT_SOURCE
 
-#include <ncurses.h>
+#include <curses.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -12,16 +12,31 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 #include <sys/stat.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <wincrypt.h>
+#include <direct.h>
+#include <io.h>
+#define usleep(us) Sleep((us) / 1000)
+#define mkdir(d, m) _mkdir(d)
+#else
+#include <unistd.h>
+#endif
+
+#ifndef _WIN32
 #include <pwd.h>
+#endif
 
 #include "mining.h"
 #include "rpc.h"
 #include "keccak2.h"
 #include "../crypto/ed25519.h"
 
+#if !defined(_WIN32) && !defined(__APPLE__)
 #include <sys/random.h>
+#endif
 
 #ifdef USE_OPENCL
 #include "ocl_miner.h"
@@ -73,10 +88,14 @@ static int load_miner_keypair(void)
 {
     char path[512];
     const char *home = getenv("HOME");
+#ifdef _WIN32
+    if (!home) home = getenv("USERPROFILE");
+#else
     if (!home) {
         struct passwd *pw = getpwuid(getuid());
         if (pw) home = pw->pw_dir;
     }
+#endif
     if (!home) return 0;
 
     snprintf(path, sizeof(path), "%s/.flowcoin/miner_key.dat", home);
@@ -96,10 +115,28 @@ static int load_miner_keypair(void)
     }
 
     /* Generate a new keypair */
+#if defined(__APPLE__)
+    arc4random_buf(g_miner_privkey, 32);
+#elif defined(_WIN32)
+    {
+        HCRYPTPROV hProv;
+        if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+            fprintf(stderr, "Failed to acquire crypto context\n");
+            return 0;
+        }
+        if (!CryptGenRandom(hProv, 32, g_miner_privkey)) {
+            CryptReleaseContext(hProv, 0);
+            fprintf(stderr, "Failed to get random bytes for keypair\n");
+            return 0;
+        }
+        CryptReleaseContext(hProv, 0);
+    }
+#else
     if (getrandom(g_miner_privkey, 32, 0) != 32) {
         fprintf(stderr, "Failed to get random bytes for keypair\n");
         return 0;
     }
+#endif
     ed25519_publickey(g_miner_privkey, g_miner_pubkey);
 
     /* Ensure directory exists */
@@ -332,10 +369,14 @@ static void read_config_file(miner_config_t *cfg)
 {
     char path[512];
     const char *home = getenv("HOME");
+#ifdef _WIN32
+    if (!home) home = getenv("USERPROFILE");
+#else
     if (!home) {
         struct passwd *pw = getpwuid(getuid());
         if (pw) home = pw->pw_dir;
     }
+#endif
     if (!home) return;
 
     snprintf(path, sizeof(path), "%s/.flowcoin/flowcoin.conf", home);
@@ -696,10 +737,13 @@ static void *mining_thread(void *arg)
 
 static void sig_handler(int sig)
 {
+#ifdef SIGWINCH
     if (sig == SIGWINCH) {
         g_resize = 1;
         return;
     }
+#endif
+    (void)sig;
     g_running = 0;
 }
 
@@ -770,7 +814,9 @@ int main(int argc, char *argv[])
     /* Install signal handlers */
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
+#ifdef SIGWINCH
     signal(SIGWINCH, sig_handler);
+#endif
 
     /* Initialize stats */
     memset(&g_stats, 0, sizeof(g_stats));
