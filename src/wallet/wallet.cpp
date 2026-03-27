@@ -522,11 +522,18 @@ void Wallet::load_keys_cache() {
     auto keys = db_.load_all_keys();
     for (const auto& kr : keys) {
         our_pubkeys_.insert(kr.pubkey);
-        uint256 pkh = keccak256(kr.pubkey.data(), 32);
+
+        // Use 20-byte witness program as key (matches coinbase pubkey_hash)
+        std::string addr = pubkey_to_address(kr.pubkey.data());
+        uint256 pkh;
+        pkh.set_null();
+        auto decoded = bech32m_decode(addr);
+        if (decoded.valid && !decoded.program.empty()) {
+            std::memcpy(pkh.data(), decoded.program.data(),
+                        std::min(decoded.program.size(), (size_t)32));
+        }
         hash_to_pubkey_[pkh.m_data] = kr.pubkey;
 
-        // Build address -> pubkey mapping
-        std::string addr = pubkey_to_address(kr.pubkey.data());
         addr_to_pubkey_[addr] = kr.pubkey;
     }
 
