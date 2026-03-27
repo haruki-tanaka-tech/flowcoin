@@ -141,7 +141,7 @@ CBlock ChainState::create_genesis_block() const {
     // Model architecture: genesis dimensions
 
     // No delta payload in genesis
-    genesis.nonce           = 0;
+    genesis.nonce           = 1;  // v2 network
 
     // Genesis creator's Ed25519 public key (proof of authorship)
     static constexpr uint8_t GENESIS_PUBKEY[32] = {

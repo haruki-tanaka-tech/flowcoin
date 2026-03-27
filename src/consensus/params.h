@@ -106,11 +106,11 @@ constexpr int64_t  MEMPOOL_EXPIRY         = 1'209'600;
 
 // ---- Genesis Block ----------------------------------------------------------
 
-constexpr int64_t  GENESIS_TIMESTAMP   = 1743116400;  // 28/Mar/2026
+constexpr int64_t  GENESIS_TIMESTAMP   = 1742515200;  // 21/Mar/2026
 
 constexpr const char* GENESIS_COINBASE_MSG =
     "White House calls for federal AI law to preempt states "
-    "28/Mar/2026 - FlowCoin: Keccak-256d proof-of-work v2";
+    "21/Mar/2026 - FlowCoin: decentralized proof-of-work";
 
 } // namespace flow::consensus
 
