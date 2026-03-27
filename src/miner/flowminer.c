@@ -5,9 +5,10 @@
 #define _DEFAULT_SOURCE
 
 #ifdef _WIN32
+#include <stdint.h>
 #include <direct.h>
 #include <io.h>
-#include <ncursesw/curses.h>
+#include <curses.h>
 /* Minimal Windows declarations — avoid windows.h in C mode (COM/RPC conflicts) */
 __declspec(dllimport) void __stdcall Sleep(unsigned long);
 __declspec(dllimport) void* __stdcall LoadLibraryA(const char*);
