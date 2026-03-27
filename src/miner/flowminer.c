@@ -5,13 +5,26 @@
 #define _DEFAULT_SOURCE
 
 #ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define _WIN32_WINNT 0x0600
 #include <windows.h>
-#include <bcrypt.h>
+#undef WIN32_LEAN_AND_MEAN
+#include <ntstatus.h>
 #include <direct.h>
 #include <io.h>
 #include <ncurses/ncurses.h>
 #define usleep(us) Sleep((us) / 1000)
 #define mkdir(d, m) _mkdir(d)
+/* RtlGenRandom from advapi32.dll — no RPC header conflicts */
+typedef BOOLEAN (WINAPI *RtlGenRandomFunc)(PVOID, ULONG);
+static int win_gen_random(uint8_t *buf, size_t len) {
+    HMODULE hLib = LoadLibraryA("advapi32.dll");
+    if (!hLib) return 0;
+    RtlGenRandomFunc fn = (RtlGenRandomFunc)GetProcAddress(hLib, "SystemFunction036");
+    int ok = fn && fn(buf, (ULONG)len);
+    FreeLibrary(hLib);
+    return ok;
+}
 #else
 #include <curses.h>
 #include <unistd.h>
@@ -119,7 +132,7 @@ static int load_miner_keypair(void)
 #if defined(__APPLE__)
     arc4random_buf(g_miner_privkey, 32);
 #elif defined(_WIN32)
-    if (BCryptGenRandom(NULL, g_miner_privkey, 32, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
+    if (!win_gen_random(g_miner_privkey, 32)) {
         fprintf(stderr, "Failed to get random bytes for keypair\n");
         return 0;
     }
