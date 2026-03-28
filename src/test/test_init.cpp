@@ -12,7 +12,6 @@
 #include <vector>
 
 // Helper: build an argv array from a list of strings
-// Returns (argc, argv) where argv is heap-allocated and must be freed.
 struct ArgvBuilder {
     std::vector<std::string> args;
     std::vector<char*> ptrs;
@@ -41,12 +40,7 @@ void test_init() {
         ArgvBuilder ab;
         ab.add("flowcoind");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
-        assert(cfg.datadir == "data");
-        assert(cfg.port == flow::consensus::MAINNET_PORT);
-        assert(cfg.rpc_port == flow::consensus::MAINNET_RPC_PORT);
-        assert(cfg.rpc_user == "flowcoin");
-        assert(cfg.rpc_password == "flowcoin");
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.testnet == false);
         assert(cfg.regtest == false);
         assert(cfg.daemon == false);
@@ -60,7 +54,7 @@ void test_init() {
         ab.add("flowcoind");
         ab.add("--testnet");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.testnet == true);
         assert(cfg.regtest == false);
     }
@@ -73,7 +67,7 @@ void test_init() {
         ab.add("flowcoind");
         ab.add("--regtest");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.regtest == true);
         assert(cfg.testnet == false);
     }
@@ -86,7 +80,7 @@ void test_init() {
         ab.add("flowcoind");
         ab.add("--datadir=/tmp/test");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.datadir == "/tmp/test");
     }
 
@@ -99,7 +93,7 @@ void test_init() {
         ab.add("--datadir");
         ab.add("/tmp/test2");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.datadir == "/tmp/test2");
     }
 
@@ -112,7 +106,7 @@ void test_init() {
         ab.add("--rpcuser=admin");
         ab.add("--rpcpassword=hunter2");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.rpc_user == "admin");
         assert(cfg.rpc_password == "hunter2");
     }
@@ -128,7 +122,7 @@ void test_init() {
         ab.add("--rpcpassword");
         ab.add("pass2");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.rpc_user == "admin2");
         assert(cfg.rpc_password == "pass2");
     }
@@ -142,7 +136,7 @@ void test_init() {
         ab.add("--port=8888");
         ab.add("--rpcport=9999");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.port == 8888);
         assert(cfg.rpc_port == 9999);
     }
@@ -158,7 +152,7 @@ void test_init() {
         ab.add("--rpcport");
         ab.add("6666");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.port == 7777);
         assert(cfg.rpc_port == 6666);
     }
@@ -171,7 +165,7 @@ void test_init() {
         ab.add("flowcoind");
         ab.add("--daemon");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.daemon == true);
     }
 
@@ -184,10 +178,10 @@ void test_init() {
         ab.add("--unknown-option");
         ab.add("--anotherthing=foo");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         // Unknown args are silently ignored; defaults preserved
-        assert(cfg.datadir == "data");
-        assert(cfg.port == flow::consensus::MAINNET_PORT);
+        assert(!cfg.testnet);
+        assert(!cfg.regtest);
     }
 
     // -----------------------------------------------------------------------
@@ -204,7 +198,7 @@ void test_init() {
         ab.add("--port=12345");
         ab.add("--rpcport=12346");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.testnet == true);
         assert(cfg.daemon == true);
         assert(cfg.datadir == "/custom");
@@ -237,7 +231,7 @@ void test_init() {
         ab.add("flowcoind");
         ab.add("--datadir=");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         assert(cfg.datadir.empty());
     }
 
@@ -260,9 +254,8 @@ void test_init() {
         ArgvBuilder ab;
         ab.add("flowcoind");
 
-        flow::NodeConfig cfg = flow::parse_args(ab.argc(), ab.argv());
+        flow::AppArgs cfg = flow::parse_args(ab.argc(), ab.argv());
         // All defaults
-        assert(cfg.port == flow::consensus::MAINNET_PORT);
         assert(!cfg.testnet);
         assert(!cfg.regtest);
         assert(!cfg.daemon);

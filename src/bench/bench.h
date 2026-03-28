@@ -120,15 +120,19 @@ private:
 // Registration macro
 // ============================================================================
 
-#define BENCH(name, group) \
-    static void bench_##name(::flow::bench::BenchState& state); \
+#define BENCH(name) \
+    static void bench_##name##_body(int _iterations); \
+    static void bench_##name##_wrap(::flow::bench::BenchState& state) { \
+        (void)state; \
+        bench_##name##_body(1000); \
+    } \
     static struct BenchReg_##name { \
         BenchReg_##name() { \
             ::flow::bench::BenchRunner::instance().add( \
-                #name, #group, bench_##name); \
+                #name, "default", bench_##name##_wrap); \
         } \
     } bench_reg_##name; \
-    static void bench_##name(::flow::bench::BenchState& state)
+    static void bench_##name##_body(int _iterations)
 
 } // namespace bench
 } // namespace flow

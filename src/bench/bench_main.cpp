@@ -64,17 +64,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    auto& runner = flow::bench::BenchRunner::instance();
+
     if (list_only) {
-        flow::bench::Benchmark::list_all();
+        auto names = runner.list();
+        for (const auto& n : names) {
+            std::cout << n << "\n";
+        }
         return 0;
     }
 
+    runner.set_min_duration(static_cast<int64_t>(iterations) * 1000000LL);
+
     if (!bench_name.empty()) {
-        flow::bench::Benchmark::run(bench_name, iterations);
+        runner.run_single(bench_name);
     } else if (!filter.empty()) {
-        flow::bench::Benchmark::run_filter(filter, iterations);
+        runner.run_filter(filter);
     } else {
-        flow::bench::Benchmark::run_all(iterations);
+        runner.run_all();
     }
 
     return 0;

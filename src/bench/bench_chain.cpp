@@ -53,25 +53,9 @@ static flow::CBlockHeader make_header(int height) {
     flow::CBlockHeader h;
     std::memset(h.prev_hash.data(), static_cast<int>(height & 0xFF), 32);
     std::memset(h.merkle_root.data(), 0xAB, 32);
-    std::memset(h.training_hash.data(), 0xCD, 32);
-    std::memset(h.dataset_hash.data(), 0xEF, 32);
     h.height = static_cast<uint64_t>(height);
     h.timestamp = 1700000000 + height * 600;
     h.nbits = 0x1f00ffff;
-    h.val_loss = 5.0f;
-    h.prev_val_loss = 5.1f;
-    h.d_model = 512;
-    h.n_layers = 8;
-    h.d_ff = 1024;
-    h.n_heads = 8;
-    h.gru_dim = 512;
-    h.n_slots = 1024;
-    h.reserved_field = 0;
-    h.stagnation = 0;
-    h.delta_offset = 0;
-    h.delta_length = 0;
-    h.sparse_count = 0;
-    h.sparse_threshold = 0.001f;
     h.nonce = static_cast<uint32_t>(height);
     h.version = 1;
     std::memset(h.miner_pubkey.data(), 0x55, 32);
@@ -408,14 +392,6 @@ BENCH(Block_GetBlockSize_100Tx) {
 // ===========================================================================
 // Block header hash comparison
 // ===========================================================================
-
-BENCH(BlockHeader_GetTrainingHash) {
-    CBlockHeader h = make_header(100);
-    for (int i = 0; i < _iterations; i++) {
-        uint256 hash = h.get_training_hash();
-        (void)hash;
-    }
-}
 
 BENCH(BlockHeader_GetUnsignedData) {
     CBlockHeader h = make_header(100);

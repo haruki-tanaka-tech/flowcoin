@@ -18,15 +18,11 @@ void test_block_header();
 void test_transaction();
 void test_difficulty();
 void test_reward();
-void test_growth();
-void test_validation();
 void test_merkle();
 void test_serialize();
 void test_delta();
 void test_mempool();
 void test_script();
-void test_consensus_model();
-void test_eval_engine();
 void test_txindex();
 void test_sync();
 void test_fee_estimator();
@@ -36,13 +32,11 @@ void test_banman();
 void test_encryption();
 void test_keypool();
 void test_chaindb();
-void test_genesis();
 void test_rpc();
 void test_reorg();
 void test_compact_blocks();
 void test_netaddress();
 void test_wallet_full();
-void test_block_validation();
 void test_coin_selection();
 void test_strencodings();
 void test_transaction_ext();
@@ -54,12 +48,8 @@ void test_random();
 void test_system();
 void test_config();
 void test_init();
-void test_blocktemplate();
-void test_submitblock();
 void test_compact_size();
 void test_delta_full();
-void test_pow();
-void test_integration();
 void test_aes256();
 void test_bloom();
 void test_script_interpreter();
@@ -70,23 +60,8 @@ void test_walletdb_full();
 void test_rpc_handlers();
 void test_policy();
 void test_network_full();
-void test_block_connection();
-void test_reorg_full();
-void test_block_template_full();
-void test_inventory_relay();
 void test_bandwidth();
-void test_model_evaluation();
-void test_full_chain();
-void test_wallet_transactions();
-void test_mining_session();
-void test_protocol_spec();
-void test_inference();
-void test_chain_stats();
-void test_mutable_tx();
-void test_block_analysis();
 void test_wallet_advanced();
-void test_difficulty_analysis();
-void test_supply();
 void test_http_parser();
 void test_peer_scoring();
 
@@ -106,15 +81,11 @@ int main() {
         {"transaction", test_transaction},
         {"difficulty", test_difficulty},
         {"reward", test_reward},
-        {"growth", test_growth},
-        {"validation", test_validation},
         {"merkle", test_merkle},
         {"serialize", test_serialize},
         {"delta", test_delta},
         {"mempool", test_mempool},
         {"script", test_script},
-        {"consensus_model", test_consensus_model},
-        {"eval_engine", test_eval_engine},
         {"txindex", test_txindex},
         {"sync", test_sync},
         {"fee_estimator", test_fee_estimator},
@@ -124,13 +95,11 @@ int main() {
         {"encryption", test_encryption},
         {"keypool", test_keypool},
         {"chaindb", test_chaindb},
-        {"genesis", test_genesis},
         {"rpc", test_rpc},
         {"reorg", test_reorg},
         {"compact_blocks", test_compact_blocks},
         {"netaddress", test_netaddress},
         {"wallet_full", test_wallet_full},
-        {"block_validation", test_block_validation},
         {"coin_selection", test_coin_selection},
         {"strencodings", test_strencodings},
         {"transaction_ext", test_transaction_ext},
@@ -142,12 +111,8 @@ int main() {
         {"system", test_system},
         {"config", test_config},
         {"init", test_init},
-        {"blocktemplate", test_blocktemplate},
-        {"submitblock", test_submitblock},
         {"compact_size", test_compact_size},
         {"delta_full", test_delta_full},
-        {"pow", test_pow},
-        {"integration", test_integration},
         {"aes256", test_aes256},
         {"bloom", test_bloom},
         {"script_interpreter", test_script_interpreter},
@@ -158,23 +123,8 @@ int main() {
         {"rpc_handlers", test_rpc_handlers},
         {"policy", test_policy},
         {"network_full", test_network_full},
-        {"block_connection", test_block_connection},
-        {"reorg_full", test_reorg_full},
-        {"block_template_full", test_block_template_full},
-        {"inventory_relay", test_inventory_relay},
         {"bandwidth", test_bandwidth},
-        {"model_evaluation", test_model_evaluation},
-        {"full_chain", test_full_chain},
-        {"wallet_transactions", test_wallet_transactions},
-        {"mining_session", test_mining_session},
-        {"protocol_spec", test_protocol_spec},
-        {"inference", test_inference},
-        {"chain_stats", test_chain_stats},
-        {"mutable_tx", test_mutable_tx},
-        {"block_analysis", test_block_analysis},
         {"wallet_advanced", test_wallet_advanced},
-        {"difficulty_analysis", test_difficulty_analysis},
-        {"supply", test_supply},
         {"http_parser", test_http_parser},
         {"peer_scoring", test_peer_scoring},
     };

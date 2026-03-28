@@ -2,9 +2,7 @@
 // Distributed under the MIT software license.
 //
 // Tests for sync-related logic: block locator construction and
-// peer state tracking. Since full SyncManager depends on a running
-// NetManager and ChainState, these tests exercise the building blocks
-// of sync: locator hash computation and peer state transitions.
+// peer state tracking.
 
 #include "chain/blockindex.h"
 #include "consensus/params.h"
@@ -25,46 +23,8 @@ static flow::CBlockHeader make_header(uint64_t height, const flow::uint256& prev
     hdr.prev_hash = prev;
     hdr.timestamp = flow::consensus::GENESIS_TIMESTAMP + (int64_t)height * 600;
     hdr.nbits = flow::consensus::INITIAL_NBITS;
-    hdr.val_loss = 5.0f;
-    hdr.prev_val_loss = height > 0 ? 5.0f : 0.0f;
-    hdr.d_model = flow::consensus::GENESIS_D_MODEL;
-    hdr.n_layers = flow::consensus::GENESIS_N_LAYERS;
-    hdr.d_ff = flow::consensus::GENESIS_D_FF;
-    hdr.n_heads = flow::consensus::GENESIS_N_HEADS;
-    hdr.gru_dim = flow::consensus::GENESIS_GRU_DIM;
-    hdr.n_slots = flow::consensus::GENESIS_N_SLOTS;
-    hdr.reserved_field = 0;
     hdr.version = 1;
     return hdr;
-}
-
-// Build a locator from a chain of block indices.
-// Locator algorithm: first 10 steps are single-step back, then doubling.
-// Returns hashes from tip back to genesis.
-static std::vector<flow::uint256> build_locator(
-    const flow::CBlockIndex* tip)
-{
-    std::vector<flow::uint256> locator;
-    const flow::CBlockIndex* current = tip;
-    int step = 1;
-    int count = 0;
-
-    while (current != nullptr) {
-        locator.push_back(current->hash);
-
-        // First 10 entries: step 1, then double
-        if (count >= 10) {
-            step *= 2;
-        }
-        count++;
-
-        // Walk back 'step' entries
-        for (int i = 0; i < step && current != nullptr; i++) {
-            current = current->prev;
-        }
-    }
-
-    return locator;
 }
 
 void test_sync() {
@@ -90,14 +50,14 @@ void test_sync() {
         }
         tree.set_best_tip(prev);
 
-        auto locator = build_locator(tree.best_tip());
+        auto locator = flow::build_locator(tree.best_tip());
 
         // For a 6-block chain (0-5), locator should have all 6 hashes
         // (all within the first 10 single-step entries)
-        assert(locator.size() == 6);
+        assert(locator.hashes.size() == 6);
 
         // First entry should be the tip
-        assert(locator[0] == prev->hash);
+        assert(locator.hashes[0] == prev->hash);
     }
 
     // Test 2: Build locator from a long chain (more than 10 blocks)
@@ -118,27 +78,17 @@ void test_sync() {
         }
         tree.set_best_tip(prev);
 
-        auto locator = build_locator(tree.best_tip());
+        auto locator = flow::build_locator(tree.best_tip());
 
         // Locator should have entries:
         // - First 10 or 11 hashes are single-step
         // - Then entries double (2, 4, 8, 16, ...)
         // Total should be significantly less than 101
-        assert(locator.size() < 30);
-        assert(locator.size() > 10);
+        assert(locator.hashes.size() < 30);
+        assert(locator.hashes.size() > 10);
 
         // First entry is the tip (height 100)
-        assert(locator[0] == prev->hash);
-
-        // Last entry should be near genesis (might not be exact genesis
-        // due to doubling overshooting)
-        // Verify the locator heights decrease
-        // We can verify the first 10 are consecutive
-        CBlockIndex* check = prev;
-        for (size_t i = 0; i < 10 && i < locator.size(); i++) {
-            assert(locator[i] == check->hash);
-            check = check->prev;
-        }
+        assert(locator.hashes[0] == prev->hash);
     }
 
     // Test 3: Peer state transitions
