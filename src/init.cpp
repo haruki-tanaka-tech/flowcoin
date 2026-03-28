@@ -346,11 +346,29 @@ void install_default_handlers() {
 }
 
 std::string get_default_datadir() {
-    const char* home = std::getenv("HOME");
-    if (!home || home[0] == '\0') {
-        return ".flowcoin";
+#ifdef _WIN32
+    const char* appdata = std::getenv("APPDATA");
+    if (appdata && appdata[0] != '\0') {
+        return std::string(appdata) + "\\FlowCoin";
     }
-    return std::string(home) + "/.flowcoin";
+    const char* userprofile = std::getenv("USERPROFILE");
+    if (userprofile && userprofile[0] != '\0') {
+        return std::string(userprofile) + "\\FlowCoin";
+    }
+    return "FlowCoin";
+#elif defined(__APPLE__)
+    const char* home = std::getenv("HOME");
+    if (home && home[0] != '\0') {
+        return std::string(home) + "/Library/Application Support/FlowCoin";
+    }
+    return ".flowcoin";
+#else
+    const char* home = std::getenv("HOME");
+    if (home && home[0] != '\0') {
+        return std::string(home) + "/.flowcoin";
+    }
+    return ".flowcoin";
+#endif
 }
 
 std::string expand_path(const std::string& path) {
