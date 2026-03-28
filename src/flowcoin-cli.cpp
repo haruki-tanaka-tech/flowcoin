@@ -251,9 +251,25 @@ static std::string json_pretty(const std::string& json, int indent = 2) {
 // ============================================================================
 
 static std::string get_default_datadir() {
+#ifdef _WIN32
+    const char* appdata = std::getenv("APPDATA");
+    if (appdata && appdata[0] != '\0')
+        return std::string(appdata) + "\\FlowCoin";
+    const char* userprofile = std::getenv("USERPROFILE");
+    if (userprofile && userprofile[0] != '\0')
+        return std::string(userprofile) + "\\FlowCoin";
+    return "FlowCoin";
+#elif defined(__APPLE__)
     const char* home = std::getenv("HOME");
-    if (!home || home[0] == '\0') return ".flowcoin";
-    return std::string(home) + "/.flowcoin";
+    if (home && home[0] != '\0')
+        return std::string(home) + "/Library/Application Support/FlowCoin";
+    return ".flowcoin";
+#else
+    const char* home = std::getenv("HOME");
+    if (home && home[0] != '\0')
+        return std::string(home) + "/.flowcoin";
+    return ".flowcoin";
+#endif
 }
 
 static bool read_cookie(const std::string& datadir,
