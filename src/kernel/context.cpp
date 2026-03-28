@@ -41,7 +41,7 @@ bool Kernel::init() {
     // Select network parameters
     select_params(config_.network_name());
 
-    // Ensure data directory exists
+    // Ensure data directory and subdirectories exist
     std::error_code ec;
     if (!config_.datadir.empty()) {
         std::filesystem::create_directories(config_.datadir, ec);
@@ -50,6 +50,9 @@ bool Kernel::init() {
                          config_.datadir.c_str(), ec.message().c_str());
             return false;
         }
+        std::filesystem::create_directories(config_.datadir + "/chainstate", ec);
+        std::filesystem::create_directories(config_.datadir + "/wallets", ec);
+        std::filesystem::create_directories(config_.datadir + "/indexes", ec);
     }
 
     // Open chain state database

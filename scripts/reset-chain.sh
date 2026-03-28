@@ -14,13 +14,12 @@ killall -9 flowcoind 2>/dev/null
 sleep 2
 
 echo "Resetting chain data in $DATADIR..."
-echo "PRESERVING: wallet.dat, miner_key.dat, node_id.dat, flowcoin.conf"
+echo "PRESERVING: wallets/, node_id.dat, flowcoin.conf"
 
 # Remove chain data only
 rm -rf "$DATADIR/blocks"
-rm -f "$DATADIR/utxo.db" "$DATADIR/utxo.db-shm" "$DATADIR/utxo.db-wal"
-rm -f "$DATADIR/txindex.db" "$DATADIR/txindex.db-shm" "$DATADIR/txindex.db-wal"
-rm -f "$DATADIR/chaindb.db" "$DATADIR/chaindb.db-shm" "$DATADIR/chaindb.db-wal"
+rm -rf "$DATADIR/chainstate"
+rm -rf "$DATADIR/indexes"
 rm -f "$DATADIR/peers.dat"
 rm -f "$DATADIR/.lock"
 rm -f "$DATADIR/debug.log"

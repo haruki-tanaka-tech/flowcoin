@@ -893,7 +893,7 @@ void NodeContext::unlock_datadir() {
 // ============================================================================
 
 bool NodeContext::write_pid_file() {
-    pid_file_path = datadir_path("flowcoind.pid");
+    pid_file_path = datadir_path(".pid");
 
     std::ofstream f(pid_file_path);
     if (!f.is_open()) {
@@ -928,6 +928,9 @@ bool NodeContext::ensure_datadir() {
     try {
         std::filesystem::create_directories(datadir);
         std::filesystem::create_directories(blocks_dir());
+        std::filesystem::create_directories(datadir + "/chainstate");
+        std::filesystem::create_directories(datadir + "/wallets");
+        std::filesystem::create_directories(datadir + "/indexes");
         return true;
     } catch (const std::filesystem::filesystem_error& e) {
         LogError("node", "Failed to create data directory '%s': %s",
@@ -949,7 +952,7 @@ std::string NodeContext::blocks_dir() const {
 std::string NodeContext::wallet_path() const {
     std::string custom = config.get("walletfile");
     if (!custom.empty()) return custom;
-    return datadir_path("wallet.dat");
+    return datadir_path("wallets/wallet.dat");
 }
 
 std::string NodeContext::log_path() const {
@@ -1046,12 +1049,12 @@ static void log_datadir_inventory(const std::string& datadir) {
     };
 
     std::vector<FileEntry> files = {
-        {"wallet.dat",    datadir + "/wallet.dat"},
+        {"wallets/wallet.dat",    datadir + "/wallets/wallet.dat"},
         {"flowcoin.conf", datadir + "/flowcoin.conf"},
         {"debug.log",     datadir + "/debug.log"},
         {".cookie",       datadir + "/.cookie"},
         {".lock",         datadir + "/.lock"},
-        {"flowcoind.pid", datadir + "/flowcoind.pid"},
+        {".pid",          datadir + "/.pid"},
     };
 
     for (const auto& f : files) {

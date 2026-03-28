@@ -998,6 +998,9 @@ bool Node::ensure_datadir() {
     try {
         std::filesystem::create_directories(config_.datadir);
         std::filesystem::create_directories(config_.datadir + "/blocks");
+        std::filesystem::create_directories(config_.datadir + "/chainstate");
+        std::filesystem::create_directories(config_.datadir + "/wallets");
+        std::filesystem::create_directories(config_.datadir + "/indexes");
         return true;
     } catch (const std::filesystem::filesystem_error& e) {
         LogError("init", "Failed to create data directory '%s': %s",
@@ -1084,7 +1087,7 @@ bool Node::init() {
             (unsigned long)chain_->height());
 
     // 2. Initialize Wallet
-    std::string wallet_path = config_.datadir + "/wallet.dat";
+    std::string wallet_path = config_.datadir + "/wallets/wallet.dat";
     LogInfo("init", "Initializing wallet at %s", wallet_path.c_str());
     wallet_ = std::make_unique<Wallet>(wallet_path, chain_->utxo_set());
     if (!wallet_->init()) {

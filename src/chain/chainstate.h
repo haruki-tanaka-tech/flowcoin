@@ -32,10 +32,10 @@ class ChainState {
 public:
     /// Construct a ChainState rooted at the given data directory.
     /// The directory should contain (or will be populated with):
-    ///   blocks/blk00000.dat, ...    (flat-file block storage)
-    ///   utxo.db                     (SQLite UTXO database)
-    ///   model/                      (consensus model checkpoints)
-    ///   txindex.db                  (optional transaction index)
+    ///   blocks/blk00000.dat, ...        (flat-file block storage)
+    ///   chainstate/utxo.db              (SQLite UTXO database)
+    ///   chainstate/chaindb.db           (block index database)
+    ///   indexes/txindex.db              (optional transaction index)
     explicit ChainState(const std::string& datadir);
 
     /// Initialize the chain state. Creates the genesis block if the

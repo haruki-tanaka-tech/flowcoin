@@ -38,7 +38,7 @@ namespace defaults {
     constexpr const char* DEFAULT_DATADIR     = ".flowcoin";
     constexpr const char* DEFAULT_CONF_FILE   = "flowcoin.conf";
     constexpr const char* DEFAULT_LOG_FILE    = "debug.log";
-    constexpr const char* DEFAULT_WALLET_FILE = "wallet.dat";
+    constexpr const char* DEFAULT_WALLET_FILE = "wallets/wallet.dat";
 
     constexpr const char* DEFAULT_RPC_BIND    = "127.0.0.1";
     constexpr const char* DEFAULT_BIND        = "0.0.0.0";
