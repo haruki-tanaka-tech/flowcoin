@@ -223,6 +223,9 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
                 listen_addr.to_string().c_str(),
                 (unsigned long long)peer.node_id());
 
+        // Request peer's address list for addr propagation
+        send(peer, NetCmd::GETADDR);
+
         // If peer has a higher chain, request headers
         uint64_t our_height = chain_.height();
         uint64_t their_height = peer.start_height();
@@ -670,6 +673,16 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
         if (chain_.height() > tip_before) {
             relay_block(block_hash, &peer);
         }
+        // If still behind peer, request more headers
+        if (chain_.height() < peer.start_height() &&
+            chain_.height() % 500 == 0) {  // throttle: every 500 blocks
+            DataWriter hw;
+            hw.write_u32_le(consensus::PROTOCOL_VERSION);
+            hw.write_compact_size(1);
+            hw.write_bytes(chain_.tip()->hash.data(), 32);
+            uint256 zs; hw.write_bytes(zs.data(), 32);
+            send(peer, NetCmd::GETHEADERS, hw.release());
+        }
     } else {
         // Don't penalize for bad-prevblk or reorg failures — normal during forks
         std::string reason = vstate.reject_reason();
@@ -860,7 +873,7 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
     }
 
     // If we received a full batch (2000), there may be more
-    if (count == 2000 && got_new) {
+    if (count >= 2000) {
         // Request more headers starting from our new tip
         DataWriter w;
         w.write_u32_le(consensus::PROTOCOL_VERSION);
