@@ -2,11 +2,9 @@
 
 ## Overview
 
-FlowCoin is a blockchain that replaces Bitcoin's Proof-of-Work with
-Proof-of-Useful-Training (PoUT). Miners train a shared neural network
-(ResonanceNet V5) and submit weight updates (deltas) as proof of work.
-The architecture closely mirrors Bitcoin Core's design, extended with
-consensus model management, delta validation, and continuous model growth.
+FlowCoin is a Keccak-256d Proof-of-Work cryptocurrency that closely
+mirrors Bitcoin Core's design, using modern cryptographic primitives
+(Keccak-256 hashing, Ed25519 signatures, Bech32m addresses).
 
 ## Module Dependency Graph
 
@@ -15,27 +13,25 @@ flowcoind (main binary)
   |
   +-- flowcoin_node
   |     +-- flowcoin_rpc        (JSON-RPC server, method dispatch)
-  |     +-- flowcoin_mining      (block template, miner, stratum)
+  |     +-- flowcoin_mining      (block template, miner)
   |     +-- flowcoin_wallet      (HD keys, UTXO scanning, tx creation)
   |     +-- flowcoin_net         (P2P connections, message relay)
   |     +-- flowcoin_chain       (chainstate, block index, block store)
-  |     +-- flowcoin_consensus   (validation, difficulty, growth, eval)
+  |     +-- flowcoin_consensus   (validation, difficulty)
   |     +-- flowcoin_mempool     (transaction pool, policy)
   |     +-- flowcoin_index       (tx index, block filter index)
   |     +-- flowcoin_policy      (fee estimation, RBF)
   |     +-- flowcoin_interfaces  (node/wallet/chain abstractions)
   |     +-- flowcoin_rest        (HTTP REST API)
   |
-  +-- flowcoin_primitives        (block, transaction, delta)
+  +-- flowcoin_primitives        (block, transaction)
   +-- flowcoin_crypto            (Ed25519, bech32, AES-256, SLIP-0010)
   +-- flowcoin_hash              (Keccak-256, Merkle trees, Bloom filters)
   +-- flowcoin_util              (arith_uint256, time, random, threading)
   +-- flowcoin_script            (script evaluation, standard scripts)
   |
-  +-- ggml (vendored)            (tensor operations, CPU backend)
   +-- sqlite (vendored)          (UTXO set, wallet DB, chain DB)
   +-- xkcp (vendored)            (Keccak reference implementation)
-  +-- zstd (vendored)            (delta compression)
   +-- libuv (vendored)           (async I/O, event loop)
   +-- nlohmann/json (vendored)   (JSON parsing)
 ```
@@ -51,7 +47,7 @@ A block arrives via the P2P network through `flowcoin_net`:
 3. `messages.cpp` deserializes the `BLOCK` message into a `CBlock` struct.
 4. The block is passed to `ChainState::accept_block()`.
 
-### 2. Header Validation (Checks 1-14)
+### 2. Header Validation
 
 `validation.cpp::check_header()` performs these checks without the block body:
 
@@ -62,45 +58,26 @@ A block arrives via the P2P network through `flowcoin_net`:
 | 3 | timestamp | Must be after parent timestamp |
 | 4 | timestamp | Must respect MIN_BLOCK_INTERVAL (60s) |
 | 5 | timestamp | Must not be >2h in the future |
-| 6 | val_loss | Must be finite and positive |
-| 7 | val_loss | Must be below MAX_VAL_LOSS (100.0) |
-| 8 | prev_val_loss | Must equal parent's val_loss (bit-identical) |
-| 9 | val_loss | Must not exceed MAX_LOSS_INCREASE * parent loss |
-| 10 | training_hash | Must be below difficulty target |
-| 11 | nbits | Must match retarget algorithm output |
-| 12 | dataset_hash | Must match computed dataset hash |
-| 13 | growth fields | Must match compute_growth(height) |
-| 14 | miner_sig | Ed25519 signature must verify |
+| 6 | block_hash | Keccak-256d(header) must be below difficulty target |
+| 7 | nbits | Must match retarget algorithm output |
+| 8 | miner_sig | Ed25519 signature must verify |
 
-### 3. Block Body Validation (Check 15+)
+### 3. Block Body Validation
 
 `validation.cpp::check_block()` adds:
 
 - Coinbase transaction structure and reward amount
 - Merkle root verification
 - Transaction signature verification
-- Delta payload decompression and validation
-- **Check 15**: Forward evaluation of model+delta against validation data
 
 ### 4. Chain State Update
 
 On successful validation:
 
 1. `utxo.cpp`: UTXO set is updated (add new outputs, remove spent inputs).
-2. `modelstate.cpp`: Consensus model weights are updated by applying the delta.
-3. `blockindex.cpp`: Block index entry is created/updated.
-4. `blockstore.cpp`: Full block is written to flat-file storage.
-5. `txindex.cpp`: Transaction index is updated (if enabled).
-
-### 5. Model State Update
-
-`consensus_model.cpp::apply_delta()`:
-
-1. Decompress zstd-compressed delta payload.
-2. If sparse format: expand to dense array with zero-fill.
-3. Element-wise add delta to current model weights.
-4. Store delta in undo history (for reorg support).
-5. If dimensions changed: call `expand_to()` to grow the model.
+2. `blockindex.cpp`: Block index entry is created/updated.
+3. `blockstore.cpp`: Full block is written to flat-file storage.
+4. `txindex.cpp`: Transaction index is updated (if enabled).
 
 ## Threading Model
 
@@ -126,9 +103,7 @@ FlowCoin uses a multi-threaded architecture with clear ownership rules:
 
 ### Mining Thread
 - Block template construction
-- Training loop (forward/backward pass)
-- Delta computation and compression
-- Nonce search
+- Nonce search (Keccak-256d PoW)
 
 ### Wallet Thread
 - UTXO scanning
@@ -138,7 +113,6 @@ FlowCoin uses a multi-threaded architecture with clear ownership rules:
 
 ### Synchronization Primitives
 - `ChainState` uses a read-write mutex: multiple readers, exclusive writer
-- Model weights protected by `weights_mutex_` (exclusive for apply_delta)
 - UTXO set uses SQLite's built-in WAL mode for concurrent reads
 - Mempool uses a shared mutex for read access
 
@@ -149,9 +123,6 @@ FlowCoin uses a multi-threaded architecture with clear ownership rules:
   entire chain history. At 100K blocks: ~20 MB.
 - **UTXO cache**: Hot UTXOs cached in memory. Default 300 MB.
 - **Mempool**: Pending transactions. Default limit 300 MB.
-- **Consensus model weights**: Full model in float32.
-  At genesis (512-dim, 8-layer): ~50 MB.
-  At maturity (1024-dim, 24-layer, 400K slots): ~3 GB.
 - **Peer state**: ~1 KB per peer. 125 peers: ~125 KB.
 
 ### On Disk
@@ -159,7 +130,6 @@ FlowCoin uses a multi-threaded architecture with clear ownership rules:
 - **UTXO database** (`utxo.db`): SQLite with WAL mode.
 - **Wallet database** (`wallet.dat`): SQLite, encrypted keys.
 - **Chain database** (`chaindb.db`): Block index, chain state metadata.
-- **Model checkpoints** (`model/`): Full model snapshots every 2016 blocks.
 - **Transaction index** (`txindex.db`): Optional, maps txid -> block position.
 
 ## Database Schemas
@@ -218,7 +188,7 @@ CREATE TABLE block_index (
     height      INTEGER NOT NULL,
     timestamp   INTEGER NOT NULL,
     nbits       INTEGER NOT NULL,
-    val_loss    REAL NOT NULL,
+    nonce       INTEGER NOT NULL,
     status      INTEGER NOT NULL,
     file_num    INTEGER,
     file_offset INTEGER,
@@ -237,55 +207,6 @@ CREATE TABLE tx_index (
     file_offset INTEGER NOT NULL,
     block_hash  BLOB NOT NULL
 );
-```
-
-## Consensus Model Lifecycle
-
-### 1. Initialization (Genesis)
-
-```
-init(dims=genesis_dims, seed=42)
-  -> allocate_context()      # ggml memory pool
-  -> create_tensors()        # embedding, layers, final_norm
-  -> init_weights(seed=42)   # deterministic Keccak-256 PRNG
-```
-
-All weights are initialized from seed 42 using Keccak-256 in counter mode.
-Every node produces identical initial weights.
-
-### 2. Growth (Continuous)
-
-Every block, `compute_growth(height)` determines the model dimensions.
-If dimensions increased from the previous block:
-
-```
-expand_to(new_dims)
-  -> Allocate new ggml context with larger tensors
-  -> Copy existing weights into the new tensors
-  -> Zero-pad new dimensions
-  -> Release old context
-```
-
-### 3. Checkpoint (Every 2016 blocks)
-
-```
-save_checkpoint(path)
-  -> Serialize all weight tensors to file
-  -> Include dimensions metadata
-  -> Include weight hash for verification
-```
-
-New nodes can download a recent checkpoint instead of replaying
-all training from genesis.
-
-### 4. Restore (From Checkpoint)
-
-```
-load_checkpoint(path)
-  -> Read dimensions from file
-  -> Allocate context and tensors
-  -> Load weight data
-  -> Verify weight hash
 ```
 
 ## P2P Message Flow
@@ -373,9 +294,8 @@ Deterministic build support:
 
 ## Security Considerations
 
-- **Determinism**: All consensus-critical computation is single-threaded,
-  float32, with fixed accumulation order. No SIMD, no multi-threading
-  in the evaluation path.
+- **Determinism**: All consensus-critical computation produces identical
+  results across platforms.
 - **Cryptography**: Ed25519 for signatures, Keccak-256 for hashing,
   AES-256-CBC for wallet encryption, SLIP-0010 for HD key derivation.
 - **Network**: All peer messages are checksummed (Keccak-256 truncated to 4 bytes).
@@ -482,7 +402,7 @@ Hierarchical logging with categories:
 | `mining` | Mining operations |
 | `rpc` | RPC server activity |
 | `wallet` | Wallet operations |
-| `model` | Consensus model operations |
+| `pow` | Proof-of-work operations |
 | `db` | Database operations |
 | `lock` | Lock contention tracking |
 
@@ -502,12 +422,10 @@ Clean shutdown follows this order:
 5. Flush mempool to disk (if configured).
 6. Flush UTXO set to disk.
 7. Save block index to ChainDB.
-8. Save model checkpoint.
-9. Close wallet database.
-10. Close all peer connections.
-11. Stop libuv event loop.
-12. Release ggml context.
-13. Exit.
+8. Close wallet database.
+9. Close all peer connections.
+10. Stop libuv event loop.
+11. Exit.
 
 ## Performance Characteristics
 
@@ -515,14 +433,11 @@ Clean shutdown follows this order:
 
 | Operation | Time (typical) |
 |-----------|---------------|
-| Header validation (checks 1-14) | <1 ms |
+| Header validation | <1 ms |
+| PoW hash check (Keccak-256d) | <0.01 ms |
 | Transaction signature verification | ~0.1 ms per sig |
 | UTXO lookups | ~0.01 ms per input |
 | Merkle root computation | ~0.1 ms for 100 txs |
-| Delta decompression | ~10 ms |
-| Model weight update | ~50 ms |
-| Forward evaluation (Check 15) | ~1-5 s (genesis model) |
-| Forward evaluation (mature model) | ~30-120 s |
 
 ### Sync Performance
 
@@ -530,17 +445,15 @@ Clean shutdown follows this order:
 |-------|------|
 | Header sync | ~10,000 headers/s |
 | Block download (IBD) | ~100 blocks/s (network limited) |
-| Block validation (IBD, no Check 15) | ~200 blocks/s |
-| Block validation (with Check 15) | ~1-2 blocks/min |
+| Block validation (IBD) | ~200 blocks/s |
 
 ### Storage Growth
 
 | Component | Growth Rate |
 |-----------|------------|
-| Block files | ~2 MB/block (varies with delta size) |
+| Block files | ~1 MB/block (varies with tx count) |
 | UTXO database | ~100 bytes per UTXO |
 | Block index | ~200 bytes per block |
-| Model checkpoints | ~50 MB at genesis, grows with model |
 
 ## Initial Block Download (IBD)
 
@@ -559,15 +472,10 @@ Clean shutdown follows this order:
 3. **Block Validation**: Validate each block fully.
    During IBD, assume-valid optimization can skip signature verification
    for blocks below a trusted hash.
-   Check 15 (model evaluation) cannot be skipped.
 
 4. **UTXO Construction**: Build the UTXO set from all blocks.
    Batched SQLite transactions for performance.
    Periodic cache flushes to limit memory usage.
-
-5. **Model Construction**: Apply all deltas sequentially.
-   Load from the most recent checkpoint if available.
-   Apply remaining deltas from checkpoint to tip.
 
 ### IBD Detection
 
@@ -581,25 +489,12 @@ During IBD:
 - Mining is disabled.
 - RPC methods that depend on chain tip may return stale data.
 
-### Checkpoint Optimization
-
-Model checkpoints are saved every 2016 blocks (same as retarget interval).
-During IBD, a new node can:
-
-1. Download a checkpoint from a trusted source.
-2. Verify the checkpoint hash matches the expected hash for that height.
-3. Start delta application from the checkpoint height.
-
-This reduces IBD time from O(chain_height) model evaluations to
-O(chain_height - checkpoint_height) evaluations.
-
 ### Assume-Valid
 
 The `-assumevalid` flag specifies a block hash. For all blocks before
 this hash:
 - Signature verification is skipped.
 - Script evaluation is skipped.
-- Check 15 (model eval) is still performed (cannot be skipped).
 
 This optimization is safe under the assumption that if a block is buried
 deep in the chain with the most cumulative work, it was validated by
@@ -625,16 +520,12 @@ For each block disconnected (in reverse order):
 
 1. **UTXO rollback**: Re-add spent outputs, remove created outputs.
    Uses the BlockUndo data stored during connection.
-2. **Model rollback**: Undo the delta (subtract the delta from weights).
-   Uses the delta history (last 10 deltas stored in memory).
-3. **Mempool recovery**: Return transactions from disconnected blocks
+2. **Mempool recovery**: Return transactions from disconnected blocks
    to the mempool (if they are still valid).
-4. **Block index update**: Mark block as no longer part of the active chain.
+3. **Block index update**: Mark block as no longer part of the active chain.
 
 ### Reorg Limits
 
-- Maximum reorg depth: limited by delta history (10 blocks by default).
-- For deeper reorgs, a full re-sync from the fork point is required.
 - The FINALITY_DEPTH (6 blocks) is the recommended confirmation depth
   for considering transactions final.
 
@@ -725,7 +616,7 @@ Each endpoint supports three formats via file extension:
 
 #### GET /rest/block/<hash>.<format>
 
-Returns the full block including all transactions and delta payload.
+Returns the full block including all transactions.
 
 JSON fields:
 - `hash`: Block hash (hex)
@@ -735,8 +626,7 @@ JSON fields:
 - `merkle_root`: Merkle root of transactions
 - `timestamp`: Block timestamp (Unix seconds)
 - `nbits`: Compact difficulty target
-- `val_loss`: Validation loss
-- `d_model`, `n_layers`, `d_ff`, `n_heads`, `gru_dim`, `n_slots`: Model dims
+- `nonce`: Mining nonce
 - `tx`: Array of transaction objects
 - `size`: Serialized block size
 - `weight`: Block weight
