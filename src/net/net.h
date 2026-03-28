@@ -16,8 +16,10 @@
 #include "net/protocol.h"
 #include "primitives/transaction.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -121,6 +123,17 @@ public:
     // Ban manager
     BanMan& banman() { return banman_; }
     const BanMan& banman() const { return banman_; }
+
+    // Self-connection prevention: track our external IP once learned
+    void set_external_ip(const uint8_t* ip) {
+        std::memcpy(external_ip_.data(), ip, 16);
+        external_ip_known_ = true;
+    }
+    bool is_self_address(const CNetAddr& addr) const {
+        return external_ip_known_ &&
+               std::memcmp(external_ip_.data(), addr.ip, 16) == 0 &&
+               addr.port == port_;
+    }
 
     // Get per-peer info for RPC getpeerinfo
     struct PeerInfo {
@@ -244,6 +257,10 @@ private:
     int64_t last_dns_seed_time_ = 0;
     int64_t start_time_ = 0;
     int64_t max_upload_rate_ = 0;  // 0 = unlimited
+
+    // Our external IP, learned from self-connection detection
+    std::array<uint8_t, 16> external_ip_{};
+    bool external_ip_known_ = false;
 
     // Seed nodes (ip, port)
     static const std::vector<std::pair<std::string, uint16_t>> SEED_NODES;

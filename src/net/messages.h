@@ -46,6 +46,9 @@ private:
     // Individual message handlers
     void handle_version(Peer& peer, const uint8_t* data, size_t len);
     void handle_verack(Peer& peer);
+
+    // Called when both VERSION and VERACK have been exchanged
+    void on_handshake_complete(Peer& peer);
     void handle_ping(Peer& peer, const uint8_t* data, size_t len);
     void handle_pong(Peer& peer, const uint8_t* data, size_t len);
     void handle_getaddr(Peer& peer);

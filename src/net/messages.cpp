@@ -152,8 +152,10 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
 
     // Self-connection detection
     if (ver.nonce == netman_.local_nonce()) {
-        LogInfo("net", "detected self-connection to peer %lu, disconnecting",
-                (unsigned long)peer.id());
+        LogInfo("net", "detected self-connection to peer %lu (%s), disconnecting",
+                (unsigned long)peer.id(), peer.addr().to_string().c_str());
+        // Learn our external IP so we can skip it in future connect_to calls
+        netman_.set_external_ip(peer.addr().ip);
         // Mark our own address as failed so addrman doesn't select it again
         CNetAddr self_addr = peer.addr();
         if (peer.listen_port() != 0) self_addr.port = peer.listen_port();
@@ -214,44 +216,7 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
 
     // If we've already received their verack, handshake is done
     if (peer.verack_received()) {
-        peer.set_state(PeerState::HANDSHAKE_DONE);
-        // Register peer with listen port in addrman
-        CNetAddr listen_addr = peer.addr();
-        if (peer.listen_port() != 0) {
-            listen_addr.port = peer.listen_port();
-        }
-        netman_.addrman().add(listen_addr, GetTime());
-        netman_.addrman().mark_good(listen_addr);
-        LogInfo("net", "handshake complete with peer %lu (%s listen=%s) node_id=%016llx",
-                (unsigned long)peer.id(), peer.addr().to_string().c_str(),
-                listen_addr.to_string().c_str(),
-                (unsigned long long)peer.node_id());
-
-        // Request peer's address list for addr propagation
-        send(peer, NetCmd::GETADDR);
-
-        // If peer has a higher chain, request headers
-        uint64_t our_height = chain_.height();
-        uint64_t their_height = peer.start_height();
-        if (their_height > our_height) {
-            LogInfo("net", "peer %lu has height %lu (ours: %lu), requesting headers",
-                    (unsigned long)peer.id(), (unsigned long)their_height,
-                    (unsigned long)our_height);
-
-            DataWriter w;
-            w.write_u32_le(consensus::PROTOCOL_VERSION);
-            w.write_compact_size(1);
-            CBlockIndex* tip = chain_.tip();
-            if (tip) {
-                w.write_bytes(tip->hash.data(), 32);
-            } else {
-                uint256 zero;
-                w.write_bytes(zero.data(), 32);
-            }
-            uint256 zero_stop;
-            w.write_bytes(zero_stop.data(), 32);
-            send(peer, NetCmd::GETHEADERS, w.data());
-        }
+        on_handshake_complete(peer);
     }
 }
 
@@ -265,49 +230,50 @@ void MessageHandler::handle_verack(Peer& peer) {
 
     // Handshake is complete once we have both version and verack
     if (peer.version_received()) {
-        peer.set_state(PeerState::HANDSHAKE_DONE);
-        CNetAddr listen_addr = peer.addr();
-        if (peer.listen_port() != 0) {
-            listen_addr.port = peer.listen_port();
+        on_handshake_complete(peer);
+    }
+}
+
+void MessageHandler::on_handshake_complete(Peer& peer) {
+    peer.set_state(PeerState::HANDSHAKE_DONE);
+
+    // Register peer with listen port in addrman
+    CNetAddr listen_addr = peer.addr();
+    if (peer.listen_port() != 0) {
+        listen_addr.port = peer.listen_port();
+    }
+    netman_.addrman().add(listen_addr, GetTime());
+    netman_.addrman().mark_good(listen_addr);
+
+    LogInfo("net", "handshake complete with peer %lu (%s listen=%s) node_id=%016llx",
+            (unsigned long)peer.id(), peer.addr().to_string().c_str(),
+            listen_addr.to_string().c_str(),
+            (unsigned long long)peer.node_id());
+
+    // Request peer's address list for addr propagation
+    send(peer, NetCmd::GETADDR);
+
+    // If peer has a higher chain, request headers
+    uint64_t our_height = chain_.height();
+    uint64_t their_height = peer.start_height();
+    if (their_height > our_height) {
+        LogInfo("net", "peer %lu has height %lu (ours: %lu), requesting headers",
+                (unsigned long)peer.id(), (unsigned long)their_height,
+                (unsigned long)our_height);
+
+        DataWriter w;
+        w.write_u32_le(consensus::PROTOCOL_VERSION);
+        w.write_compact_size(1);
+        CBlockIndex* tip = chain_.tip();
+        if (tip) {
+            w.write_bytes(tip->hash.data(), 32);
+        } else {
+            uint256 zero;
+            w.write_bytes(zero.data(), 32);
         }
-        netman_.addrman().add(listen_addr, GetTime());
-        netman_.addrman().mark_good(listen_addr);
-        LogInfo("net", "handshake complete with peer %lu (%s listen=%s) node_id=%016llx",
-                (unsigned long)peer.id(), peer.addr().to_string().c_str(),
-                listen_addr.to_string().c_str(),
-                (unsigned long long)peer.node_id());
-
-        // If peer has a higher chain, request headers
-        uint64_t our_height = chain_.height();
-        uint64_t their_height = peer.start_height();
-        if (their_height > our_height) {
-            LogInfo("net", "peer %lu has height %lu (ours: %lu), requesting headers",
-                    (unsigned long)peer.id(), (unsigned long)their_height,
-                    (unsigned long)our_height);
-
-            // Send getheaders with our tip as the locator
-            DataWriter w;
-            // Protocol version
-            w.write_u32_le(consensus::PROTOCOL_VERSION);
-            // Locator hash count
-            w.write_compact_size(1);
-            // Our tip hash
-            CBlockIndex* tip = chain_.tip();
-            if (tip) {
-                w.write_bytes(tip->hash.data(), 32);
-            } else {
-                uint256 zero;
-                w.write_bytes(zero.data(), 32);
-            }
-            // Hash stop (zero = get as many as possible)
-            uint256 zero_stop;
-            w.write_bytes(zero_stop.data(), 32);
-
-            send(peer, NetCmd::GETHEADERS, w.release());
-        }
-
-        // Ask for their address list
-        send(peer, NetCmd::GETADDR);
+        uint256 zero_stop;
+        w.write_bytes(zero_stop.data(), 32);
+        send(peer, NetCmd::GETHEADERS, w.data());
     }
 }
 
@@ -685,7 +651,7 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
         }
         // If still behind peer, request more headers
         if (chain_.height() < peer.start_height() &&
-            chain_.height() % 500 == 0) {  // throttle: every 500 blocks
+            chain_.height() % 100 == 0) {  // throttle: every 100 blocks
             DataWriter hw;
             hw.write_u32_le(consensus::PROTOCOL_VERSION);
             hw.write_compact_size(1);
@@ -827,8 +793,8 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
     LogInfo("net", "received %lu headers from peer %lu",
             (unsigned long)count, (unsigned long)peer.id());
 
-    bool got_new = false;
     std::vector<uint256> new_header_hashes;
+    uint256 last_hash;  // track last header hash for continuation locator
 
     for (uint64_t i = 0; i < count; ++i) {
         // Each header is 188 bytes (92 unsigned + 32 pubkey + 64 sig)
@@ -859,12 +825,12 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
 
         // Try to accept the header
         uint256 hdr_hash = hdr.get_hash();
+        last_hash = hdr_hash;  // always track last header for continuation
         CBlockIndex* existing = chain_.block_tree().find(hdr_hash);
         if (existing) {
             // Already have header — but if not fully validated, we still need the block
             if (!(existing->status & BLOCK_FULLY_VALIDATED)) {
                 new_header_hashes.push_back(hdr_hash);
-                got_new = true;
             }
             continue;
         }
@@ -872,7 +838,6 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         consensus::ValidationState vstate;
         CBlockIndex* new_idx = chain_.accept_header(hdr, vstate);
         if (new_idx) {
-            got_new = true;
             new_header_hashes.push_back(hdr_hash);
         } else {
             LogError("net", "rejected header from peer %lu: %s",
@@ -882,19 +847,16 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         }
     }
 
-    // If we received a full batch (2000), there may be more
-    if (count >= 2000) {
-        // Request more headers starting from our new tip
+    // If we received a full batch (2000), ALWAYS request more —
+    // the peer likely has additional headers beyond this batch.
+    // Use the last received header hash as locator (not our tip),
+    // so we continue from where this batch ended even if we already
+    // had some of these headers.
+    if (count >= 2000 && !last_hash.is_null()) {
         DataWriter w;
         w.write_u32_le(consensus::PROTOCOL_VERSION);
         w.write_compact_size(1);
-        CBlockIndex* tip = chain_.tip();
-        if (tip) {
-            w.write_bytes(tip->hash.data(), 32);
-        } else {
-            uint256 zero;
-            w.write_bytes(zero.data(), 32);
-        }
+        w.write_bytes(last_hash.data(), 32);
         uint256 zero_stop;
         w.write_bytes(zero_stop.data(), 32);
         send(peer, NetCmd::GETHEADERS, w.release());
@@ -907,7 +869,7 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
     // Also scan for any header-only entries above our tip
     uint64_t our_height = chain_.height();
     uint64_t peer_height = peer.start_height();
-    for (uint64_t h = our_height + 1; h <= peer_height && h <= our_height + 500; ++h) {
+    for (uint64_t h = our_height + 1; h <= peer_height && h <= our_height + 2000; ++h) {
         auto at_height = chain_.block_tree().get_at_height(h);
         for (auto* idx : at_height) {
             if (!(idx->status & BLOCK_FULLY_VALIDATED)) {
