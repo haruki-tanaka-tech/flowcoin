@@ -544,7 +544,7 @@ static void *mining_thread(void *arg)
 
                 /* Brief yield between batches — lets GPU cool, prevents power spikes.
                  * lolMiner and other production miners do the same. */
-                usleep(500);  /* 0.5ms pause — reduces ~2% hashrate but prevents shutdown */
+                usleep(1500);  /* 1.5ms pause — ~5% hashrate reduction, prevents thermal shutdown */
 
                 if (ocl_mine_batch(header, 92, target, 84,
                                    nonce, batch_count, &winning_nonce)) {
