@@ -317,17 +317,25 @@ void NetManager::connect_to(const CNetAddr& addr) {
     }
     if (all_zero) return;  // skip :: and 0.0.0.0
 
+    // Don't connect to our own address
+    if (is_self_address(addr)) {
+        LogInfo("net", "skipping self-address %s", addr.to_string().c_str());
+        return;
+    }
+
     // Don't connect if we already have too many outbound peers
     if (outbound_count() >= static_cast<size_t>(consensus::MAX_OUTBOUND_PEERS)) {
         return;
     }
 
-    // Don't connect to ourselves or to peers we're already connected to
+    // Don't connect to peers we're already connected to (check by IP, not port,
+    // because inbound peers have ephemeral ports)
     {
         std::lock_guard<std::mutex> lock(peers_mutex_);
         for (const auto& [id, peer] : peers_) {
-            if (peer->addr() == addr && peer->state() != PeerState::DISCONNECTED) {
-                return;  // already connected
+            if (peer->state() == PeerState::DISCONNECTED) continue;
+            if (!peer->is_inbound() && std::memcmp(peer->addr().ip, addr.ip, 16) == 0) {
+                return;  // already have outbound connection to this IP
             }
         }
     }
@@ -968,16 +976,23 @@ void NetManager::maintain_connections() {
     size_t attempts = 0;
     static constexpr size_t MAX_CONNECT_ATTEMPTS = 30;
 
+    LogInfo("net", "maintain_connections: outbound=%zu target=%zu needed=%zu addrman_size=%zu (new=%zu tried=%zu)",
+            current_outbound, target, needed,
+            addrman_.size(), addrman_.new_size(), addrman_.tried_size());
+
     // Try to connect to addresses from the address manager
     for (size_t i = 0; i < needed && attempts < MAX_CONNECT_ATTEMPTS; ++attempts) {
         CNetAddr addr = addrman_.select();
         if (addr.port == 0) {
+            LogInfo("net", "maintain_connections: addrman.select() returned no candidate (attempt %zu)", attempts);
             // No candidates available; try seeds if we have no connections at all
             if (current_outbound == 0 && i == 0) {
                 connect_seeds();
             }
             break;
         }
+
+        LogInfo("net", "maintain_connections: selected %s from addrman", addr.to_string().c_str());
 
         // Check ban status before attempting connection
         if (banman_.is_banned(addr)) {
