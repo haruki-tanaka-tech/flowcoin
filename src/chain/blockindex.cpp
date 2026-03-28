@@ -4,6 +4,8 @@
 #include "chain/blockindex.h"
 #include "primitives/block.h"
 #include "consensus/validation.h"
+#include "consensus/params.h"
+#include "consensus/difficulty.h"
 #include <algorithm>
 
 namespace flow {
@@ -36,9 +38,19 @@ consensus::BlockContext CBlockIndex::make_child_context(int64_t adjusted_time) c
     ctx.prev_nbits       = nbits;
     ctx.adjusted_time    = adjusted_time;
 
-    // For difficulty: at retarget boundaries the caller needs to compute
-    // the new target. For now, carry forward the parent's nbits.
-    ctx.expected_nbits = nbits;
+    // Compute expected nbits for the child block
+    uint64_t child_height = height + 1;
+    if (child_height > 0 && child_height % consensus::RETARGET_INTERVAL == 0) {
+        // Retarget: walk back RETARGET_INTERVAL blocks to get first timestamp
+        const CBlockIndex* first = this;
+        for (int i = 0; i < consensus::RETARGET_INTERVAL - 1 && first->prev; ++i) {
+            first = first->prev;
+        }
+        ctx.expected_nbits = consensus::get_next_work_required(
+            child_height, nbits, first->timestamp, timestamp);
+    } else {
+        ctx.expected_nbits = nbits;
+    }
 
     return ctx;
 }
