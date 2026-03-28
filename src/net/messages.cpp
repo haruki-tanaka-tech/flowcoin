@@ -317,14 +317,22 @@ void MessageHandler::handle_getaddr(Peer& peer) {
 
     if (addrs.empty()) return;
 
-    DataWriter w;
-    w.write_compact_size(addrs.size());
+    // Filter out unroutable addresses before sending
+    std::vector<CNetAddr> valid;
     for (const auto& addr : addrs) {
-        // Timestamp (4 bytes for addr messages, like Bitcoin)
+        bool all_zero = true;
+        for (int i = 0; i < 16; i++) {
+            if (addr.ip[i] != 0) { all_zero = false; break; }
+        }
+        if (!all_zero && addr.port != 0) valid.push_back(addr);
+    }
+    if (valid.empty()) return;
+
+    DataWriter w;
+    w.write_compact_size(valid.size());
+    for (const auto& addr : valid) {
         w.write_u32_le(static_cast<uint32_t>(GetTime()));
-        // Services
         w.write_u64_le(NODE_NETWORK);
-        // Address
         addr.serialize(w);
     }
     send(peer, NetCmd::ADDR, w.release());
@@ -353,6 +361,16 @@ void MessageHandler::handle_addr(Peer& peer, const uint8_t* data, size_t len) {
 
         // Ignore addresses with port 0
         if (addr.port == 0) continue;
+
+        // Ignore unroutable addresses (0.0.0.0, ::, etc.)
+        bool all_zero = true;
+        for (int j = 0; j < 16; j++) {
+            if (addr.ip[j] != 0) { all_zero = false; break; }
+        }
+        if (all_zero) continue;
+
+        // Skip our own address
+        if (netman_.is_self_address(addr)) continue;
 
         netman_.addrman().add(addr, static_cast<int64_t>(ts));
         added++;
