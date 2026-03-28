@@ -154,6 +154,10 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
     if (ver.nonce == netman_.local_nonce()) {
         LogInfo("net", "detected self-connection to peer %lu, disconnecting",
                 (unsigned long)peer.id());
+        // Mark our own address as failed so addrman doesn't select it again
+        CNetAddr self_addr = peer.addr();
+        if (peer.listen_port() != 0) self_addr.port = peer.listen_port();
+        netman_.addrman().mark_failed(self_addr);
         netman_.disconnect(peer, "self-connection");
         return;
     }
