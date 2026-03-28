@@ -599,6 +599,28 @@ bool step5_create_pid_file(NodeContext& node) {
 bool step6_initialize_chain(NodeContext& node, const AppArgs& args) {
     LogInfo("init", "Step 6: Initializing chain state");
 
+    // Auto-migrate old layout: .flowcoin/*.db → .flowcoin/chainstate/ and indexes/
+    {
+        std::error_code ec;
+        auto migrate_db = [&](const std::string& name, const std::string& subdir) {
+            std::string old_path = node.datadir + "/" + name;
+            std::string new_path = node.datadir + "/" + subdir + "/" + name;
+            if (!std::filesystem::exists(new_path, ec) && std::filesystem::exists(old_path, ec)) {
+                LogInfo("init", "Migrating %s to %s/", name.c_str(), subdir.c_str());
+                std::filesystem::create_directories(node.datadir + "/" + subdir, ec);
+                std::filesystem::rename(old_path, new_path, ec);
+                for (const auto& suffix : {"-shm", "-wal"}) {
+                    std::string old_wal = old_path + suffix;
+                    if (std::filesystem::exists(old_wal, ec))
+                        std::filesystem::rename(old_wal, new_path + suffix, ec);
+                }
+            }
+        };
+        migrate_db("chaindb.db", "chainstate");
+        migrate_db("utxo.db", "chainstate");
+        migrate_db("txindex.db", "indexes");
+    }
+
     try {
         node.chain = std::make_unique<ChainState>(node.datadir);
         if (!node.chain->load_from_disk()) {
@@ -644,6 +666,30 @@ bool step7_initialize_wallet(NodeContext& node, const AppArgs& args) {
         wp = args.wallet_file;
     } else {
         wp = node.wallet_path();
+    }
+
+    // Auto-migrate from old layout: .flowcoin/wallet.dat → .flowcoin/wallets/wallet.dat
+    {
+        std::string old_wallet = node.datadir + "/wallet.dat";
+        std::string old_miner_key = node.datadir + "/miner_key.dat";
+        std::error_code ec;
+        if (!std::filesystem::exists(wp, ec) && std::filesystem::exists(old_wallet, ec)) {
+            LogInfo("init", "Migrating wallet.dat to wallets/ directory");
+            std::filesystem::create_directories(node.datadir + "/wallets", ec);
+            std::filesystem::rename(old_wallet, wp, ec);
+            // Also migrate WAL files
+            for (const auto& suffix : {"-shm", "-wal"}) {
+                std::string old_wal = old_wallet + suffix;
+                if (std::filesystem::exists(old_wal, ec)) {
+                    std::filesystem::rename(old_wal, wp + suffix, ec);
+                }
+            }
+        }
+        // Migrate miner_key.dat
+        std::string new_miner_key = node.datadir + "/wallets/miner_key.dat";
+        if (!std::filesystem::exists(new_miner_key, ec) && std::filesystem::exists(old_miner_key, ec)) {
+            std::filesystem::rename(old_miner_key, new_miner_key, ec);
+        }
     }
 
     try {
