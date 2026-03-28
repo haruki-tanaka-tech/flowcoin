@@ -976,7 +976,7 @@ void NetManager::maintain_connections() {
     size_t attempts = 0;
     static constexpr size_t MAX_CONNECT_ATTEMPTS = 30;
 
-    LogInfo("net", "maintain_connections: outbound=%zu target=%zu needed=%zu addrman_size=%zu (new=%zu tried=%zu)",
+    LogDebug("net", "maintain_connections: outbound=%zu target=%zu needed=%zu addrman_size=%zu (new=%zu tried=%zu)",
             current_outbound, target, needed,
             addrman_.size(), addrman_.new_size(), addrman_.tried_size());
 
@@ -984,7 +984,7 @@ void NetManager::maintain_connections() {
     for (size_t i = 0; i < needed && attempts < MAX_CONNECT_ATTEMPTS; ++attempts) {
         CNetAddr addr = addrman_.select();
         if (addr.port == 0) {
-            LogInfo("net", "maintain_connections: addrman.select() returned no candidate (attempt %zu)", attempts);
+            LogDebug("net", "maintain_connections: addrman.select() returned no candidate (attempt %zu)", attempts);
             // No candidates available; try seeds if we have no connections at all
             if (current_outbound == 0 && i == 0) {
                 connect_seeds();
@@ -992,7 +992,7 @@ void NetManager::maintain_connections() {
             break;
         }
 
-        LogInfo("net", "maintain_connections: selected %s from addrman", addr.to_string().c_str());
+        LogDebug("net", "maintain_connections: selected %s from addrman", addr.to_string().c_str());
 
         // Check ban status before attempting connection
         if (banman_.is_banned(addr)) {
