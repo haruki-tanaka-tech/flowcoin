@@ -538,9 +538,13 @@ static void *mining_thread(void *arg)
         while (g_running && !found && !new_block) {
 #ifdef USE_OPENCL
             if (use_gpu) {
-                /* GPU path */
+                /* GPU path — batch size with throttle to prevent thermal shutdown */
                 uint32_t batch_count = 1 << 22;  /* 4M per batch */
                 uint32_t winning_nonce;
+
+                /* Brief yield between batches — lets GPU cool, prevents power spikes.
+                 * lolMiner and other production miners do the same. */
+                usleep(500);  /* 0.5ms pause — reduces ~2% hashrate but prevents shutdown */
 
                 if (ocl_mine_batch(header, 92, target, 84,
                                    nonce, batch_count, &winning_nonce)) {
