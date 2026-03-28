@@ -257,6 +257,13 @@ void AddrMan::add(const CNetAddr& addr, int64_t time_seen, const CNetAddr& sourc
 
     if (addr.port == 0) return;
 
+    // Reject unroutable addresses (0.0.0.0, ::)
+    bool all_zero = true;
+    for (int i = 0; i < 16; i++) {
+        if (addr.ip[i] != 0) { all_zero = false; break; }
+    }
+    if (all_zero) return;
+
     int existing_id = find_id(addr);
     if (existing_id >= 0) {
         // Already known — update last_seen if newer
