@@ -23,7 +23,6 @@ cmake -DCMAKE_TOOLCHAIN_FILE=depends/x86_64-linux-gnu/share/toolchain.cmake ..
 
 All dependencies are vendored in src/:
 - SQLite 3.47.2 (src/sqlite/)
-- ggml (src/ggml/)
 - zstd 1.5.5 (src/zstd/)
 - libuv 1.49 (src/libuv/)
 - ed25519-donna (src/crypto/)

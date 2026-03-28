@@ -22,8 +22,7 @@ libraries are vendored in the source tree:
 - **Keccak** (XKCP reference implementation) for hashing
 - **Ed25519-donna** for signatures
 - **SQLite** for UTXO and index storage
-- **zstd** for delta payload compression
-- **ggml** for consensus model evaluation
+- **zstd** for block data compression
 - **libuv** for async networking and event loops
 - **nlohmann/json** (header-only) for RPC serialization
 
@@ -53,21 +52,6 @@ sudo dnf install -y gcc-c++ cmake git make
 **Arch Linux:**
 ```bash
 sudo pacman -S base-devel cmake git
-```
-
-### Optional (for mining)
-
-Mining requires a Python environment with GPU support:
-
-| Dependency | Version | Purpose |
-|---|---|---|
-| Python | 3.8+ | Mining script runtime |
-| PyTorch | 2.0+ | GPU-accelerated model training |
-| zstandard | any | Delta compression in Python |
-| pycryptodome | any | Keccak-256 hashing |
-
-```bash
-pip install torch zstandard pycryptodome
 ```
 
 ## Build Instructions
@@ -217,18 +201,18 @@ curl -u your_username:your_password \
 
 ## Mining
 
-FlowCoin uses Proof-of-Useful-Training (PoUT) instead of traditional
-hash-based proof of work. Mining involves training a neural network on
-a dataset and submitting the resulting weight updates as proof.
+FlowCoin uses Keccak-256d Proof-of-Work with GPU mining via OpenCL.
+Build and run the miner:
 
 ```bash
-pip install torch zstandard pycryptodome
-python3 tools/flowminer.py \
-    --dataset ~/training-data/ \
-    --node http://127.0.0.1:9334 \
-    --rpcuser your_username \
-    --rpcpassword your_password
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc) flowcoin-miner
+./flowcoin-miner
 ```
+
+The miner connects to flowcoind via JSON-RPC and provides real-time
+hashrate feedback via an ncurses TUI.
 
 See `doc/mining.md` for detailed mining instructions.
 

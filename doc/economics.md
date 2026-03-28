@@ -46,30 +46,21 @@ Total = 210,000 * (50 + 25 + 12.5 + 6.25 + ...) = 210,000 * 100 = 21,000,000
 
 By year 20, annual inflation drops below 0.5%.
 
-## Mining Economics: Data as Hashrate
+## Mining Economics
 
-In Bitcoin, hashrate is a function of electricity and ASIC hardware.
-In FlowCoin, "hashrate" is a function of:
-
-1. **Training data quality**: Better data produces lower validation loss,
-   which produces training hashes more likely to meet the difficulty target.
-
-2. **GPU compute**: More GPUs allow faster training iterations and
-   more nonce attempts per unit time.
-
-3. **Model expertise**: Understanding what data improves the model
-   (curriculum design, data cleaning, augmentation) provides an edge
-   analogous to ASIC efficiency gains.
+FlowCoin uses Keccak-256d Proof-of-Work, where hashrate is a function of
+GPU compute power and electricity cost. The larger internal state of
+Keccak (1600-bit vs SHA-256's 256-bit) naturally favors general-purpose
+GPU hardware over custom ASICs.
 
 ### Cost Structure
 
 | Component | Bitcoin | FlowCoin |
 |-----------|---------|----------|
 | Capital (hardware) | ASIC miners | GPUs |
-| Recurring (energy) | Electricity | Electricity + data |
-| Skill premium | Minimal | Significant |
-| Output | Random hashes | Trained model |
-| Network benefit | Security only | Security + knowledge |
+| Recurring (energy) | Electricity | Electricity |
+| Output | SHA-256d hashes | Keccak-256d hashes |
+| Network benefit | Security | Security |
 
 ### Mining Revenue Formula
 
@@ -80,67 +71,25 @@ Daily revenue = blocks_per_day * block_reward * (local_hashrate / network_hashra
 
 At genesis: 144 * 50 = 7,200 FLOW/day for the entire network.
 
-## Self-Balancing Knowledge Market
-
-FlowCoin creates a self-balancing market for knowledge through several
-feedback mechanisms:
-
-### Difficulty as Quality Selector
-
-- When many miners compete, difficulty rises.
-- Higher difficulty requires lower validation loss.
-- Lower validation loss requires better training data and techniques.
-- Only the most effective training improvements are profitable.
-
-### Data Exhaustion and Natural Rotation
-
-- Popular training data gets "used up": the model learns it quickly,
-  and further training on the same data shows diminishing returns.
-- This creates a natural rotation: miners must find novel data or
-  novel training approaches to maintain profitability.
-- The result is a broad, diverse model rather than one overfit to
-  a single data source.
-
-### Economic Incentive for Data Quality
-
-```
-profit = (block_reward * probability_of_winning) - (compute_cost + data_cost)
-```
-
-Since probability of winning depends on validation loss improvement:
-- Bad data: high loss, low probability -> unprofitable.
-- Good data: low loss, high probability -> profitable.
-
-The market price of FLOW determines the equilibrium: when FLOW price
-rises, more miners join, difficulty increases, and only the best
-training is profitable.
-
 ## GPU Requirements Over Time
 
 ### Era 0 (Blocks 0-209,999)
 
-- **Model size**: 32M - 3B parameters (grows continuously).
-- **Early blocks**: A single consumer GPU (8 GB VRAM) suffices.
-  The model is small (32M params = 128 MB float32) and difficulty
-  is at minimum.
-- **Later in era 0**: As the model grows and difficulty increases,
-  multiple GPUs or professional hardware (A100, H100) provide
-  an advantage.
+- **Early blocks**: A single consumer GPU suffices. Difficulty is
+  at minimum, so even modest GPUs can find blocks.
+- **Later in era 0**: As difficulty increases with more miners,
+  higher-end GPUs provide an advantage.
 
 ### Era 1+ (Blocks 210,000+)
 
-- **Model size**: 3B+ parameters.
-- **Storage**: Model weights alone require 12+ GB in float32.
-- **Training**: Gradient computation requires 2-3x model size in memory.
-- **Practical minimum**: 24 GB VRAM GPU (RTX 4090, A5000).
-- **Competitive mining**: Multi-GPU setups or cloud GPU clusters.
+- **Competitive mining**: Multiple high-end GPUs or cloud GPU clusters.
+- As difficulty rises, only efficient operations remain profitable.
 
 ### Node Requirements (Non-Mining)
 
-- **CPU**: x86-64 with SSE4.2 (consensus evaluation is CPU-only).
-- **RAM**: 4 GB base + model size (starts at ~200 MB, grows to ~12 GB
-  over the first 100K blocks).
-- **Disk**: 1 GB base + ~3 GB per 100K blocks of chain data.
+- **CPU**: x86-64 with SSE4.2.
+- **RAM**: 4 GB minimum.
+- **Disk**: 1 GB base + ~1 GB per 100K blocks of chain data.
 - **Network**: 1 Mbps symmetric minimum.
 
 ## Fee Market Development
@@ -157,9 +106,9 @@ Fee policy mirrors Bitcoin:
 
 ### Phase 2: Fee Emergence (Era 3-5)
 
-Block reward drops to 1.5-6.25 FLOW. As the network grows and model
-value increases, transaction demand rises. Fees become a meaningful
-portion of miner revenue.
+Block reward drops to 1.5-6.25 FLC. As the network grows,
+transaction demand rises. Fees become a meaningful portion of
+miner revenue.
 
 ### Phase 3: Fee-Dominated (Era 6+)
 
@@ -178,91 +127,45 @@ FlowCoin uses a bucketed fee estimator similar to Bitcoin Core:
 | Property | Bitcoin | Ethereum | FlowCoin |
 |----------|---------|----------|----------|
 | Max supply | 21M | Unlimited | 21M |
-| Consensus | PoW (SHA-256) | PoS | PoUT |
+| Consensus | PoW (SHA-256d) | PoS | PoW (Keccak-256d) |
 | Block time | 10 min | 12 sec | 10 min |
-| Block reward | 6.25 BTC (2024) | ~2 ETH | 50 FLOW (genesis) |
+| Block reward | 6.25 BTC (2024) | ~2 ETH | 50 FLC (genesis) |
 | Halving | Every 210K blocks | N/A | Every 210K blocks |
-| Useful work | No | No | Yes (training) |
-| Energy waste | High | Low (PoS) | Moderate (GPU compute) |
 | Hardware | ASICs | Validators | GPUs |
-| Barrier to entry | Very high (ASICs) | 32 ETH stake | GPU + data |
-| Network output | Security | Security + execution | Security + knowledge |
+| Barrier to entry | Very high (ASICs) | 32 ETH stake | Consumer GPU |
 
 ### Key Economic Differences
 
-1. **FlowCoin produces a useful artifact**: The trained model has value
-   independent of the currency. This creates a floor for the network's
-   value proposition even if the token price is low.
+1. **GPU mining**: Keccak-256d's large internal state (1600 bits)
+   naturally favors general-purpose GPU hardware over custom ASICs,
+   keeping mining more accessible.
 
-2. **Data is the differentiator**: Unlike Bitcoin where all miners run
-   the same algorithm, FlowCoin miners compete on data quality and
-   training effectiveness. This creates a knowledge economy.
-
-3. **GPU depreciation curve**: GPUs depreciate more slowly than ASICs
+2. **GPU depreciation curve**: GPUs depreciate more slowly than ASICs
    and have resale value for other compute tasks. This lowers the
    effective cost of mining hardware.
 
-4. **Same monetary policy as Bitcoin**: The familiar 21M supply cap
+3. **Same monetary policy as Bitcoin**: The familiar 21M supply cap
    and halving schedule provide economic predictability.
 
 ## Long-Term Value Proposition
 
-### The Model as a Public Good
-
-The consensus model is a globally shared, permissionless AI model:
-
-- **No single owner**: The model belongs to the network.
-- **Continuously improving**: Every block makes it better.
-- **Censorship-resistant**: No entity can prevent model access.
-- **Deterministic**: Every node has an identical copy.
-
 ### Value Accrual Mechanisms
 
-1. **Token demand**: Using the model requires running a node, which
-   validates transactions, which requires holding FLOW for fees.
+1. **Token demand**: Using the network requires holding FLC for fees.
 
-2. **Mining economics**: Training the model requires spending FLOW
-   (opportunity cost of compute), creating natural demand.
+2. **Mining economics**: Mining requires GPU compute investment,
+   creating natural demand for the token.
 
-3. **Network effects**: As the model improves, more users want access,
-   increasing transaction volume and fee revenue.
-
-4. **Data market**: The implicit market for training data creates
-   an economic ecosystem around the network.
-
-### Network Effects and Adoption Curves
-
-- **Phase 1 (Launch)**: Early adopters mine with consumer GPUs.
-  Model quality is low but improving rapidly (steep learning curve).
-
-- **Phase 2 (Growth)**: Model becomes useful for real tasks.
-  Professional miners enter with better hardware and data.
-  Model quality improves logarithmically.
-
-- **Phase 3 (Maturity)**: Model reaches competitive quality.
-  Mining becomes industrialized. Fee market develops.
-  The network provides a unique value proposition: a decentralized,
-  permissionless, continuously-trained AI model.
+3. **Network effects**: As adoption grows, transaction volume
+   and fee revenue increase.
 
 ## Risk Factors
 
 1. **GPU centralization**: If mining becomes dominated by a few
    large GPU clusters, it mirrors Bitcoin's ASIC centralization concern.
 
-2. **Data monoculture**: If all miners train on the same data,
-   the model overfits. The difficulty mechanism partially mitigates this
-   (stale data produces diminishing returns).
-
-3. **Model quality plateau**: The model may reach a quality ceiling
-   where further training shows negligible improvement. At that point,
-   mining becomes purely a security mechanism (like Bitcoin's PoW).
-
-4. **Regulatory risk**: AI training may face regulatory scrutiny.
-   The decentralized nature provides some resistance, but individual
-   miners in regulated jurisdictions may face constraints.
-
-5. **Competition**: Other projects may attempt similar approaches.
-   First-mover advantage and network effects provide some moat.
+2. **Competition**: Other Keccak-based or GPU-mineable projects may
+   compete for hashrate. Network effects provide some moat.
 
 ## Token Utility
 
@@ -278,26 +181,11 @@ Every transaction requires a fee paid in FLOW. Fees serve two purposes:
 
 ### 2. Mining Collateral
 
-Miners must invest compute resources (GPUs, electricity, data) to
-produce valid training deltas. The expected FLOW reward must exceed
-these costs for mining to be profitable. This creates an implicit
-collateral requirement: miners stake their compute costs against
-the probability of earning block rewards.
-
-### 3. Model Access Token
-
-While the model weights are public (every node has a copy), practical
-use of the model for inference requires running a FlowCoin node.
-Running a node requires participating in the network, which means
-processing transactions and paying fees for any on-chain operations.
-
-### 4. Governance Signal
-
-Token holders can signal preferences through:
-- **Mining participation**: Choosing what data to train on implicitly
-  guides the model's development direction.
-- **Fee market behavior**: Willingness to pay fees signals demand for
-  different types of transactions or model capabilities.
+Miners must invest compute resources (GPUs, electricity) to find
+valid proof-of-work. The expected FLC reward must exceed these costs
+for mining to be profitable. This creates an implicit collateral
+requirement: miners stake their compute costs against the probability
+of earning block rewards.
 
 ## Game Theory
 
@@ -310,45 +198,29 @@ E[profit] = P(win) * reward - cost_compute - cost_data - cost_energy
 ```
 
 Where P(win) depends on:
-- Validation loss improvement (better training -> lower loss -> better hash)
+- Hashrate (more Keccak-256d hashes per second -> higher probability)
 - Network difficulty (more miners -> lower win probability)
-- Hardware efficiency (faster training -> more attempts per unit time)
+- Hardware efficiency (better GPU -> more hashes per watt)
 
 ### Selfish Mining
 
 The "selfish mining" attack (withholding blocks) applies to FlowCoin
-as it does to Bitcoin. However, in FlowCoin, withholding blocks also
-means withholding training improvements. A selfish miner would be
-training on a stale model (without others' improvements), which is
-slightly disadvantageous for producing good future blocks.
+as it does to Bitcoin. The same analysis and mitigations apply.
 
 ### 51% Attack
 
-A miner controlling >51% of training compute could:
+A miner controlling >51% of the network hashrate could:
 - Rewrite chain history (double-spend)
 - Censor transactions
-- Degrade model quality intentionally
 
-The cost of a 51% attack is the compute required to out-train all
+The cost of a 51% attack is the hashrate required to exceed all
 other miners, which scales with total network GPU power.
-
-### Data Poisoning
-
-A malicious miner could try to submit training deltas that deliberately
-degrade the model. Defenses:
-
-1. **Check 6-7**: val_loss must be finite and below MAX_VAL_LOSS.
-2. **Check 9**: val_loss cannot increase by more than 2x from parent.
-3. **Check 15**: Forward evaluation verifies the claimed loss.
-4. **Difficulty**: Bad deltas produce high-entropy training hashes
-   that are unlikely to meet the difficulty target.
 
 ### Free-Rider Problem
 
-Nodes benefit from the trained model without mining. This is by design:
+Nodes benefit from the network without mining. This is by design:
 - Full nodes provide network security by validating blocks.
 - SPV nodes provide demand for the token (transactions + fees).
-- The model is a positive externality that increases network value.
 
 ## Market Dynamics
 
@@ -363,9 +235,8 @@ FLOW price is determined by supply and demand:
 
 **Demand side**:
 - Transaction fees for on-chain operations.
-- Speculation on future model value.
+- Speculation on future value.
 - Mining revenue reinvestment.
-- Model access (running inference on the network model).
 
 ### Mining Profitability Equilibrium
 
@@ -387,30 +258,17 @@ If FLOW price falls:
 3. Remaining miners' shares increase.
 4. Equilibrium restores at lower total compute.
 
-### Data Economy
-
-FlowCoin creates a derivative data economy:
-
-- **Data providers**: Sell or license training data to miners.
-- **Training specialists**: Offer expertise in curriculum design.
-- **Model consumers**: Use the consensus model for inference tasks.
-- **Infrastructure providers**: Offer GPU cloud services for miners.
-
-This ecosystem exists without any on-chain marketplace -- it emerges
-naturally from the incentive structure.
-
 ## Comparison With Proof-of-Stake Economics
 
-| Property | Proof-of-Stake | Proof-of-Training |
-|----------|---------------|-------------------|
-| Capital type | Financial (tokens) | Physical (GPUs + data) |
+| Property | Proof-of-Stake | Proof-of-Work (FlowCoin) |
+|----------|---------------|--------------------------|
+| Capital type | Financial (tokens) | Physical (GPUs) |
 | Lock-up | Token staking | Compute commitment |
 | Slashing | Token destruction | Wasted compute |
 | Centralization risk | Wealth concentration | GPU concentration |
 | Energy use | Very low | Moderate |
-| Useful output | None | Trained model |
-| Barrier to entry | Capital requirement | Hardware + expertise |
-| Validator income | Proportional to stake | Proportional to training quality |
+| Barrier to entry | Capital requirement | Hardware |
+| Validator income | Proportional to stake | Proportional to hashrate |
 
 ### Key Advantage Over PoS
 
@@ -418,10 +276,10 @@ In Proof-of-Stake, capital compounds: staking rewards increase the
 stake, which increases future rewards. This creates a rich-get-richer
 dynamic.
 
-In Proof-of-Training, hardware depreciates and data ages. There is no
-compounding effect: yesterday's training does not make today's training
-easier. Each block requires fresh, useful compute work. This provides
-more equitable long-term access to block rewards.
+In Proof-of-Work, hardware depreciates. There is no compounding effect:
+yesterday's hashing does not make today's hashing easier. Each block
+requires fresh compute work. This provides more equitable long-term
+access to block rewards.
 
 ## Detailed Cost Analysis
 
@@ -431,33 +289,32 @@ Assumptions: 1 FLOW = $1.00 USD (illustrative)
 
 | Cost Component | Monthly | % of Total |
 |----------------|---------|------------|
-| GPU hardware (amortized 3y) | $800 | 40% |
-| Electricity (8 GPUs x 350W) | $420 | 21% |
-| Internet bandwidth (100 Mbps) | $100 | 5% |
-| Data acquisition/licensing | $200 | 10% |
-| Server hosting/cooling | $300 | 15% |
-| Storage (model + chain data) | $50 | 2.5% |
-| Maintenance and monitoring | $130 | 6.5% |
-| **Total** | **$2,000** | **100%** |
+| GPU hardware (amortized 3y) | $800 | 44% |
+| Electricity (8 GPUs x 350W) | $420 | 23% |
+| Internet bandwidth (100 Mbps) | $100 | 5.5% |
+| Server hosting/cooling | $300 | 16.5% |
+| Storage (chain data) | $50 | 2.7% |
+| Maintenance and monitoring | $130 | 7.1% |
+| **Total** | **$1,800** | **100%** |
 
 Expected revenue (1% of network hashrate):
-- 144 blocks/day * 50 FLOW * 1% = 72 FLOW/day
-- 72 * 30 = 2,160 FLOW/month = $2,160/month
+- 144 blocks/day * 50 FLC * 1% = 72 FLC/day
+- 72 * 30 = 2,160 FLC/month = $2,160/month
 
-Profit margin: ~8% (thin margin encourages efficiency competition).
+Profit margin: ~17% (thin margin encourages efficiency competition).
 
 ### Break-Even Analysis
 
-The break-even FLOW price for a mining operation depends on:
+The break-even FLC price for a mining operation depends on:
 
 ```
 break_even_price = monthly_cost / (blocks_per_month * reward * share)
-                 = $2,000 / (4,320 * 50 * 0.01)
-                 = $2,000 / 2,160
-                 = $0.93 per FLOW
+                 = $1,800 / (4,320 * 50 * 0.01)
+                 = $1,800 / 2,160
+                 = $0.83 per FLC
 ```
 
-If FLOW trades above $0.93, the operation is profitable.
+If FLC trades above $0.83, the operation is profitable.
 If below, rational miners exit, difficulty drops, and remaining
 miners' shares increase until equilibrium is restored.
 
@@ -481,8 +338,8 @@ Development is funded through:
 
 1. **Voluntary donations**: Community members donate to development.
 2. **Mining participation**: Core developers may mine.
-3. **Service provision**: Development team may offer consulting,
-   hosted mining, or model inference services.
+3. **Service provision**: Development team may offer consulting
+   or hosted mining services.
 4. **Grants**: External grants from AI research organizations.
 
 This mirrors Bitcoin's funding model and avoids the governance
@@ -542,26 +399,3 @@ In the long term (era 6+), the security budget depends entirely
 on fee revenue. A healthy fee market is essential for long-term
 network security.
 
-## Model Valuation
-
-The consensus model has value independent of the FLOW token:
-
-### As a Public Good
-
-- The model provides general-purpose AI capabilities.
-- Access is permissionless: anyone running a node has a copy.
-- No API keys, no rate limits, no censorship.
-
-### Valuation Approaches
-
-1. **Replacement cost**: What would it cost to train an equivalent
-   model from scratch? At 100K blocks of training: estimated
-   $10-100M in GPU compute at market rates.
-
-2. **Revenue potential**: If the model were a commercial API,
-   what revenue could it generate? Comparable to mid-tier
-   language models: $10-50M/year.
-
-3. **Network premium**: The model's value accrues to the FLOW
-   token through network effects. Token market cap should
-   reflect both monetary and model value.

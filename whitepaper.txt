@@ -274,7 +274,7 @@ hash rate.
 The reference implementation is written in C/C++ and is available at
 https://github.com/haruki-tanaka-tech/flowcoin. The codebase
 comprises approximately 182,000 lines of original code plus vendored
-libraries (ggml, SQLite, zstd, XKCP, ed25519-donna) totaling
+libraries (SQLite, zstd, XKCP, ed25519-donna) totaling
 approximately 616,000 lines.
 
 The GPU miner uses OpenCL for cross-platform compatibility (NVIDIA,
