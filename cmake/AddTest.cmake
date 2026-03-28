@@ -10,7 +10,7 @@ function(add_flowcoin_test name)
         flowcoin_mining flowcoin_index flowcoin_policy
         flowcoin_interfaces flowcoin_kernel flowcoin_common
         flowcoin_support flowcoin_compat flowcoin_rest
-        ggml sqlite ed25519 xkcp zstd uv_a
+        sqlite ed25519 xkcp zstd uv_a
         Threads::Threads ${DL_LIBRARY} ${M_LIBRARY}
     )
     target_include_directories(test_${name} PRIVATE ${CMAKE_SOURCE_DIR}/src)

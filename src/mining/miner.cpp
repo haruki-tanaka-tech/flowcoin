@@ -241,20 +241,9 @@ TrainingResult Miner::train_and_evaluate(const BlockTemplate& tmpl) {
 
     auto train_start = std::chrono::steady_clock::now();
 
-    // Training loop:
-    // In production, this calls into the ggml-based training engine.
-    // The engine loads the current model state, performs gradient descent
-    // on the training data, and returns the weight delta.
-    //
-    // For now, we simulate the training result with actual model training
-    // via the consensus_model and eval engine modules.
-    //
-    // The actual integration point is:
-
-    //   model.load_weights();
-    //   float loss = model.train(train_data, cfg.learning_rate, ...);
-    //   model.eval(eval_data) -> val_loss
-    //   model.compute_delta() -> delta weights
+    // Mining loop: iterate nonce until block hash meets difficulty target.
+    // Actual GPU mining is done by the external flowcoin-miner (OpenCL).
+    // This code path is for RPC-based block template submission.
 
     uint32_t steps = cfg.max_train_steps;
 

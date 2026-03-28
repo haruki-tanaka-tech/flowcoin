@@ -30,7 +30,7 @@ SCRIPT_EXTENSIONS = frozenset({
 
 # Directories to skip
 SKIP_DIRS = frozenset({
-    'ggml', 'sqlite', 'libuv', 'json', 'zstd',
+    'sqlite', 'libuv', 'json', 'zstd',
     '.git', 'build', 'depends', '__pycache__',
     'node_modules', '.cache',
 })
