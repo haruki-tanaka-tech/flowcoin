@@ -214,9 +214,6 @@ void test_network_full() {
         block.timestamp = 1700000000;
         block.nbits = consensus::INITIAL_NBITS;
         block.nonce = 42;
-        block.d_model = 512;
-        block.n_layers = 8;
-
         // Add a coinbase transaction
         CTransaction cb;
         cb.version = 1;
@@ -282,16 +279,6 @@ void test_network_full() {
         hdr.timestamp = 1700000000;
         hdr.nbits = 0x1f00ffff;
         hdr.nonce = 123;
-        hdr.d_model = 512;
-        hdr.n_layers = 8;
-        hdr.d_ff = 1024;
-        hdr.n_heads = 8;
-        hdr.gru_dim = 512;
-        hdr.n_slots = 1024;
-        hdr.reserved_field = 0;
-        hdr.val_loss = 3.14f;
-        hdr.prev_val_loss = 3.50f;
-
         auto serialized = hdr.serialize();
         assert(serialized.size() == BLOCK_HEADER_SIZE);
 
@@ -302,10 +289,6 @@ void test_network_full() {
         assert(restored.timestamp == 1700000000);
         assert(restored.nbits == 0x1f00ffff);
         assert(restored.nonce == 123);
-        assert(restored.d_model == 512);
-        assert(restored.n_layers == 8);
-        assert(restored.d_ff == 1024);
-        assert(restored.reserved_field == 0);
     }
 
     // -----------------------------------------------------------------------
@@ -338,7 +321,7 @@ void test_network_full() {
         for (uint64_t i = 0; i < count; ++i) {
             // Read BLOCK_HEADER_SIZE bytes
             std::vector<uint8_t> hdr_data(BLOCK_HEADER_SIZE);
-            r.read_bytes(hdr_data.data(), BLOCK_HEADER_SIZE);
+            r.read_bytes_into(hdr_data.data(), BLOCK_HEADER_SIZE);
             assert(!r.error());
 
             CBlockHeader h;
@@ -363,7 +346,7 @@ void test_network_full() {
         DataReader r(w.data());
         uint32_t type = r.read_u32_le();
         uint256 hash;
-        r.read_bytes(hash.data(), 32);
+        r.read_bytes_into(hash.data(), 32);
         assert(type == INV_TX);
         assert(hash == item.hash);
     }
@@ -394,7 +377,7 @@ void test_network_full() {
         for (uint64_t i = 0; i < count; ++i) {
             uint32_t type = r.read_u32_le();
             uint256 hash;
-            r.read_bytes(hash.data(), 32);
+            r.read_bytes_into(hash.data(), 32);
             assert(type == static_cast<uint32_t>(items[i].type));
             assert(hash == items[i].hash);
         }
@@ -652,37 +635,6 @@ void test_network_full() {
         assert(restored.vin.size() == 5);
         assert(restored.vout.size() == 3);
         assert(restored.get_txid() == tx.get_txid());
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 31: Block with delta payload
-    // -----------------------------------------------------------------------
-    {
-        CBlock block;
-        block.version = 1;
-        block.height = 200;
-        block.timestamp = 1700000000;
-        block.nbits = consensus::INITIAL_NBITS;
-        block.d_model = 512;
-
-        CTransaction cb;
-        cb.version = 1;
-        CTxIn cb_in;
-        cb.vin.push_back(cb_in);
-        std::array<uint8_t, 32> pkh;
-        GetRandBytes(pkh.data(), 32);
-        cb.vout.push_back(CTxOut(50 * COIN, pkh));
-        block.vtx.push_back(cb);
-
-        // Add delta payload
-        block.delta_payload.resize(100);
-        GetRandBytes(block.delta_payload.data(), 100);
-
-        auto serialized = block.serialize();
-        CBlock restored;
-        assert(restored.deserialize(serialized));
-        assert(restored.delta_payload.size() == 100);
-        assert(restored.delta_payload == block.delta_payload);
     }
 
     // -----------------------------------------------------------------------

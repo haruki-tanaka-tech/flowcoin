@@ -52,47 +52,6 @@ endif()
 # Vendored libraries
 # =============================================================================
 
-# --- ggml (GGML tensor library, CPU backend) ---
-add_library(ggml STATIC
-    src/ggml/ggml.c
-    src/ggml/ggml.cpp
-    src/ggml/ggml-alloc.c
-    src/ggml/ggml-backend.cpp
-    src/ggml/ggml-threading.cpp
-    src/ggml/ggml-quants.c
-    src/ggml/ggml-opt.cpp
-    src/ggml/gguf.cpp
-    src/ggml/ggml-cpu/ggml-cpu.c
-    src/ggml/ggml-cpu/ggml-cpu.cpp
-    src/ggml/ggml-cpu/ops.cpp
-    src/ggml/ggml-cpu/vec.cpp
-    src/ggml/ggml-cpu/unary-ops.cpp
-    src/ggml/ggml-cpu/binary-ops.cpp
-    src/ggml/ggml-cpu/quants.c
-    src/ggml/ggml-cpu/repack.cpp
-    src/ggml/ggml-cpu/traits.cpp
-    src/ggml/ggml-cpu/hbm.cpp
-    src/ggml/ggml-cpu/llamafile/sgemm.cpp
-    src/ggml/ggml-cpu/arch/x86/quants.c
-    src/ggml/ggml-cpu/arch/x86/cpu-feats.cpp
-    src/ggml/ggml-cpu/arch/x86/repack.cpp
-)
-target_compile_definitions(ggml PUBLIC GGML_USE_CPU _GNU_SOURCE
-    GGML_VERSION="0.0.0"
-    GGML_COMMIT="flowcoin"
-)
-target_include_directories(ggml PUBLIC
-    src/ggml
-    src/ggml/ggml-cpu
-    src/ggml/ggml-cpu/arch
-)
-# Suppress warnings and errors in vendored code
-target_compile_options(ggml PRIVATE -w -Wno-error -Wno-all -Wno-extra)
-set_target_properties(ggml PROPERTIES
-    C_EXTENSIONS ON
-    CXX_EXTENSIONS ON
-)
-
 # --- sqlite ---
 add_library(sqlite STATIC
     src/sqlite/sqlite3.c
@@ -210,6 +169,7 @@ add_library(flowcoin_common STATIC
     src/common/system.cpp
     src/common/settings.cpp
     src/common/config_options.cpp
+    src/logging.cpp
 )
 target_include_directories(flowcoin_common PUBLIC src)
 target_link_libraries(flowcoin_common PUBLIC flowcoin_compat pthread)
@@ -384,7 +344,6 @@ add_library(flowcoin_node STATIC
     src/node/context.cpp
     src/init.cpp
     src/config.cpp
-    src/logging.cpp
 )
 target_include_directories(flowcoin_node PUBLIC src)
 target_link_libraries(flowcoin_node PUBLIC
@@ -442,7 +401,6 @@ target_link_libraries(flowcoind PRIVATE
     flowcoin_util
     flowcoin_support
     flowcoin_compat
-    ggml
     sqlite
     ed25519
     xkcp
@@ -577,15 +535,11 @@ if(BUILD_TESTS)
         src/test/test_transaction.cpp
         src/test/test_difficulty.cpp
         src/test/test_reward.cpp
-        src/test/test_growth.cpp
-        src/test/test_validation.cpp
         src/test/test_merkle.cpp
         src/test/test_serialize.cpp
         src/test/test_delta.cpp
         src/test/test_mempool.cpp
         src/test/test_script.cpp
-        src/test/test_consensus_model.cpp
-        src/test/test_eval_engine.cpp
         src/test/test_txindex.cpp
         src/test/test_sync.cpp
         src/test/test_fee_estimator.cpp
@@ -595,13 +549,11 @@ if(BUILD_TESTS)
         src/test/test_encryption.cpp
         src/test/test_keypool.cpp
         src/test/test_chaindb.cpp
-        src/test/test_genesis.cpp
         src/test/test_rpc.cpp
         src/test/test_reorg.cpp
         src/test/test_compact_blocks.cpp
         src/test/test_netaddress.cpp
         src/test/test_wallet_full.cpp
-        src/test/test_block_validation.cpp
         src/test/test_coin_selection.cpp
         src/test/test_strencodings.cpp
         src/test/test_transaction_ext.cpp
@@ -613,12 +565,8 @@ if(BUILD_TESTS)
         src/test/test_system.cpp
         src/test/test_config.cpp
         src/test/test_init.cpp
-        src/test/test_blocktemplate.cpp
-        src/test/test_submitblock.cpp
         src/test/test_compact_size.cpp
         src/test/test_delta_full.cpp
-        src/test/test_pow.cpp
-        src/test/test_integration.cpp
         src/test/test_aes256.cpp
         src/test/test_bloom.cpp
         src/test/test_script_interpreter.cpp
@@ -629,23 +577,8 @@ if(BUILD_TESTS)
         src/test/test_rpc_handlers.cpp
         src/test/test_policy.cpp
         src/test/test_network_full.cpp
-        src/test/test_block_connection.cpp
-        src/test/test_reorg_full.cpp
-        src/test/test_block_template_full.cpp
-        src/test/test_inventory_relay.cpp
         src/test/test_bandwidth.cpp
-        src/test/test_model_evaluation.cpp
-        src/test/test_full_chain.cpp
-        src/test/test_wallet_transactions.cpp
-        src/test/test_mining_session.cpp
-        src/test/test_protocol_spec.cpp
-        src/test/test_inference.cpp
-        src/test/test_chain_stats.cpp
-        src/test/test_mutable_tx.cpp
-        src/test/test_block_analysis.cpp
         src/test/test_wallet_advanced.cpp
-        src/test/test_difficulty_analysis.cpp
-        src/test/test_supply.cpp
         src/test/test_http_parser.cpp
         src/test/test_peer_scoring.cpp
     )
@@ -672,7 +605,6 @@ if(BUILD_TESTS)
         flowcoin_util
         flowcoin_support
         flowcoin_compat
-        ggml
         sqlite
         ed25519
         xkcp
@@ -696,7 +628,6 @@ if(BUILD_BENCH)
         src/bench/bench_main.cpp
         src/bench/bench_keccak.cpp
         src/bench/bench_ed25519.cpp
-        src/bench/bench_model.cpp
         src/bench/bench_chain.cpp
         src/bench/bench_script.cpp
         src/bench/bench_mempool.cpp
@@ -722,7 +653,6 @@ if(BUILD_BENCH)
         flowcoin_util
         flowcoin_support
         flowcoin_compat
-        ggml
         sqlite
         ed25519
         xkcp

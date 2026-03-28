@@ -6,6 +6,7 @@
 // and concurrent read safety.
 
 #include "wallet/walletdb.h"
+#include "primitives/transaction.h"
 #include "util/random.h"
 #include "util/types.h"
 
@@ -14,6 +15,7 @@
 #include <cstring>
 #include <set>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
