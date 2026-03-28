@@ -273,7 +273,7 @@ void AddrMan::add(const CNetAddr& addr, int64_t time_seen, const CNetAddr& sourc
                 it->second.last_seen = time_seen;
             }
         }
-        LogInfo("net", "addrman.add: %s already known (id=%d)", addr.to_string().c_str(), existing_id);
+        LogDebug("net", "addrman.add: %s already known (id=%d)", addr.to_string().c_str(), existing_id);
         return;
     }
 
@@ -335,7 +335,7 @@ void AddrMan::add(const CNetAddr& addr, int64_t time_seen, const CNetAddr& sourc
                         info.ref_count++;
                         new_count_++;
                         placed = true;
-                        LogInfo("net", "addrman.add: NEW address %s (id=%d bucket=%d pos=%d new_count=%d, alt slot)",
+                        LogDebug("net", "addrman.add: NEW address %s (id=%d bucket=%d pos=%d new_count=%d, alt slot)",
                                 addr.to_string().c_str(), id, bucket, p, new_count_);
                         break;
                     }
@@ -353,7 +353,7 @@ void AddrMan::add(const CNetAddr& addr, int64_t time_seen, const CNetAddr& sourc
     new_table_[bucket][pos] = id;
     info.ref_count++;
     new_count_++;
-    LogInfo("net", "addrman.add: NEW address %s (id=%d bucket=%d pos=%d new_count=%d)",
+    LogDebug("net", "addrman.add: NEW address %s (id=%d bucket=%d pos=%d new_count=%d)",
             addr.to_string().c_str(), id, bucket, pos, new_count_);
 }
 
@@ -542,7 +542,7 @@ CNetAddr AddrMan::select() const {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (map_info_.empty()) {
-        LogInfo("net", "addrman.select: empty (no entries)");
+        LogDebug("net", "addrman.select: empty (no entries)");
         return CNetAddr();
     }
 
@@ -555,10 +555,10 @@ CNetAddr AddrMan::select() const {
 
     CNetAddr result = select_from_table(use_new);
     if (result.port == 0) {
-        LogInfo("net", "addrman.select: no valid candidate (total=%zu new=%d tried=%d, searched %s table)",
+        LogDebug("net", "addrman.select: no valid candidate (total=%zu new=%d tried=%d, searched %s table)",
                 map_info_.size(), new_count_, tried_count_, use_new ? "New" : "Tried");
     } else {
-        LogInfo("net", "addrman.select: picked %s from %s table",
+        LogDebug("net", "addrman.select: picked %s from %s table",
                 result.to_string().c_str(), use_new ? "New" : "Tried");
     }
     return result;
