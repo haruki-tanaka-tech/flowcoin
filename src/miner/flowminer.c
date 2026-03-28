@@ -95,7 +95,7 @@ static int     g_keypair_loaded = 0;
 
 /*
  * Load or generate the Ed25519 keypair for block signing.
- * Stored in ~/.flowcoin/miner_key.dat (32-byte secret key).
+ * Stored in ~/.flowcoin/wallets/miner_key.dat (32-byte secret key).
  * The public key is derived from the secret key.
  */
 static int load_miner_keypair(void)
@@ -112,9 +112,16 @@ static int load_miner_keypair(void)
 #endif
     if (!home) return 0;
 
-    snprintf(path, sizeof(path), "%s/.flowcoin/miner_key.dat", home);
+    /* Try new path first: ~/.flowcoin/wallets/miner_key.dat */
+    char old_path[512];
+    snprintf(path, sizeof(path), "%s/.flowcoin/wallets/miner_key.dat", home);
+    snprintf(old_path, sizeof(old_path), "%s/.flowcoin/miner_key.dat", home);
 
     FILE *f = fopen(path, "rb");
+    if (!f) {
+        /* Backward compat: try old path ~/.flowcoin/miner_key.dat */
+        f = fopen(old_path, "rb");
+    }
     if (f) {
         /* Load existing key */
         size_t n = fread(g_miner_privkey, 1, 32, f);
@@ -144,12 +151,15 @@ static int load_miner_keypair(void)
 #endif
     ed25519_publickey(g_miner_privkey, g_miner_pubkey);
 
-    /* Ensure directory exists */
+    /* Ensure directories exist */
     char dir[512];
     snprintf(dir, sizeof(dir), "%s/.flowcoin", home);
     mkdir(dir, 0700);
+    char wallets_dir[512];
+    snprintf(wallets_dir, sizeof(wallets_dir), "%s/.flowcoin/wallets", home);
+    mkdir(wallets_dir, 0700);
 
-    /* Save the secret key */
+    /* Save the secret key to new path */
     f = fopen(path, "wb");
     if (f) {
         fwrite(g_miner_privkey, 1, 32, f);
@@ -544,7 +554,7 @@ static void *mining_thread(void *arg)
 
                 /* Brief yield between batches — lets GPU cool, prevents power spikes.
                  * lolMiner and other production miners do the same. */
-                usleep(1500);  /* 1.5ms pause — ~5% hashrate reduction, prevents thermal shutdown */
+                usleep(5000);  /* 5ms pause — ~15% hashrate reduction, prevents thermal shutdown */
 
                 if (ocl_mine_batch(header, 92, target, 84,
                                    nonce, batch_count, &winning_nonce)) {

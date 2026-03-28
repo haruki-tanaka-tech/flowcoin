@@ -34,7 +34,7 @@ namespace flow {
 
 ChainState::ChainState(const std::string& datadir)
     : datadir_(datadir)
-    , utxo_(datadir + "/utxo.db")
+    , utxo_(datadir + "/chainstate/utxo.db")
     , store_(datadir)
     
 {
@@ -49,7 +49,7 @@ bool ChainState::init() {
     // Initialize model state (loads from checkpoint or creates from genesis)
     // Initialize optional transaction index
     if (txindex_enabled_) {
-        txindex_ = std::make_unique<TxIndex>(datadir_ + "/txindex.db");
+        txindex_ = std::make_unique<TxIndex>(datadir_ + "/indexes/txindex.db");
         if (!txindex_->is_open()) {
             LogError("chain", "warning: transaction index "
                     "failed to open, continuing without it");
@@ -760,7 +760,7 @@ bool ChainState::load_from_disk() {
     std::lock_guard<std::mutex> lock(cs_main_);
 
     // Step 1: Open/create ChainDB
-    std::string chaindb_path = datadir_ + "/chaindb.db";
+    std::string chaindb_path = datadir_ + "/chainstate/chaindb.db";
     try {
         chaindb_ = std::make_unique<ChainDB>(chaindb_path);
     } catch (const std::exception& e) {

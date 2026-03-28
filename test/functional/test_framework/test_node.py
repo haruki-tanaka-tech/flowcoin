@@ -689,7 +689,7 @@ class TestNode:
 
     def get_wallet_path(self) -> str:
         """Get the path to the wallet.dat file."""
-        return os.path.join(self.datadir, "wallet.dat")
+        return os.path.join(self.datadir, "wallets", "wallet.dat")
 
     def wallet_exists(self) -> bool:
         """Check if the wallet file exists."""

@@ -144,7 +144,7 @@ void register_wallet_options(ArgsManager& args) {
                   "Wallet", false, "", false, false});
 
     args.add_arg({"-wallet", "Specify wallet file (within data directory)",
-                  "Wallet", true, "wallet.dat", false, false});
+                  "Wallet", true, "wallets/wallet.dat", false, false});
 
     args.add_arg({"-walletbroadcast",
                   "Make the wallet broadcast transactions",
@@ -360,7 +360,7 @@ void register_all_options(ArgsManager& args) {
                   "General", false, "", false, false});
 
     args.add_arg({"-pid", "Specify PID file",
-                  "General", true, "flowcoind.pid", false, false});
+                  "General", true, ".pid", false, false});
 
     register_chain_options(args);
     register_network_options(args);

@@ -25,7 +25,7 @@ Specify data directory for blocks, chainstate, and wallet.
 Run in the background as a daemon and accept commands.
 .TP
 \fB\-pid=\fR\fIfile\fR
-Specify pid file (default: \fIflowcoind.pid\fR in datadir).
+Specify pid file (default: \fI.pid\fR in datadir).
 .TP
 \fB\-testnet\fR
 Use the test network (port 19333, HRP \fItfl\fR).
@@ -73,7 +73,7 @@ Allow JSON\-RPC connections from specified subnet (CIDR notation).
 Do not load the wallet and disable wallet RPC calls.
 .TP
 \fB\-wallet=\fR\fIfile\fR
-Specify wallet file (default: \fIwallet.dat\fR in datadir).
+Specify wallet file (default: \fIwallets/wallet.dat\fR in datadir).
 .TP
 \fB\-dbcache=\fR\fIN\fR
 Set database cache size in megabytes (default: 450).
@@ -99,10 +99,13 @@ Default configuration file.
 Block data files (blk*.dat).
 .TP
 \fI~/.flowcoin/chainstate/\fR
-UTXO set database (SQLite).
+Chain database and UTXO set (SQLite).
 .TP
-\fI~/.flowcoin/wallet.dat\fR
+\fI~/.flowcoin/wallets/wallet.dat\fR
 Wallet database.
+.TP
+\fI~/.flowcoin/indexes/\fR
+Transaction index database (SQLite).
 .TP
 \fI~/.flowcoin/debug.log\fR
 Debug log file.
