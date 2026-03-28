@@ -504,8 +504,8 @@ std::vector<CNetAddr> AddrMan::get_addresses(size_t count) const {
     // Collect all entries, compute the 23% limit
     size_t max_return = static_cast<size_t>(
         static_cast<double>(map_info_.size()) * ADDR_RELAY_FRACTION);
-    max_return = std::max(max_return, static_cast<size_t>(1));
-    max_return = std::min(max_return, count);
+    // For small networks, always return at least all known addresses (up to count)
+    max_return = std::max(max_return, std::min(map_info_.size(), count));
 
     // Collect all valid entries sorted by last_seen (most recent first)
     struct SortEntry {
