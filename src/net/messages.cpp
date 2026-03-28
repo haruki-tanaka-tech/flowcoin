@@ -371,6 +371,7 @@ void MessageHandler::handle_addr(Peer& peer, const uint8_t* data, size_t len) {
     }
 
     int64_t now = GetTime();
+    int added = 0;
     for (uint64_t i = 0; i < count; ++i) {
         uint32_t ts = r.read_u32_le();
         /*uint64_t services =*/ r.read_u64_le();
@@ -384,6 +385,11 @@ void MessageHandler::handle_addr(Peer& peer, const uint8_t* data, size_t len) {
         if (addr.port == 0) continue;
 
         netman_.addrman().add(addr, static_cast<int64_t>(ts));
+        added++;
+    }
+    if (added > 0) {
+        LogInfo("net", "received %d addresses from peer %lu (of %lu total)",
+                added, (unsigned long)peer.id(), (unsigned long)count);
     }
 }
 
