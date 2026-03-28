@@ -40,6 +40,7 @@
 #include <process.h>
 #else
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/file.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -542,6 +543,12 @@ void NodeContext::interrupt() {
 // ============================================================================
 
 void NodeContext::stop() {
+    // Skip verbose shutdown if node never fully initialized
+    if (!chain && !net && !rpc) {
+        unlock_datadir();
+        remove_pid_file();
+        return;
+    }
     LogInfo("node", "Stopping all subsystems (reverse init order)...");
 
     int64_t stop_begin = now_us();
@@ -814,6 +821,21 @@ bool NodeContext::lock_datadir() {
     // Try to get an exclusive non-blocking lock
     if (::flock(lockfile_fd, LOCK_EX | LOCK_NB) != 0) {
         if (errno == EWOULDBLOCK) {
+            // Check if the locking process is still alive
+            char pid_str[32] = {0};
+            ssize_t n = ::read(lockfile_fd, pid_str, sizeof(pid_str) - 1);
+            if (n > 0) {
+                int old_pid = atoi(pid_str);
+                if (old_pid > 0 && kill(old_pid, 0) != 0) {
+                    // Process is dead — stale lock, take over
+                    LogInfo("node", "Removing stale lock (pid %d no longer running)", old_pid);
+                    ::close(lockfile_fd);
+                    lockfile_fd = ::open(lock_file_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
+                    if (lockfile_fd >= 0 && ::flock(lockfile_fd, LOCK_EX | LOCK_NB) == 0) {
+                        goto lock_acquired;
+                    }
+                }
+            }
             LogError("node", "Cannot obtain lock on data directory '%s'. "
                      "FlowCoin is probably already running.",
                      datadir.c_str());
@@ -824,6 +846,8 @@ bool NodeContext::lock_datadir() {
         lockfile_fd = -1;
         return false;
     }
+
+    lock_acquired:
 
     // Write our PID to the lock file
     char pid_buf2[32];
