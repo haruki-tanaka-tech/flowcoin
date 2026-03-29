@@ -805,6 +805,8 @@ bool step7_initialize_wallet(NodeContext& node, const AppArgs& args) {
         bool wallet_has_key = node.wallet->get_miner_key(wallet_miner_key);
         bool file_exists = std::filesystem::exists(miner_key_file, ec);
 
+        LogInfo("init", "Miner key sync: wallet_has=%d, file_exists=%d", wallet_has_key, file_exists);
+
         if (!wallet_has_key && file_exists) {
             // Import miner_key.dat into wallet.dat
             std::ifstream fin(miner_key_file, std::ios::binary);
