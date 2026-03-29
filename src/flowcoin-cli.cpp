@@ -691,6 +691,14 @@ static std::string build_params_json(const std::vector<std::string>& params) {
 // ============================================================================
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+        std::cerr << "error: WSAStartup failed" << std::endl;
+        return 1;
+    }
+#endif
+
     CliOptions opts = parse_cli_args(argc, argv);
 
     if (opts.help) {
@@ -842,5 +850,8 @@ int main(int argc, char* argv[]) {
         std::cout << result_val << std::endl;
     }
 
+#ifdef _WIN32
+    WSACleanup();
+#endif
     return EXIT_OK;
 }
