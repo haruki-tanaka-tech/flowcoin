@@ -28,13 +28,13 @@ Bitcoin today: 6 mining pools control 95% of hashrate. FlowCoin: one GPU = one v
 
 ## Download
 
-**[Latest Release](https://github.com/haruki-tanaka-tech/flowcoin/releases/tag/v0.1.0)**
+**[Latest Release (v0.3.0)](https://github.com/haruki-tanaka-tech/flowcoin/releases/tag/v0.3.0)**
 
-| Platform | Node | GPU Miner |
-|----------|------|-----------|
-| Linux x86_64 | [flowcoin-v0.1.0-linux-x86_64.tar.gz](https://github.com/haruki-tanaka-tech/flowcoin/releases/download/v0.1.0/flowcoin-v0.1.0-linux-x86_64.tar.gz) | [flowcoin-miner-v0.1.0-linux-x86_64.tar.gz](https://github.com/haruki-tanaka-tech/flowcoin/releases/download/v0.1.0/flowcoin-miner-v0.1.0-linux-x86_64.tar.gz) |
-| Windows x64 | [flowcoin-windows-x64.zip](https://github.com/haruki-tanaka-tech/flowcoin/releases/download/v0.1.0/flowcoin-windows-x64.zip) | [flowcoin-miner-v0.1.0-windows-x64.zip](https://github.com/haruki-tanaka-tech/flowcoin/releases/download/v0.1.0/flowcoin-miner-v0.1.0-windows-x64.zip) |
-| macOS arm64 | [flowcoin-v0.1.0-macos-arm64.tar.gz](https://github.com/haruki-tanaka-tech/flowcoin/releases/download/v0.1.0/flowcoin-v0.1.0-macos-arm64.tar.gz) | Build from source |
+| Platform | Node + CLI | GPU Miner |
+|----------|------------|-----------|
+| Linux x86_64 | [flowcoin-v0.3.0-linux-x86_64.tar.gz](https://github.com/haruki-tanaka-tech/flowcoin/releases/download/v0.3.0/flowcoin-v0.3.0-linux-x86_64.tar.gz) | [flowcoin-miner-linux-x64.tar.gz](https://github.com/haruki-tanaka-tech/flowcoin/releases/download/v0.3.0/flowcoin-miner-linux-x64.tar.gz) |
+| Windows x64 | [flowcoin-windows-x64.zip](https://github.com/haruki-tanaka-tech/flowcoin/releases/download/v0.3.0/flowcoin-windows-x64.zip) | [flowcoin-miner-windows-x64.zip](https://github.com/haruki-tanaka-tech/flowcoin/releases/download/v0.3.0/flowcoin-miner-windows-x64.zip) |
+| macOS arm64 | [flowcoin-v0.3.0-macos-arm64.tar.gz](https://github.com/haruki-tanaka-tech/flowcoin/releases/download/v0.3.0/flowcoin-v0.3.0-macos-arm64.tar.gz) | Build from source |
 
 ## Specifications
 
