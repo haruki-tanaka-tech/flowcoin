@@ -429,7 +429,7 @@ bool is_terminal(int fd) {
 namespace init {
 
 bool step1_setup_data_dir(NodeContext& node, const AppArgs& args) {
-    LogInfo("init", "Step 1: Setting up data directory");
+    LogDebug("init", "Setting up data directory");
 
     // Determine data directory
     if (!args.datadir.empty()) {
@@ -466,7 +466,7 @@ bool step1_setup_data_dir(NodeContext& node, const AppArgs& args) {
 }
 
 bool step2_parameter_validation(const AppArgs& args) {
-    LogInfo("init", "Step 2: Validating parameters");
+    LogDebug("init", "Validating parameters");
 
     // Cannot use both testnet and regtest
     if (args.testnet && args.regtest) {
@@ -535,7 +535,7 @@ bool step2_parameter_validation(const AppArgs& args) {
 }
 
 bool step3_lock_data_dir(NodeContext& node) {
-    LogInfo("init", "Step 3: Locking data directory");
+    LogDebug("init", "Locking data directory");
     if (!node.lock_datadir()) {
         return false;
     }
@@ -543,7 +543,7 @@ bool step3_lock_data_dir(NodeContext& node) {
 }
 
 bool step4_initialize_logging(NodeContext& node, const AppArgs& args) {
-    LogInfo("init", "Step 4: Initializing logging");
+    LogDebug("init", "Initializing logging");
 
     LogConfig log_cfg;
 
@@ -594,12 +594,12 @@ bool step4_initialize_logging(NodeContext& node, const AppArgs& args) {
 }
 
 bool step5_create_pid_file(NodeContext& node) {
-    LogInfo("init", "Step 5: Creating PID file");
+    LogDebug("init", "Creating PID file");
     return node.write_pid_file();
 }
 
 bool step6_initialize_chain(NodeContext& node, const AppArgs& args) {
-    LogInfo("init", "Step 6: Initializing chain state");
+    LogDebug("init", "Initializing chain state");
 
     // Auto-migrate old layout: .flowcoin/*.db → .flowcoin/chainstate/ and indexes/
     {
@@ -748,7 +748,7 @@ bool step6_initialize_chain(NodeContext& node, const AppArgs& args) {
 }
 
 bool step7_initialize_wallet(NodeContext& node, const AppArgs& args) {
-    LogInfo("init", "Step 7: Initializing wallet");
+    LogDebug("init", "Initializing wallet");
 
     if (args.no_wallet) {
         LogInfo("init", "Wallet disabled (--nowallet)");
@@ -805,7 +805,7 @@ bool step7_initialize_wallet(NodeContext& node, const AppArgs& args) {
         bool wallet_has_key = node.wallet->get_miner_key(wallet_miner_key);
         bool file_exists = std::filesystem::exists(miner_key_file, ec);
 
-        LogInfo("init", "Miner key sync: wallet_has=%d, file_exists=%d", wallet_has_key, file_exists);
+        LogDebug("init", "Miner key sync: wallet_has=%d, file_exists=%d", wallet_has_key, file_exists);
 
         if (!wallet_has_key && file_exists) {
             // Import miner_key.dat into wallet.dat
@@ -845,7 +845,7 @@ bool step7_initialize_wallet(NodeContext& node, const AppArgs& args) {
 }
 
 bool step8_initialize_network(NodeContext& node, const AppArgs& args) {
-    LogInfo("init", "Step 8: Initializing network manager");
+    LogDebug("init", "Initializing network manager");
 
     uint16_t p2p_port = args.port;
     if (p2p_port == 0) {
@@ -884,7 +884,7 @@ bool step8_initialize_network(NodeContext& node, const AppArgs& args) {
 }
 
 bool step9_initialize_rpc(NodeContext& node, const AppArgs& args) {
-    LogInfo("init", "Step 9: Initializing RPC server");
+    LogDebug("init", "Initializing RPC server");
 
     if (!args.server) {
         LogInfo("init", "RPC server disabled (--noserver)");
@@ -1022,7 +1022,7 @@ bool step9_initialize_rpc(NodeContext& node, const AppArgs& args) {
 }
 
 bool step10_load_chain(NodeContext& node, const AppArgs& args) {
-    LogInfo("init", "Step 10: Loading chain data");
+    LogDebug("init", "Loading chain data");
 
     // The chain was already loaded in step 6 (ChainState::init() loads the block index).
     // This step verifies consistency and applies any additional chain-level configuration.
@@ -1054,7 +1054,7 @@ bool step10_load_chain(NodeContext& node, const AppArgs& args) {
 }
 
 bool step11_start_network(NodeContext& node) {
-    LogInfo("init", "Step 11: Starting P2P network");
+    LogDebug("init", "Starting P2P network");
 
     if (!node.net) {
         LogWarn("init", "Network manager not initialized, skipping");
@@ -1071,7 +1071,7 @@ bool step11_start_network(NodeContext& node) {
 }
 
 bool step12_start_rpc(NodeContext& node) {
-    LogInfo("init", "Step 12: Starting RPC server");
+    LogDebug("init", "Starting RPC server");
 
     if (!node.rpc) {
         LogInfo("init", "RPC server disabled, skipping");
