@@ -79,7 +79,9 @@ void ChainDB::init_tables() {
         "    file_size INTEGER NOT NULL,"
         "    n_tx INTEGER NOT NULL,"
         "    merkle_root BLOB,"
-        "    miner_pubkey BLOB"
+        "    miner_pubkey BLOB,"
+        "    undo_file_num INTEGER NOT NULL DEFAULT -1,"
+        "    undo_file_offset INTEGER NOT NULL DEFAULT 0"
         ");"
         "CREATE INDEX IF NOT EXISTS idx_block_height ON block_index(height);"
         "CREATE INDEX IF NOT EXISTS idx_block_prev ON block_index(prev_hash);"
@@ -95,6 +97,16 @@ void ChainDB::init_tables() {
         if (errmsg) sqlite3_free(errmsg);
         throw std::runtime_error("ChainDB: failed to create tables: " + err);
     }
+
+    // Migrate existing databases: add undo columns if missing.
+    // ALTER TABLE ADD COLUMN is a no-op if the column already exists in
+    // newer SQLite versions, but older ones return an error — ignore it.
+    sqlite3_exec(db_,
+        "ALTER TABLE block_index ADD COLUMN undo_file_num INTEGER NOT NULL DEFAULT -1;",
+        nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+        "ALTER TABLE block_index ADD COLUMN undo_file_offset INTEGER NOT NULL DEFAULT 0;",
+        nullptr, nullptr, nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -116,15 +128,17 @@ void ChainDB::prepare_statements() {
         "    hash, prev_hash, height, timestamp, nbits,"
         "    nonce, status,"
         "    file_num, file_offset, file_size, n_tx,"
-        "    merkle_root, miner_pubkey"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);",
+        "    merkle_root, miner_pubkey,"
+        "    undo_file_num, undo_file_offset"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);",
         &stmt_save_);
 
     prepare(
         "SELECT hash, prev_hash, height, timestamp, nbits,"
         "    nonce, status,"
         "    file_num, file_offset, file_size, n_tx,"
-        "    merkle_root, miner_pubkey"
+        "    merkle_root, miner_pubkey,"
+        "    undo_file_num, undo_file_offset"
         " FROM block_index ORDER BY height ASC;",
         &stmt_load_all_);
 
@@ -132,7 +146,8 @@ void ChainDB::prepare_statements() {
         "SELECT hash, prev_hash, height, timestamp, nbits,"
         "    nonce, status,"
         "    file_num, file_offset, file_size, n_tx,"
-        "    merkle_root, miner_pubkey"
+        "    merkle_root, miner_pubkey,"
+        "    undo_file_num, undo_file_offset"
         " FROM block_index WHERE hash = ?;",
         &stmt_load_one_);
 
@@ -239,6 +254,11 @@ void ChainDB::read_index_from_row(sqlite3_stmt* stmt, CBlockIndex& idx) const {
     if (mpk_blob && mpk_len == 32) {
         std::memcpy(idx.miner_pubkey.data(), mpk_blob, 32);
     }
+    col++;
+
+    // Undo disk position (rev*.dat)
+    idx.undo_file = sqlite3_column_int(stmt, col++);
+    idx.undo_pos  = static_cast<uint32_t>(sqlite3_column_int(stmt, col++));
 
     // prev pointer must be re-linked by caller
     idx.prev = nullptr;
@@ -265,6 +285,8 @@ bool ChainDB::save_block_index(const CBlockIndex& index) {
     sqlite3_bind_int(stmt_save_, col++, index.n_tx);
     sqlite3_bind_blob(stmt_save_, col++, index.merkle_root.data(), 32, SQLITE_STATIC);
     sqlite3_bind_blob(stmt_save_, col++, index.miner_pubkey.data(), 32, SQLITE_STATIC);
+    sqlite3_bind_int(stmt_save_, col++, index.undo_file);
+    sqlite3_bind_int(stmt_save_, col++, static_cast<int>(index.undo_pos));
 
     int rc = sqlite3_step(stmt_save_);
     return rc == SQLITE_DONE;

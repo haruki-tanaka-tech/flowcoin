@@ -18,9 +18,11 @@
 
 #include <uv.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -639,6 +641,98 @@ bool step6_initialize_chain(NodeContext& node, const AppArgs& args) {
     LogInfo("init", "Chain initialized at height %lu",
             static_cast<unsigned long>(node.chain->height()));
 
+    // Auto-migrate old per-height undo files (blocks/undo/<height>.dat)
+    // to rev*.dat format alongside blk*.dat.
+    {
+        std::string undo_dir = node.datadir + "/blocks/undo";
+        std::error_code ec;
+        if (std::filesystem::is_directory(undo_dir, ec)) {
+            LogInfo("init", "Migrating per-height undo files to rev*.dat format...");
+            int migrated = 0;
+            int failed = 0;
+            auto& store = node.chain->block_store();
+            auto& tree  = node.chain->block_tree();
+
+            // Walk the chain from genesis to tip, migrating undo for each block
+            CBlockIndex* tip = tree.best_tip();
+            if (tip) {
+                // Build the chain path
+                std::vector<CBlockIndex*> chain;
+                for (CBlockIndex* p = tip; p; p = p->prev) {
+                    chain.push_back(p);
+                }
+                std::reverse(chain.begin(), chain.end());
+
+                for (CBlockIndex* idx : chain) {
+                    if (idx->height == 0) continue; // genesis has no undo
+                    if (idx->has_undo()) continue;   // already migrated
+
+                    // Try to read old per-height undo file
+                    char height_buf[64];
+                    std::snprintf(height_buf, sizeof(height_buf), "%lu.dat",
+                                  static_cast<unsigned long>(idx->height));
+                    std::string old_path = undo_dir + "/" + height_buf;
+
+                    FILE* f = std::fopen(old_path.c_str(), "rb");
+                    if (!f) continue;
+
+                    // Read the old format: [4-byte length LE] [data]
+                    uint8_t len_bytes[4];
+                    if (std::fread(len_bytes, 1, 4, f) != 4) {
+                        std::fclose(f);
+                        failed++;
+                        continue;
+                    }
+                    uint32_t len = static_cast<uint32_t>(len_bytes[0])
+                                 | (static_cast<uint32_t>(len_bytes[1]) << 8)
+                                 | (static_cast<uint32_t>(len_bytes[2]) << 16)
+                                 | (static_cast<uint32_t>(len_bytes[3]) << 24);
+                    if (len > 100'000'000) {
+                        std::fclose(f);
+                        failed++;
+                        continue;
+                    }
+                    std::vector<uint8_t> undo_data(len);
+                    if (std::fread(undo_data.data(), 1, len, f) != len) {
+                        std::fclose(f);
+                        failed++;
+                        continue;
+                    }
+                    std::fclose(f);
+
+                    // Write to rev<N>.dat where N matches the block's blk file
+                    uint32_t undo_offset = 0;
+                    if (store.write_undo(idx->pos.file_num, undo_data, undo_offset)) {
+                        idx->undo_file = idx->pos.file_num;
+                        idx->undo_pos  = undo_offset;
+                        migrated++;
+                    } else {
+                        failed++;
+                    }
+                }
+
+                // Persist all updated block index entries
+                if (migrated > 0) {
+                    for (CBlockIndex* idx : chain) {
+                        if (idx->has_undo()) {
+                            node.chain->persist_block_index(idx);
+                        }
+                    }
+                }
+            }
+
+            if (failed == 0) {
+                // Remove old undo files and directory
+                std::filesystem::remove_all(undo_dir, ec);
+                LogInfo("init", "Undo migration complete: %d entries migrated, "
+                        "old blocks/undo/ directory removed", migrated);
+            } else {
+                LogInfo("init", "Undo migration partial: %d migrated, %d failed. "
+                        "Old blocks/undo/ directory kept.", migrated, failed);
+            }
+        }
+    }
+
     // PoW: no eval engine needed
 
     // Initialize mempool
@@ -701,6 +795,47 @@ bool step7_initialize_wallet(NodeContext& node, const AppArgs& args) {
     } catch (const std::exception& e) {
         LogError("init", "Wallet error: %s", e.what());
         return false;
+    }
+
+    // Sync miner key between wallet.dat (primary) and miner_key.dat (export for GPU miner)
+    {
+        std::string miner_key_file = node.datadir + "/wallets/miner_key.dat";
+        std::error_code ec;
+        std::array<uint8_t, 32> wallet_miner_key{};
+        bool wallet_has_key = node.wallet->get_miner_key(wallet_miner_key);
+        bool file_exists = std::filesystem::exists(miner_key_file, ec);
+
+        if (!wallet_has_key && file_exists) {
+            // Import miner_key.dat into wallet.dat
+            std::ifstream fin(miner_key_file, std::ios::binary);
+            std::array<uint8_t, 32> file_key{};
+            if (fin && fin.read(reinterpret_cast<char*>(file_key.data()), 32) &&
+                fin.gcount() == 32) {
+                if (node.wallet->set_miner_key(file_key)) {
+                    LogInfo("init", "Imported miner key from miner_key.dat into wallet.dat");
+                }
+            }
+        } else if (wallet_has_key && !file_exists) {
+            // Export miner key from wallet.dat to miner_key.dat for the GPU miner
+            std::filesystem::create_directories(node.datadir + "/wallets", ec);
+            std::ofstream fout(miner_key_file, std::ios::binary);
+            if (fout) {
+                fout.write(reinterpret_cast<const char*>(wallet_miner_key.data()), 32);
+                fout.close();
+#ifndef _WIN32
+                chmod(miner_key_file.c_str(), 0600);
+#endif
+                LogInfo("init", "Exported miner key from wallet.dat to miner_key.dat");
+            }
+        } else if (wallet_has_key && file_exists) {
+            // Both exist: wallet.dat is authoritative, overwrite file
+            std::ofstream fout(miner_key_file, std::ios::binary | std::ios::trunc);
+            if (fout) {
+                fout.write(reinterpret_cast<const char*>(wallet_miner_key.data()), 32);
+                fout.close();
+            }
+        }
+        // If neither exists, that's fine - no miner key yet
     }
 
     LogInfo("init", "Wallet initialized at %s", wp.c_str());

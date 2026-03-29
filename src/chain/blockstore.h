@@ -33,17 +33,19 @@ public:
 
     // ---- Undo data (rev*.dat files, mirroring blk*.dat) --------------------
 
-    /// Write undo data for a block at a given height.
-    /// Stores in rev?????.dat files alongside blk?????.dat.
-    /// Returns true on success.
-    bool write_undo(uint64_t height, const std::vector<uint8_t>& undo_data);
+    /// Write undo data to rev<file_num>.dat (appended at end).
+    /// file_num should match the blk file that contains the block.
+    /// On success, returns true and sets out_offset to the write position.
+    bool write_undo(int file_num, const std::vector<uint8_t>& undo_data,
+                    uint32_t& out_offset);
 
-    /// Read undo data for a block at a given height.
+    /// Read undo data from rev<file_num>.dat at the given offset.
     /// Returns true on success, populating undo_data.
-    bool read_undo(uint64_t height, std::vector<uint8_t>& undo_data) const;
+    bool read_undo(int file_num, uint32_t offset,
+                   std::vector<uint8_t>& undo_data) const;
 
-    /// Check if undo data exists for a given height.
-    bool has_undo(uint64_t height) const;
+    /// Check if a block index entry has valid undo position.
+    static bool has_undo(const CBlockIndex& index) { return index.has_undo(); }
 
     // ---- File management ---------------------------------------------------
 
@@ -106,10 +108,6 @@ private:
     /// Format: <datadir>/blocks/rev00000.dat, rev00001.dat, etc.
     std::string get_undo_path(int file_num) const;
 
-    /// Get the filesystem path for a per-height undo file.
-    /// Format: <datadir>/blocks/undo/<height>.dat
-    std::string get_undo_path_for_height(uint64_t height) const;
-
     /// Get the lock file path.
     std::string get_lock_path() const;
 
@@ -149,15 +147,15 @@ public:
     };
 
     /// Write structured undo data for a block.
-    bool write_undo_structured(uint64_t height, const UndoData& undo);
+    /// file_num should match the block's blk file. out_offset receives the
+    /// write position in rev<file_num>.dat for later retrieval.
+    bool write_undo_structured(int file_num, const UndoData& undo,
+                               uint32_t& out_offset);
 
-    /// Read structured undo data for a block.
-    bool read_undo_structured(uint64_t height, UndoData& undo) const;
+    /// Read structured undo data from rev<file_num>.dat at offset.
+    bool read_undo_structured(int file_num, uint32_t offset, UndoData& undo) const;
 
-    /// Read raw undo data for a block height (convenience).
-    bool read_undo_for_height(uint64_t height, std::vector<uint8_t>& undo_data) const;
-
-    /// Prune blk/rev/undo files below min_height. Returns bytes freed.
+    /// Prune blk/rev files below min_height. Returns bytes freed.
     size_t prune_files_below(uint64_t min_height);
 
     /// Check if a specific file can be safely pruned.

@@ -132,18 +132,12 @@ static bool deserialize_tx(DataReader& r, CTransaction& tx) {
 BlockStore::BlockStore(const std::string& datadir)
     : datadir_(datadir)
 {
-    // Ensure the blocks/ and blocks/undo/ subdirectories exist
+    // Ensure the blocks/ subdirectory exists
     std::string blocks_dir = datadir_ + "/blocks";
 #ifdef _WIN32
     _mkdir(blocks_dir.c_str());
 #else
     ::mkdir(blocks_dir.c_str(), 0755);
-#endif
-    std::string undo_dir = blocks_dir + "/undo";
-#ifdef _WIN32
-    _mkdir(undo_dir.c_str());
-#else
-    ::mkdir(undo_dir.c_str(), 0755);
 #endif
 
     // Scan existing blk files to determine current file and offset.
@@ -416,17 +410,6 @@ std::string BlockStore::get_undo_path(int file_num) const {
 }
 
 // ---------------------------------------------------------------------------
-// get_undo_path_for_height
-// ---------------------------------------------------------------------------
-
-std::string BlockStore::get_undo_path_for_height(uint64_t height) const {
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "%lu.dat",
-                  static_cast<unsigned long>(height));
-    return datadir_ + "/blocks/undo/" + buf;
-}
-
-// ---------------------------------------------------------------------------
 // get_lock_path
 // ---------------------------------------------------------------------------
 
@@ -447,19 +430,29 @@ size_t BlockStore::get_file_size(const std::string& path) {
 }
 
 // ---------------------------------------------------------------------------
-// write_undo — store undo data for a block height
+// write_undo — append undo data to rev<file_num>.dat
 // ---------------------------------------------------------------------------
 
-bool BlockStore::write_undo(uint64_t height, const std::vector<uint8_t>& undo_data) {
+bool BlockStore::write_undo(int file_num, const std::vector<uint8_t>& undo_data,
+                            uint32_t& out_offset) {
     if (undo_data.empty()) return true;
 
-    std::string path = get_undo_path_for_height(height);
-    FILE* f = std::fopen(path.c_str(), "wb");
+    std::string path = get_undo_path(file_num);
+    FILE* f = std::fopen(path.c_str(), "ab");
     if (!f) {
         LogError("chain", "failed to open %s for writing: %s",
                 path.c_str(), std::strerror(errno));
         return false;
     }
+
+    // Record the current end-of-file as the write offset
+    std::fseek(f, 0, SEEK_END);
+    long pos = std::ftell(f);
+    if (pos < 0) {
+        std::fclose(f);
+        return false;
+    }
+    out_offset = static_cast<uint32_t>(pos);
 
     // Write length prefix (4 bytes LE) then data
     uint32_t len = static_cast<uint32_t>(undo_data.size());
@@ -485,13 +478,20 @@ bool BlockStore::write_undo(uint64_t height, const std::vector<uint8_t>& undo_da
 }
 
 // ---------------------------------------------------------------------------
-// read_undo — retrieve undo data for a block height
+// read_undo — read undo data from rev<file_num>.dat at the given offset
 // ---------------------------------------------------------------------------
 
-bool BlockStore::read_undo(uint64_t height, std::vector<uint8_t>& undo_data) const {
-    std::string path = get_undo_path_for_height(height);
+bool BlockStore::read_undo(int file_num, uint32_t offset,
+                           std::vector<uint8_t>& undo_data) const {
+    std::string path = get_undo_path(file_num);
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) return false;
+
+    // Seek to the stored offset
+    if (std::fseek(f, static_cast<long>(offset), SEEK_SET) != 0) {
+        std::fclose(f);
+        return false;
+    }
 
     // Read length prefix
     uint8_t len_bytes[4];
@@ -522,68 +522,18 @@ bool BlockStore::read_undo(uint64_t height, std::vector<uint8_t>& undo_data) con
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// has_undo
-// ---------------------------------------------------------------------------
-
-bool BlockStore::has_undo(uint64_t height) const {
-    std::string path = get_undo_path_for_height(height);
-    struct stat st;
-    return ::stat(path.c_str(), &st) == 0 && st.st_size > 0;
-}
+// has_undo is now a static inline in blockstore.h (delegates to CBlockIndex::has_undo)
 
 // ---------------------------------------------------------------------------
-// prune_files — delete old blk/rev/undo files
+// prune_files — delete old blk/rev files (rev files pruned alongside blk)
 // ---------------------------------------------------------------------------
 
 int BlockStore::prune_files(uint64_t below_height) {
-    int files_deleted = 0;
-
-    // Delete per-height undo files
-    std::string undo_dir = datadir_ + "/blocks/undo";
-#ifdef _WIN32
-    {
-        WIN32_FIND_DATAA fd;
-        std::string pattern = undo_dir + "\\*";
-        HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
-        if (h != INVALID_HANDLE_VALUE) {
-            do {
-                char* endp = nullptr;
-                unsigned long file_height = std::strtoul(fd.cFileName, &endp, 10);
-                if (endp && std::strcmp(endp, ".dat") == 0) {
-                    if (file_height < below_height) {
-                        std::string full_path = undo_dir + "\\" + fd.cFileName;
-                        if (std::remove(full_path.c_str()) == 0) {
-                            files_deleted++;
-                        }
-                    }
-                }
-            } while (FindNextFileA(h, &fd));
-            FindClose(h);
-        }
-    }
-#else
-    DIR* dir = ::opendir(undo_dir.c_str());
-    if (dir) {
-        struct dirent* entry;
-        while ((entry = ::readdir(dir)) != nullptr) {
-            // Parse height from filename like "123.dat"
-            char* endp = nullptr;
-            unsigned long file_height = std::strtoul(entry->d_name, &endp, 10);
-            if (endp && std::strcmp(endp, ".dat") == 0) {
-                if (file_height < below_height) {
-                    std::string full_path = undo_dir + "/" + entry->d_name;
-                    if (std::remove(full_path.c_str()) == 0) {
-                        files_deleted++;
-                    }
-                }
-            }
-        }
-        ::closedir(dir);
-    }
-#endif
-
-    return files_deleted;
+    // Rev files are pruned alongside their blk files in prune_files_below().
+    // This function is kept for API compatibility; the actual work is done
+    // by prune_files_below() which scans blk file heights.
+    (void)below_height;
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -593,46 +543,11 @@ int BlockStore::prune_files(uint64_t below_height) {
 size_t BlockStore::get_disk_usage() const {
     size_t total = 0;
 
-    // Sum blk*.dat files
+    // Sum blk*.dat and rev*.dat files
     for (int i = 0; i <= current_file_ + 1; ++i) {
-        std::string path = get_block_path(i);
-        total += get_file_size(path);
+        total += get_file_size(get_block_path(i));
+        total += get_file_size(get_undo_path(i));
     }
-
-    // Sum rev*.dat files
-    for (int i = 0; i <= current_file_ + 1; ++i) {
-        std::string path = get_undo_path(i);
-        total += get_file_size(path);
-    }
-
-    // Sum undo/<height>.dat files
-    std::string undo_dir = datadir_ + "/blocks/undo";
-#ifdef _WIN32
-    {
-        WIN32_FIND_DATAA fd;
-        std::string pattern = undo_dir + "\\*";
-        HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
-        if (h != INVALID_HANDLE_VALUE) {
-            do {
-                if (fd.cFileName[0] == '.') continue;
-                std::string full_path = undo_dir + "\\" + fd.cFileName;
-                total += get_file_size(full_path);
-            } while (FindNextFileA(h, &fd));
-            FindClose(h);
-        }
-    }
-#else
-    DIR* dir = ::opendir(undo_dir.c_str());
-    if (dir) {
-        struct dirent* entry;
-        while ((entry = ::readdir(dir)) != nullptr) {
-            if (entry->d_name[0] == '.') continue;
-            std::string full_path = undo_dir + "/" + entry->d_name;
-            total += get_file_size(full_path);
-        }
-        ::closedir(dir);
-    }
-#endif
 
     return total;
 }
@@ -824,7 +739,8 @@ struct UndoData {
 // write_undo_structured — write structured undo data
 // ---------------------------------------------------------------------------
 
-bool BlockStore::write_undo_structured(uint64_t height, const UndoData& undo) {
+bool BlockStore::write_undo_structured(int file_num, const UndoData& undo,
+                                       uint32_t& out_offset) {
     // Serialize the structured undo data
     std::vector<uint8_t> data;
 
@@ -848,16 +764,16 @@ bool BlockStore::write_undo_structured(uint64_t height, const UndoData& undo) {
     data.insert(data.end(), undo.spent_outputs_raw.begin(),
                 undo.spent_outputs_raw.end());
 
-    return write_undo(height, data);
+    return write_undo(file_num, data, out_offset);
 }
 
 // ---------------------------------------------------------------------------
 // read_undo_structured — read structured undo data
 // ---------------------------------------------------------------------------
 
-bool BlockStore::read_undo_structured(uint64_t height, UndoData& undo) const {
+bool BlockStore::read_undo_structured(int file_num, uint32_t offset, UndoData& undo) const {
     std::vector<uint8_t> raw;
-    if (!read_undo(height, raw)) {
+    if (!read_undo(file_num, offset, raw)) {
         return false;
     }
 
@@ -897,28 +813,13 @@ bool BlockStore::read_undo_structured(uint64_t height, UndoData& undo) const {
 }
 
 // ---------------------------------------------------------------------------
-// read_undo_for_height — convenience wrapper
-// ---------------------------------------------------------------------------
-
-bool BlockStore::read_undo_for_height(uint64_t height, std::vector<uint8_t>& undo_data) const {
-    return read_undo(height, undo_data);
-}
-
-// ---------------------------------------------------------------------------
-// prune_files_below — prune blk/rev/undo files below a given height
+// prune_files_below — prune blk/rev files below a given height
 // ---------------------------------------------------------------------------
 
 size_t BlockStore::prune_files_below(uint64_t min_height) {
     size_t bytes_freed = 0;
 
-    // Step 1: Delete per-height undo files below min_height
-    int undo_deleted = prune_files(min_height);
-    if (undo_deleted > 0) {
-        LogInfo("chain", "pruned %d undo files below height %lu",
-                undo_deleted, static_cast<unsigned long>(min_height));
-    }
-
-    // Step 2: Check if any blk files can be pruned entirely.
+    // Check if any blk files can be pruned entirely.
     // A blk file can be pruned if ALL blocks in it are below min_height.
     // We determine this by scanning the file info.
     auto infos = get_file_info();
