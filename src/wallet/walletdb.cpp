@@ -63,6 +63,11 @@ WalletDB::WalletDB(const std::string& path) : db_path_(path) {
         throw std::runtime_error("WalletDB: cannot open " + path + ": " + msg);
     }
 
+    // Checkpoint any existing WAL before use — ensures a restored
+    // wallet.dat isn't overwritten by stale WAL/SHM files.
+    sqlite3_wal_checkpoint_v2(db_, nullptr, SQLITE_CHECKPOINT_TRUNCATE,
+                              nullptr, nullptr);
+
     // Enable WAL mode for better concurrency
     exec_sql(db_, "PRAGMA journal_mode=WAL;");
     exec_sql(db_, "PRAGMA synchronous=NORMAL;");
