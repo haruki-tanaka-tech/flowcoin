@@ -641,10 +641,12 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
     // Check if we already have this block fully validated.
     // Note: accept_header() inserts header-only entries into the block tree,
     // so we must check for BLOCK_FULLY_VALIDATED rather than mere existence.
+    // Clear inflight tracking for this block
+    peer.clear_inflight(block_hash);
+
     CBlockIndex* existing = chain_.block_tree().find(block_hash);
     if (existing && (existing->status & BLOCK_FULLY_VALIDATED)) {
-        LogDebug("net", "block at height %lu already fully validated, skipping",
-                 (unsigned long)block.height);
+        // Silently skip — this can happen during normal sync
         return;
     }
 
@@ -846,10 +848,9 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         last_hash = hdr_hash;  // always track last header for continuation
         CBlockIndex* existing = chain_.block_tree().find(hdr_hash);
         if (existing) {
-            // Already have header — but if not fully validated, we still need the block
-            if (!(existing->status & BLOCK_FULLY_VALIDATED)) {
-                new_header_hashes.push_back(hdr_hash);
-            }
+            // Already have this header — skip entirely.
+            // If block not yet validated, it will be requested in the scan below
+            // only if it's above our tip and not in-flight.
             continue;
         }
 
@@ -880,31 +881,30 @@ void MessageHandler::handle_headers(Peer& peer, const uint8_t* data, size_t len)
         send(peer, NetCmd::GETHEADERS, w.release());
     }
 
-    // Request full blocks for new headers AND any header-only entries
-    // Combine newly accepted + scan tree for header-only above our tip
-    std::vector<uint256> blocks_needed = new_header_hashes;
-
-    // Also scan for any header-only entries above our tip
+    // Request full blocks ONLY for headers that:
+    //  1. Are above our validated tip
+    //  2. Are NOT already fully validated
+    //  3. Are NOT already in-flight from this peer
+    // This matches Bitcoin Core's FindNextBlocksToDownload() logic.
+    std::vector<uint256> blocks_needed;
     uint64_t our_height = chain_.height();
-    uint64_t peer_height = peer.start_height();
-    for (uint64_t h = our_height + 1; h <= peer_height && h <= our_height + 2000; ++h) {
+    uint64_t scan_start = our_height + 1;
+    uint64_t scan_end = std::min(scan_start + 128, our_height + 2000);  // window of 128
+
+    for (uint64_t h = scan_start; h <= scan_end; ++h) {
         auto at_height = chain_.block_tree().get_at_height(h);
         for (auto* idx : at_height) {
-            if (!(idx->status & BLOCK_FULLY_VALIDATED)) {
-                // Check not already in blocks_needed
-                bool already = false;
-                for (const auto& bh : blocks_needed) {
-                    if (bh == idx->hash) { already = true; break; }
-                }
-                if (!already) blocks_needed.push_back(idx->hash);
-            }
+            if (idx->status & BLOCK_FULLY_VALIDATED) continue;  // already have it
+            if (peer.has_inflight(idx->hash)) continue;         // already requested
+            blocks_needed.push_back(idx->hash);
+            peer.mark_inflight(idx->hash);
         }
     }
 
     if (!blocks_needed.empty()) {
-        LogInfo("net", "requesting %lu blocks from peer %lu",
-                (unsigned long)blocks_needed.size(),
-                (unsigned long)peer.id());
+        LogInfo("net", "requesting %zu blocks from peer %lu (heights %lu-%lu)",
+                blocks_needed.size(), (unsigned long)peer.id(),
+                (unsigned long)scan_start, (unsigned long)scan_end);
 
         DataWriter w;
         w.write_compact_size(blocks_needed.size());
