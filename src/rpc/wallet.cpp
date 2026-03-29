@@ -51,6 +51,31 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet,
             u["vout"]   = coin.vout;
             u["amount"] = static_cast<double>(coin.value) /
                           static_cast<double>(consensus::COIN);
+
+            // address: bech32m-encoded from pubkey
+            u["address"] = pubkey_to_address(coin.pubkey.data());
+
+            // scriptPubKey: OP_0 <20-byte-pubkey-hash> as hex
+            // The witness program is the keccak256d hash of the pubkey (first 20 bytes)
+            {
+                std::string addr = pubkey_to_address(coin.pubkey.data());
+                std::vector<uint8_t> pkh;
+                if (address_to_pubkey_hash(addr, pkh) && pkh.size() == 20) {
+                    // OP_0 (0x00) + push 20 bytes (0x14) + 20-byte hash
+                    std::vector<uint8_t> script;
+                    script.push_back(0x00);
+                    script.push_back(0x14);
+                    script.insert(script.end(), pkh.begin(), pkh.end());
+                    u["scriptPubKey"] = hex_encode(script);
+                } else {
+                    u["scriptPubKey"] = "";
+                }
+            }
+
+            u["solvable"]  = true;
+            u["safe"]      = true;
+
+            // FlowCoin-specific bonus fields
             u["pubkey"] = hex_encode(coin.pubkey.data(), 32);
 
             // Look up the UTXO entry for height and coinbase info
@@ -108,7 +133,7 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet,
     });
 
     // listtransactions(count, skip): transaction history
-    server.register_method("listtransactions", [&wallet](const json& params) -> json {
+    server.register_method("listtransactions", [&wallet, &chain](const json& params) -> json {
         int count = 10;
         int skip = 0;
         if (params.size() > 0 && params[0].is_number_integer()) {
@@ -119,15 +144,35 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet,
         }
 
         auto txs = wallet.get_transactions(count, skip);
+        uint64_t tip_height = chain.height();
         json result = json::array();
         for (const auto& wtx : txs) {
             json j;
             j["txid"]      = hex_encode(wtx.txid.data(), 32);
             j["amount"]    = static_cast<double>(wtx.amount) /
                              static_cast<double>(consensus::COIN);
-            j["timestamp"] = wtx.timestamp;
-            j["height"]    = wtx.block_height;
-            j["label"]     = wtx.label;
+            j["time"]      = wtx.timestamp;
+            j["address"]   = wtx.address;
+
+            // category: "generate" for coinbase, "receive" for incoming, "send" for outgoing
+            if (wtx.is_coinbase)
+                j["category"] = "generate";
+            else if (wtx.is_send)
+                j["category"] = "send";
+            else
+                j["category"] = "receive";
+
+            // confirmations
+            if (wtx.block_height > 0 && wtx.block_height <= tip_height) {
+                j["confirmations"] = static_cast<int64_t>(tip_height - wtx.block_height + 1);
+            } else {
+                j["confirmations"] = 0;
+            }
+
+            j["blockhash"]   = hex_encode(wtx.block_hash.data(), 32);
+            j["blockheight"] = wtx.block_height;
+            j["blocktime"]   = wtx.timestamp;  // best approximation available
+            j["label"]       = wtx.label;
             result.push_back(j);
         }
         return result;
@@ -149,11 +194,26 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet,
             j["witness_version"] = decoded.witness_version;
             j["witness_program"] = hex_encode(decoded.program.data(),
                                               decoded.program.size());
+            j["isscript"]  = false;
+            j["iswitness"] = true;
+
+            // scriptPubKey: OP_0 <20-byte-witness-program>
+            if (decoded.program.size() == 20) {
+                std::vector<uint8_t> script;
+                script.push_back(0x00);
+                script.push_back(0x14);
+                script.insert(script.end(), decoded.program.begin(),
+                              decoded.program.end());
+                j["scriptPubKey"] = hex_encode(script);
+            } else {
+                j["scriptPubKey"] = hex_encode(decoded.program.data(),
+                                               decoded.program.size());
+            }
 
             bool is_mainnet = (decoded.hrp == consensus::MAINNET_HRP);
             bool is_testnet = (decoded.hrp == consensus::TESTNET_HRP);
             bool is_regtest = (decoded.hrp == consensus::REGTEST_HRP);
-            j["ismine"]  = wallet.is_mine(addr);
+            // FlowCoin-specific bonus fields
             j["network"] = is_mainnet ? "mainnet" :
                            is_testnet ? "testnet" :
                            is_regtest ? "regtest" : "unknown";

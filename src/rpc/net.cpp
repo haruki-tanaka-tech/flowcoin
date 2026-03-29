@@ -44,34 +44,47 @@ void register_net_rpcs(RpcServer& server, NetManager& net) {
             json p;
             p["id"] = primary->id();
 
-            // node_id hex string
+            // node_id hex string (FlowCoin-specific bonus)
             char nid_hex[17];
             snprintf(nid_hex, sizeof(nid_hex), "%016llx",
                      (unsigned long long)primary->node_id());
             p["node_id"] = nid_hex;
 
-            // Multiple addresses if dual-stack
-            if (conns.size() == 1) {
-                p["addr"] = primary->addr().to_string();
-            } else {
-                json addrs = json::array();
-                for (const Peer* c : conns)
-                    addrs.push_back(c->addr().to_string());
-                p["addr"] = addrs;
-            }
+            // addr: always a single string (first address), matching Bitcoin Core
+            p["addr"] = primary->addr().to_string();
+            p["addrlocal"] = "";
+            p["network"] = primary->addr().is_ipv4() ? "ipv4" : "ipv6";
 
             p["inbound"]        = primary->is_inbound();
             p["version"]        = primary->protocol_version();
             p["subver"]         = primary->user_agent();
+
+            // services as hex string (Bitcoin Core format)
+            char svc_hex[17];
+            snprintf(svc_hex, sizeof(svc_hex), "%016llx",
+                     (unsigned long long)primary->services());
+            p["services"] = svc_hex;
+
+            // servicesnames array
+            json svc_names = json::array();
+            if (primary->services() & PEER_NODE_NETWORK)
+                svc_names.push_back("NETWORK");
+            if (primary->services() & PEER_NODE_BLOOM)
+                svc_names.push_back("BLOOM");
+            if (primary->services() & PEER_NODE_COMPACT_FILTERS)
+                svc_names.push_back("COMPACT_FILTERS");
+            if (primary->services() & PEER_NODE_NETWORK_LIMITED)
+                svc_names.push_back("NETWORK_LIMITED");
+            p["servicesnames"] = svc_names;
+
             p["startingheight"] = primary->start_height();
+            p["synced_headers"] = primary->start_height();
+            p["synced_blocks"]  = primary->start_height();
             p["conntime"]       = primary->connect_time();
             p["lastrecv"]       = primary->last_recv_time();
             p["lastsend"]       = primary->last_send_time();
             p["pingtime"]       = static_cast<double>(primary->ping_latency_us()) / 1e6;
             p["minping"]        = static_cast<double>(primary->min_ping_us()) / 1e6;
-            p["misbehavior"]    = primary->misbehavior_score();
-            p["services"]       = primary->services();
-            p["connections"]    = static_cast<int>(conns.size());
 
             // Sum bandwidth across all connections
             uint64_t total_recv = 0, total_sent = 0;
@@ -82,14 +95,8 @@ void register_net_rpcs(RpcServer& server, NetManager& net) {
             p["bytesrecv"] = total_recv;
             p["bytessent"] = total_sent;
 
-            std::string state_str;
-            switch (primary->state()) {
-                case PeerState::CONNECTING:      state_str = "connecting"; break;
-                case PeerState::VERSION_SENT:    state_str = "version_sent"; break;
-                case PeerState::HANDSHAKE_DONE:  state_str = "connected"; break;
-                case PeerState::DISCONNECTED:    state_str = "disconnected"; break;
-            }
-            p["state"] = state_str;
+            // FlowCoin-specific bonus fields
+            p["misbehavior"]        = primary->misbehavior_score();
             p["connection_duration"] = now_secs - primary->connect_time();
 
             return p;
@@ -208,8 +215,13 @@ void register_net_rpcs(RpcServer& server, NetManager& net) {
     // -----------------------------------------------------------------------
     server.register_method("getnetworkinfo", [&net](const json& /*params*/) -> json {
         json j;
-        j["version"]           = CLIENT_VERSION_STRING;
+        j["version"]           = flow::version::CLIENT_VERSION;
+        j["subversion"]        = flow::version::USER_AGENT;
         j["protocolversion"]   = consensus::PROTOCOL_VERSION;
+        j["localservices"]     = "0000000000000001";
+        j["localservicesnames"] = json::array({"NETWORK"});
+        j["localrelay"]        = true;
+        j["networkactive"]     = true;
         j["connections"]       = static_cast<int64_t>(net.peer_count());
         j["connections_in"]    = static_cast<int64_t>(net.inbound_count());
         j["connections_out"]   = static_cast<int64_t>(net.outbound_count());
@@ -232,10 +244,6 @@ void register_net_rpcs(RpcServer& server, NetManager& net) {
         double min_relay_fee = 1000.0 / static_cast<double>(consensus::COIN);
         j["relayfee"]     = min_relay_fee;
         j["incrementalfee"] = min_relay_fee;
-
-        // Local services
-        j["localservices"]     = PEER_NODE_NETWORK;
-        j["localservicesnames"] = json::array({"NETWORK"});
 
         // Network time offset (we don't adjust time, so 0)
         j["timeoffset"] = 0;

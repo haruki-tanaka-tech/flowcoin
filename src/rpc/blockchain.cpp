@@ -10,11 +10,13 @@
 #include "consensus/difficulty.h"
 #include "consensus/params.h"
 #include "consensus/validation.h"
+#include "crypto/bech32.h"
 #include "hash/keccak.h"
 #include "mempool/mempool.h"
 #include "util/strencodings.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
@@ -39,15 +41,63 @@ static uint256 hex_to_hash(const std::string& hex_str) {
     return result;
 }
 
-static json block_index_to_header_json(const CBlockIndex* idx) {
+/// Format a uint32_t as an 8-character lowercase hex string (e.g. "1d00ffff").
+static std::string uint32_to_hex(uint32_t val) {
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%08x", val);
+    return std::string(buf);
+}
+
+/// Compute the median-time-past for a block index entry.
+/// Takes the median of the timestamps of the previous 11 blocks (including
+/// this block), matching Bitcoin Core's GetMedianTimePast().
+static int64_t compute_median_time(const CBlockIndex* idx) {
+    constexpr int MEDIAN_SPAN = 11;
+    int64_t timestamps[MEDIAN_SPAN];
+    int count = 0;
+    const CBlockIndex* walk = idx;
+    while (walk && count < MEDIAN_SPAN) {
+        timestamps[count++] = walk->timestamp;
+        walk = walk->prev;
+    }
+    std::sort(timestamps, timestamps + count);
+    return timestamps[count / 2];
+}
+
+/// Find the next block after idx in the active chain (returns nullptr if idx
+/// is the tip). Walks back from tip to idx->height+1.
+static const CBlockIndex* find_next_block(const CBlockIndex* idx,
+                                           ChainState& chain) {
+    CBlockIndex* tip = chain.tip();
+    if (!tip || idx->height >= tip->height) return nullptr;
+    CBlockIndex* walk = tip;
+    while (walk && walk->prev != idx) {
+        walk = walk->prev;
+    }
+    return walk;
+}
+
+/// Build the header-portion JSON for a block index entry (shared by getblock
+/// and getblockheader). Does NOT include n_tx for getblockheader (caller
+/// controls that). Does NOT include nextblockhash (caller adds it).
+static json block_index_to_header_json(const CBlockIndex* idx,
+                                        const CBlockIndex* tip,
+                                        uint32_t block_version = 1) {
     json j;
-    j["hash"]          = hash_to_hex(idx->hash);
-    j["height"]        = idx->height;
-    j["timestamp"]     = idx->timestamp;
-    j["nbits"]         = idx->nbits;
-    j["merkle_root"]   = hash_to_hex(idx->merkle_root);
-    j["miner_pubkey"]  = hex_encode(idx->miner_pubkey.data(), 32);
-    j["n_tx"]          = idx->n_tx;
+    j["hash"]              = hash_to_hex(idx->hash);
+    j["confirmations"]     = static_cast<int64_t>(tip->height - idx->height + 1);
+    j["height"]            = idx->height;
+    j["version"]           = static_cast<int64_t>(block_version);
+    j["versionHex"]        = uint32_to_hex(block_version);
+    j["merkleroot"]        = hash_to_hex(idx->merkle_root);
+    j["time"]              = idx->timestamp;
+    j["mediantime"]        = compute_median_time(idx);
+    j["nonce"]             = idx->nonce;
+    j["bits"]              = uint32_to_hex(idx->nbits);
+    j["difficulty"]        = consensus::nbits_to_difficulty(idx->nbits);
+    j["chainwork"]         = std::string(64, '0');
+    j["nTx"]               = idx->n_tx;
+    j["miner_pubkey"]      = hex_encode(idx->miner_pubkey.data(), 32);
 
     if (idx->prev) {
         j["previousblockhash"] = hash_to_hex(idx->prev->hash);
@@ -65,7 +115,7 @@ static json tx_to_json(const CTransaction& tx) {
     for (const auto& in : tx.vin) {
         json ij;
         if (in.is_coinbase()) {
-            ij["coinbase"] = true;
+            ij["coinbase"] = "01";
         } else {
             ij["txid"]  = hash_to_hex(in.prevout.txid);
             ij["vout"]  = in.prevout.index;
@@ -82,6 +132,15 @@ static json tx_to_json(const CTransaction& tx) {
                             static_cast<double>(consensus::COIN);
         oj["n"]           = i;
         oj["pubkey_hash"] = hex_encode(tx.vout[i].pubkey_hash.data(), 32);
+
+        // Encode pubkey_hash to bech32m address (first 20 bytes)
+        std::vector<uint8_t> program(tx.vout[i].pubkey_hash.data(),
+                                     tx.vout[i].pubkey_hash.data() + 20);
+        std::string addr = bech32m_encode("fl", 0, program);
+        if (!addr.empty()) {
+            oj["address"] = addr;
+        }
+
         vout_arr.push_back(oj);
     }
     j["vout"] = vout_arr;
@@ -155,12 +214,21 @@ void register_blockchain_rpcs(RpcServer& server, ChainState& chain) {
             return hex_encode(data);
         }
 
-        // Verbosity 1 or 2: JSON with header fields
-        json j = block_index_to_header_json(idx);
-
-        // Read full block for transaction data
+        // Read full block to get version and transactions
         CBlock block;
-        if (chain.block_store().read_block(idx->pos, block)) {
+        bool have_block = chain.block_store().read_block(idx->pos, block);
+
+        CBlockIndex* tip = chain.tip();
+        uint32_t block_version = have_block ? block.version : 1;
+        json j = block_index_to_header_json(idx, tip, block_version);
+
+        // Add nextblockhash if a successor exists on the active chain
+        const CBlockIndex* next = find_next_block(idx, chain);
+        if (next) {
+            j["nextblockhash"] = hash_to_hex(next->hash);
+        }
+
+        if (have_block) {
             if (verbosity == 1) {
                 // txids only
                 json txids = json::array();
@@ -192,21 +260,52 @@ void register_blockchain_rpcs(RpcServer& server, ChainState& chain) {
         if (!idx) {
             throw std::runtime_error("Block not found");
         }
-        return block_index_to_header_json(idx);
+
+        // Read block from disk to get version (not stored in CBlockIndex)
+        uint32_t block_version = 1;
+        CBlock block;
+        if (chain.block_store().read_block(idx->pos, block)) {
+            block_version = block.version;
+        }
+
+        CBlockIndex* tip = chain.tip();
+        json j = block_index_to_header_json(idx, tip, block_version);
+
+        // Bitcoin Core's getblockheader does not include nTx
+        j.erase("nTx");
+
+        // Add nextblockhash if a successor exists on the active chain
+        const CBlockIndex* next = find_next_block(idx, chain);
+        if (next) {
+            j["nextblockhash"] = hash_to_hex(next->hash);
+        }
+
+        return j;
     });
 
     // getblockchaininfo: chain summary
     server.register_method("getblockchaininfo", [&chain](const json& /*params*/) -> json {
         CBlockIndex* tip = chain.tip();
+        int64_t height = tip ? static_cast<int64_t>(tip->height) : 0;
+
         json j;
-        j["chain"]         = "main";
-        j["blocks"]        = tip ? static_cast<int64_t>(tip->height) : 0;
-        j["bestblockhash"] = tip ? hash_to_hex(tip->hash) : std::string(64, '0');
-        j["difficulty"]    = tip ? tip->nbits : consensus::INITIAL_NBITS;
+        j["chain"]                = "main";
+        j["blocks"]               = height;
+        j["headers"]              = height;
+        j["bestblockhash"]        = tip ? hash_to_hex(tip->hash) : std::string(64, '0');
+        j["difficulty"]           = consensus::nbits_to_difficulty(
+                                        tip ? tip->nbits : consensus::INITIAL_NBITS);
+        j["mediantime"]           = tip ? compute_median_time(tip) : int64_t(0);
+        j["verificationprogress"] = 1.0;
+        j["initialblockdownload"] = false;
+        j["chainwork"]            = std::string(64, '0');
+        j["size_on_disk"]         = int64_t(0);
+        j["pruned"]               = false;
+        j["warnings"]             = "";
 
-
-        j["halving_interval"]  = consensus::HALVING_INTERVAL;
-        j["target_block_time"] = consensus::TARGET_BLOCK_TIME;
+        // FlowCoin-specific bonus fields
+        j["halving_interval"]     = consensus::HALVING_INTERVAL;
+        j["target_block_time"]    = consensus::TARGET_BLOCK_TIME;
         return j;
     });
 
@@ -501,9 +600,10 @@ void register_extended_blockchain_rpcs(RpcServer& server, ChainState& chain) {
 
         std::reverse(indices.begin(), indices.end());
 
+        CBlockIndex* range_tip = chain.tip();
         json result = json::array();
         for (CBlockIndex* bi : indices) {
-            result.push_back(block_index_to_header_json(bi));
+            result.push_back(block_index_to_header_json(bi, range_tip));
         }
         return result;
     });
