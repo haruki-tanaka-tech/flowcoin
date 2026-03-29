@@ -84,6 +84,16 @@ public:
     /// Derives the public key and address, stores them in the database.
     bool import_privkey(const std::array<uint8_t, 32>& privkey);
 
+    // ---- Miner key ----
+
+    /// Get the miner private key from the wallet database.
+    /// Returns true if the key was found, false otherwise.
+    bool get_miner_key(std::array<uint8_t, 32>& privkey) const;
+
+    /// Store the miner private key in the wallet database.
+    /// Returns true on success.
+    bool set_miner_key(const std::array<uint8_t, 32>& privkey);
+
     // ---- Notifications ----
 
     /// Called when a confirmed transaction is connected to a block.

@@ -570,11 +570,15 @@ bool ChainState::connect_block(const CBlock& block, CBlockIndex* index) {
     {
         std::vector<uint8_t> undo_bytes = undo.serialize();
         if (!undo_bytes.empty()) {
-            if (!store_.write_undo(index->height, undo_bytes)) {
+            uint32_t undo_offset = 0;
+            if (!store_.write_undo(index->pos.file_num, undo_bytes, undo_offset)) {
                 LogError("chain", "connect_block: failed to write undo data "
                         "at height %lu",
                         static_cast<unsigned long>(index->height));
                 // Non-fatal: reorgs past this point will use the slow path
+            } else {
+                index->undo_file = index->pos.file_num;
+                index->undo_pos  = undo_offset;
             }
         }
     }
@@ -625,7 +629,8 @@ bool ChainState::disconnect_tip() {
 
     // === Try the fast path: use pre-computed undo data ===
     std::vector<uint8_t> undo_bytes;
-    if (store_.read_undo(tip_idx->height, undo_bytes)) {
+    if (tip_idx->has_undo() &&
+        store_.read_undo(tip_idx->undo_file, tip_idx->undo_pos, undo_bytes)) {
         BlockUndo undo;
         if (BlockUndo::deserialize(undo_bytes.data(), undo_bytes.size(), undo)) {
             // Fast disconnect using undo data

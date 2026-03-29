@@ -73,8 +73,15 @@ struct CBlockIndex {
     // Derived values
     uint32_t    status = BLOCK_VALID_UNKNOWN;
 
-    // Disk position
+    // Disk position (block data in blk*.dat)
     BlockPos    pos;
+
+    // Disk position (undo data in rev*.dat)
+    int         undo_file = -1;
+    uint32_t    undo_pos  = 0;
+
+    /// Check whether this block has undo data stored on disk.
+    bool has_undo() const { return undo_file >= 0; }
 
     // Tree linkage
     CBlockIndex* prev = nullptr;

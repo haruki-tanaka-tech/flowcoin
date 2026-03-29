@@ -211,9 +211,11 @@ private:
     std::vector<CBlockIndex*> get_chain_to(CBlockIndex* tip) const;
     /// Returns nullptr if Check 15 should be skipped (IBD / assume-valid).
 
+public:
     /// Persist a block index entry to ChainDB.
     void persist_block_index(const CBlockIndex* idx);
 
+private:
     /// Persist the chain tip to ChainDB.
     void persist_tip();
 

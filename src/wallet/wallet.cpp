@@ -305,6 +305,23 @@ Wallet::SendResult Wallet::send_to_address(const std::string& dest_address,
 }
 
 // ---------------------------------------------------------------------------
+// Miner key
+// ---------------------------------------------------------------------------
+
+bool Wallet::get_miner_key(std::array<uint8_t, 32>& privkey) const {
+    std::vector<uint8_t> blob;
+    if (!db_.load_meta_blob("miner_privkey", blob)) return false;
+    if (blob.size() != 32) return false;
+    std::memcpy(privkey.data(), blob.data(), 32);
+    return true;
+}
+
+bool Wallet::set_miner_key(const std::array<uint8_t, 32>& privkey) {
+    std::vector<uint8_t> blob(privkey.begin(), privkey.end());
+    return db_.store_meta_blob("miner_privkey", blob);
+}
+
+// ---------------------------------------------------------------------------
 // Import
 // ---------------------------------------------------------------------------
 
