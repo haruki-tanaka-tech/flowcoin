@@ -1297,10 +1297,15 @@ bool Node::init() {
                                         config_.rpc_user,
                                         config_.rpc_password);
 
-    // If no rpcuser/rpcpassword configured, generate cookie auth
-    if (config_.rpc_user == "flowcoin" && config_.rpc_password == "flowcoin") {
+    // Cookie auth: if cookie file exists, use it as primary auth
+    std::string cookie_path = RpcServer::cookie_filepath(config_.datadir);
+    if (std::filesystem::exists(cookie_path)) {
+        rpc_->set_cookie_auth(cookie_path);
+        LogInfo("init", "Loaded cookie auth from %s", cookie_path.c_str());
+    } else {
+        // Generate new cookie
         if (rpc_->generate_cookie(config_.datadir)) {
-            LogInfo("init", "Cookie authentication enabled (no rpcuser/rpcpassword set)");
+            LogInfo("init", "Generated new cookie auth");
         }
     }
 
