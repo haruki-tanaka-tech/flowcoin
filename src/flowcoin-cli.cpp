@@ -12,11 +12,12 @@
 //   flowcoin-cli getblockcount
 //   flowcoin-cli getblockhash 0
 //   flowcoin-cli sendtoaddress fl1q... 1.5
-//   flowcoin-cli --testnet getblockcount
+//   flowcoin-cli -testnet getblockcount
 
 #include "version.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -26,6 +27,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -51,23 +53,36 @@ static constexpr int EXIT_RPC_ERROR   = 1;
 static constexpr int EXIT_CONN_ERROR  = 2;
 static constexpr int EXIT_USAGE_ERROR = 3;
 
+// RPC error codes
+static constexpr int RPC_IN_WARMUP   = -28;
+
 // ============================================================================
 // CLI options
 // ============================================================================
 
 struct CliOptions {
     std::string rpc_host  = "127.0.0.1";
-    uint16_t rpc_port     = 9334;
+    uint16_t rpc_port     = 0;   // 0 = use default for network
+    bool port_set         = false;
     std::string rpc_user;
     std::string rpc_pass;
+    std::string rpc_cookiefile;
     std::string config_file;
     std::string datadir;
     bool testnet          = false;
     bool regtest          = false;
     bool help             = false;
     bool version          = false;
-    bool stdin_rpc        = false;   // read params from stdin (for piping)
+    bool stdin_rpc        = false;   // -stdin: read extra args from stdin
+    bool stdin_rpcpass    = false;   // -stdinrpcpass: read password from stdin
+    bool rpcwait          = false;   // -rpcwait: retry until server starts
+    int rpcwait_timeout   = 0;      // -rpcwaittimeout=N
+    bool named_args       = false;   // -named: pass params as key=value
     int timeout_seconds   = 30;
+
+    // CLI commands (handled specially, not forwarded as RPC methods)
+    bool cli_getinfo      = false;   // -getinfo
+    bool cli_netinfo      = false;   // -netinfo
 
     std::string method;
     std::vector<std::string> params;
@@ -118,6 +133,18 @@ static std::string trim_ws(const std::string& s) {
     if (start == std::string::npos) return "";
     auto end = s.find_last_not_of(" \t\r\n");
     return s.substr(start, end - start + 1);
+}
+
+/// Strip leading dashes from an option string and return the canonical form.
+/// Converts "--rpcport=9334" or "-rpcport=9334" to "rpcport=9334".
+static std::string strip_dashes(const std::string& arg) {
+    if (arg.size() >= 2 && arg[0] == '-' && arg[1] == '-') {
+        return arg.substr(2);
+    }
+    if (arg.size() >= 1 && arg[0] == '-') {
+        return arg.substr(1);
+    }
+    return arg;
 }
 
 // ============================================================================
@@ -272,13 +299,9 @@ static std::string get_default_datadir() {
 #endif
 }
 
-static bool read_cookie(const std::string& datadir,
+static bool read_cookie(const std::string& cookie_path,
                         std::string& user, std::string& pass) {
-    std::string path = datadir;
-    if (!path.empty() && path.back() != '/') path += "/";
-    path += ".cookie";
-
-    std::ifstream ifs(path);
+    std::ifstream ifs(cookie_path);
     if (!ifs.is_open()) return false;
 
     std::string line;
@@ -311,8 +334,8 @@ static void read_config_file(const std::string& path, CliOptions& opts) {
             opts.rpc_user = val;
         } else if (key == "rpcpassword" && opts.rpc_pass.empty()) {
             opts.rpc_pass = val;
-        } else if (key == "rpcport" && opts.rpc_port == 9334) {
-            try { opts.rpc_port = static_cast<uint16_t>(std::stoi(val)); } catch (...) {}
+        } else if (key == "rpcport" && !opts.port_set) {
+            try { opts.rpc_port = static_cast<uint16_t>(std::stoi(val)); opts.port_set = true; } catch (...) {}
         } else if (key == "rpcconnect" && opts.rpc_host == "127.0.0.1") {
             opts.rpc_host = val;
         } else if (key == "testnet" && (val == "1" || val == "true")) {
@@ -327,9 +350,12 @@ static void read_config_file(const std::string& path, CliOptions& opts) {
 // TCP HTTP client
 // ============================================================================
 
+/// Send an HTTP POST and return the full response (headers + body).
+/// Returns empty string on connection failure.
 static std::string http_request(const std::string& host, uint16_t port,
                                  const std::string& user, const std::string& pass,
-                                 const std::string& body, int timeout_sec) {
+                                 const std::string& body, int timeout_sec,
+                                 bool suppress_errors = false) {
     // Resolve hostname
     struct addrinfo hints{}, *res = nullptr;
     hints.ai_family = AF_UNSPEC;   // Support both IPv4 and IPv6
@@ -338,15 +364,19 @@ static std::string http_request(const std::string& host, uint16_t port,
     std::string port_str = std::to_string(port);
     int gai_err = getaddrinfo(host.c_str(), port_str.c_str(), &hints, &res);
     if (gai_err != 0) {
-        std::cerr << "error: could not resolve " << host << ": "
-                  << gai_strerror(gai_err) << std::endl;
+        if (!suppress_errors) {
+            std::cerr << "error: could not resolve " << host << ": "
+                      << gai_strerror(gai_err) << std::endl;
+        }
         return "";
     }
 
     // Create socket
     int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (sock < 0) {
-        std::cerr << "error: socket creation failed: " << strerror(errno) << std::endl;
+        if (!suppress_errors) {
+            std::cerr << "error: socket creation failed: " << strerror(errno) << std::endl;
+        }
         freeaddrinfo(res);
         return "";
     }
@@ -366,8 +396,10 @@ static std::string http_request(const std::string& host, uint16_t port,
 
     // Connect
     if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
-        std::cerr << "error: could not connect to " << host << ":" << port
-                  << " — " << strerror(errno) << std::endl;
+        if (!suppress_errors) {
+            std::cerr << "error: could not connect to " << host << ":" << port
+                      << " — " << strerror(errno) << std::endl;
+        }
 #ifdef _WIN32
         closesocket(sock);
 #else
@@ -399,10 +431,12 @@ static std::string http_request(const std::string& host, uint16_t port,
         ssize_t n = send(sock, request.data() + total_sent,
                          request.size() - static_cast<size_t>(total_sent), 0);
         if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                std::cerr << "error: send timeout" << std::endl;
-            } else {
-                std::cerr << "error: send failed: " << strerror(errno) << std::endl;
+            if (!suppress_errors) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    std::cerr << "error: send timeout" << std::endl;
+                } else {
+                    std::cerr << "error: send failed: " << strerror(errno) << std::endl;
+                }
             }
 #ifdef _WIN32
             closesocket(sock);
@@ -543,36 +577,67 @@ static bool json_is_null(const std::string& s) {
 }
 
 // ============================================================================
-// Usage / help
+// Usage / help (Bitcoin Core format)
 // ============================================================================
 
 static void print_usage() {
-    std::cout << CLIENT_NAME << " CLI v" << CLIENT_VERSION_STRING << "\n\n";
-    std::cout << "Usage: flowcoin-cli [options] <method> [params...]\n\n";
+    std::cout << "FlowCoin Core RPC client version v" << CLIENT_VERSION_STRING << "\n";
+    std::cout << "\n";
+    std::cout << "Usage: flowcoin-cli [options] <command> [params]\n";
+    std::cout << "or:    flowcoin-cli [options] -named <command> [name=value]...\n";
+    std::cout << "or:    flowcoin-cli [options] help\n";
+    std::cout << "or:    flowcoin-cli [options] help <command>\n";
+    std::cout << "\n";
     std::cout << "Options:\n";
-    std::cout << "  --rpcconnect=<ip>      Connect to RPC server (default: 127.0.0.1)\n";
-    std::cout << "  --rpcport=<port>       RPC port (default: 9334, testnet: 19334, regtest: 29334)\n";
-    std::cout << "  --rpcuser=<user>       RPC username (reads from .cookie if not set)\n";
-    std::cout << "  --rpcpassword=<pass>   RPC password (reads from .cookie if not set)\n";
-    std::cout << "  --conf=<file>          Config file path (default: ~/.flowcoin/flowcoin.conf)\n";
-    std::cout << "  --datadir=<dir>        Data directory (for finding .cookie file)\n";
-    std::cout << "  --testnet              Use testnet ports\n";
-    std::cout << "  --regtest              Use regtest ports\n";
-    std::cout << "  --timeout=<secs>       RPC timeout in seconds (default: 30)\n";
-    std::cout << "  --stdin                Read method params from stdin (JSON array)\n";
-    std::cout << "  --help, -h             Print this help message\n";
-    std::cout << "  --version              Print version\n";
-    std::cout << "\nExamples:\n";
-    std::cout << "  flowcoin-cli getblockcount\n";
-    std::cout << "  flowcoin-cli getblockhash 0\n";
-    std::cout << "  flowcoin-cli getblock <hash> 2\n";
-    std::cout << "  flowcoin-cli sendtoaddress fl1q... 1.5\n";
-    std::cout << "  flowcoin-cli --testnet getblockcount\n";
-    std::cout << "  echo '[0]' | flowcoin-cli --stdin getblockhash\n";
+    std::cout << "\n";
+    std::cout << "  -conf=<file>\n";
+    std::cout << "       Specify configuration file. Relative paths will be prefixed by datadir\n";
+    std::cout << "       location. (default: flowcoin.conf)\n";
+    std::cout << "\n";
+    std::cout << "  -datadir=<dir>\n";
+    std::cout << "       Specify data directory\n";
+    std::cout << "\n";
+    std::cout << "  -help\n";
+    std::cout << "       Print this help message and exit\n";
+    std::cout << "\n";
+    std::cout << "  -rpcconnect=<ip>\n";
+    std::cout << "       Send commands to node running on <ip> (default: 127.0.0.1)\n";
+    std::cout << "\n";
+    std::cout << "  -rpccookiefile=<loc>\n";
+    std::cout << "       Location of the auth cookie. (default: data dir)\n";
+    std::cout << "\n";
+    std::cout << "  -rpcpassword=<pw>\n";
+    std::cout << "       Password for JSON-RPC connections\n";
+    std::cout << "\n";
+    std::cout << "  -rpcport=<port>\n";
+    std::cout << "       Connect to JSON-RPC on <port> (default: 9334)\n";
+    std::cout << "\n";
+    std::cout << "  -rpcuser=<user>\n";
+    std::cout << "       Username for JSON-RPC connections\n";
+    std::cout << "\n";
+    std::cout << "  -rpcwait\n";
+    std::cout << "       Wait for RPC server to start\n";
+    std::cout << "\n";
+    std::cout << "  -stdin\n";
+    std::cout << "       Read extra arguments from standard input, one per line until EOF/Ctrl-D\n";
+    std::cout << "\n";
+    std::cout << "  -stdinrpcpass\n";
+    std::cout << "       Read RPC password from standard input as a single line.\n";
+    std::cout << "\n";
+    std::cout << "  -version\n";
+    std::cout << "       Print version and exit\n";
+    std::cout << "\n";
+    std::cout << "CLI Commands:\n";
+    std::cout << "\n";
+    std::cout << "  -getinfo\n";
+    std::cout << "       Get general information from the remote server.\n";
+    std::cout << "\n";
+    std::cout << "  -netinfo\n";
+    std::cout << "       Get network peer connection information from the remote server.\n";
 }
 
 // ============================================================================
-// Argument parsing
+// Argument parsing (supports both -option and --option like Bitcoin Core)
 // ============================================================================
 
 static CliOptions parse_cli_args(int argc, char* argv[]) {
@@ -581,48 +646,79 @@ static CliOptions parse_cli_args(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
 
-        if (a == "--help" || a == "-h" || a == "-?") {
-            opts.help = true;
-            continue;
-        }
-        if (a == "--version") {
-            opts.version = true;
-            continue;
-        }
-        if (a == "--testnet") {
-            opts.testnet = true;
-            continue;
-        }
-        if (a == "--regtest") {
-            opts.regtest = true;
-            continue;
-        }
-        if (a == "--stdin") {
-            opts.stdin_rpc = true;
-            continue;
-        }
+        // Strip leading dashes to get the canonical option name
+        // We accept both -option and --option
+        if (a.size() >= 1 && a[0] == '-') {
+            std::string canon = strip_dashes(a);
 
-        if (starts_with(a, "--rpcconnect=")) {
-            opts.rpc_host = get_arg_value(a);
-        } else if (starts_with(a, "--rpcport=")) {
-            try { opts.rpc_port = static_cast<uint16_t>(std::stoi(get_arg_value(a))); } catch (...) {}
-        } else if (starts_with(a, "--rpcuser=")) {
-            opts.rpc_user = get_arg_value(a);
-        } else if (starts_with(a, "--rpcpassword=")) {
-            opts.rpc_pass = get_arg_value(a);
-        } else if (starts_with(a, "--conf=")) {
-            opts.config_file = get_arg_value(a);
-        } else if (starts_with(a, "--datadir=")) {
-            opts.datadir = get_arg_value(a);
-        } else if (starts_with(a, "--timeout=")) {
-            try { opts.timeout_seconds = std::stoi(get_arg_value(a)); } catch (...) {}
-        } else if (a[0] == '-' && a.size() > 1) {
-            std::cerr << "Unknown option: " << a << std::endl;
-            // Don't exit — it might be a negative number param
-            if (opts.method.empty()) {
-                continue;  // Skip unknown options before the method name
+            // Boolean flags (no value)
+            if (canon == "help" || canon == "h" || canon == "?") {
+                opts.help = true;
+                continue;
             }
-            opts.params.push_back(a);
+            if (canon == "version") {
+                opts.version = true;
+                continue;
+            }
+            if (canon == "testnet") {
+                opts.testnet = true;
+                continue;
+            }
+            if (canon == "regtest") {
+                opts.regtest = true;
+                continue;
+            }
+            if (canon == "stdin") {
+                opts.stdin_rpc = true;
+                continue;
+            }
+            if (canon == "stdinrpcpass") {
+                opts.stdin_rpcpass = true;
+                continue;
+            }
+            if (canon == "rpcwait") {
+                opts.rpcwait = true;
+                continue;
+            }
+            if (canon == "named") {
+                opts.named_args = true;
+                continue;
+            }
+            if (canon == "getinfo") {
+                opts.cli_getinfo = true;
+                continue;
+            }
+            if (canon == "netinfo") {
+                opts.cli_netinfo = true;
+                continue;
+            }
+
+            // Options with values (key=value)
+            if (starts_with(canon, "rpcconnect=")) {
+                opts.rpc_host = get_arg_value(a);
+            } else if (starts_with(canon, "rpcport=")) {
+                try { opts.rpc_port = static_cast<uint16_t>(std::stoi(get_arg_value(a))); opts.port_set = true; } catch (...) {}
+            } else if (starts_with(canon, "rpcuser=")) {
+                opts.rpc_user = get_arg_value(a);
+            } else if (starts_with(canon, "rpcpassword=")) {
+                opts.rpc_pass = get_arg_value(a);
+            } else if (starts_with(canon, "rpccookiefile=")) {
+                opts.rpc_cookiefile = get_arg_value(a);
+            } else if (starts_with(canon, "conf=")) {
+                opts.config_file = get_arg_value(a);
+            } else if (starts_with(canon, "datadir=")) {
+                opts.datadir = get_arg_value(a);
+            } else if (starts_with(canon, "timeout=")) {
+                try { opts.timeout_seconds = std::stoi(get_arg_value(a)); } catch (...) {}
+            } else if (starts_with(canon, "rpcwaittimeout=")) {
+                try { opts.rpcwait_timeout = std::stoi(get_arg_value(a)); } catch (...) {}
+            } else {
+                // Unknown option — might be a negative number parameter
+                if (opts.method.empty()) {
+                    continue;  // Skip unknown options before the method name
+                }
+                opts.params.push_back(a);
+            }
         } else {
             if (opts.method.empty()) {
                 opts.method = a;
@@ -686,148 +782,254 @@ static std::string build_params_json(const std::vector<std::string>& params) {
     return ss.str();
 }
 
-// ============================================================================
-// Main
-// ============================================================================
+/// Build a JSON object from key=value pairs (for -named mode).
+static std::string build_named_params_json(const std::vector<std::string>& params) {
+    std::ostringstream ss;
+    ss << "{";
+    bool first = true;
+    for (const auto& p : params) {
+        auto eq = p.find('=');
+        if (eq == std::string::npos) continue;
 
-int main(int argc, char* argv[]) {
-#ifdef _WIN32
-    WSADATA wsa_data;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
-        std::cerr << "error: WSAStartup failed" << std::endl;
-        return 1;
-    }
-#endif
+        std::string key = p.substr(0, eq);
+        std::string val = p.substr(eq + 1);
 
-    CliOptions opts = parse_cli_args(argc, argv);
+        if (!first) ss << ", ";
+        first = false;
 
-    if (opts.help) {
-        print_usage();
-        return EXIT_OK;
-    }
+        ss << "\"" << json_escape(key) << "\": ";
 
-    if (opts.version) {
-        std::cout << CLIENT_NAME << " CLI v" << CLIENT_VERSION_STRING << std::endl;
-        return EXIT_OK;
-    }
-
-    if (opts.method.empty()) {
-        print_usage();
-        return EXIT_USAGE_ERROR;
-    }
-
-    // Determine data directory for cookie file
-    std::string datadir = opts.datadir;
-    if (datadir.empty()) {
-        datadir = get_default_datadir();
-    }
-    if (opts.testnet) datadir += "/testnet";
-    if (opts.regtest) datadir += "/regtest";
-
-    // Load config file
-    std::string conf_path = opts.config_file;
-    if (conf_path.empty()) {
-        conf_path = datadir + "/flowcoin.conf";
-    }
-    read_config_file(conf_path, opts);
-
-    // Apply network-specific port defaults
-    if (opts.testnet && opts.rpc_port == 9334) {
-        opts.rpc_port = 19334;
-    } else if (opts.regtest && opts.rpc_port == 9334) {
-        opts.rpc_port = 29334;
-    }
-
-    // Try cookie auth if no user/password specified
-    if (opts.rpc_user.empty() || opts.rpc_pass.empty()) {
-        std::string cookie_user, cookie_pass;
-        if (read_cookie(datadir, cookie_user, cookie_pass)) {
-            if (opts.rpc_user.empty()) opts.rpc_user = cookie_user;
-            if (opts.rpc_pass.empty()) opts.rpc_pass = cookie_pass;
-        }
-    }
-
-    // Final fallback for auth
-    if (opts.rpc_user.empty()) opts.rpc_user = "flowcoin";
-    if (opts.rpc_pass.empty()) opts.rpc_pass = "flowcoin";
-
-    // Build params
-    std::string params_json;
-    if (opts.stdin_rpc) {
-        // Read params from stdin
-        std::string line;
-        std::getline(std::cin, line);
-        line = trim_ws(line);
-        if (line.empty() || line == "[]") {
-            params_json = "[]";
-        } else if (line.front() == '[') {
-            params_json = line;
+        // Try to detect type
+        if (val == "true" || val == "false" || val == "null") {
+            ss << val;
         } else {
-            params_json = "[" + line + "]";
+            // Try number
+            bool is_number = false;
+            bool has_dot = false;
+            if (!val.empty()) {
+                size_t start = (val[0] == '-') ? 1 : 0;
+                if (start < val.size()) {
+                    is_number = true;
+                    for (size_t j = start; j < val.size(); ++j) {
+                        if (val[j] == '.') {
+                            if (has_dot) { is_number = false; break; }
+                            has_dot = true;
+                        } else if (val[j] < '0' || val[j] > '9') {
+                            is_number = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (is_number) {
+                ss << val;
+            } else if (!val.empty() && (val.front() == '{' || val.front() == '[')) {
+                ss << val;
+            } else {
+                ss << "\"" << json_escape(val) << "\"";
+            }
         }
-    } else {
-        params_json = build_params_json(opts.params);
     }
+    ss << "}";
+    return ss.str();
+}
 
-    // Build JSON-RPC request
+// ============================================================================
+// JSON-RPC call helper
+// ============================================================================
+
+/// Make a single JSON-RPC call and return the raw JSON body.
+/// On connection failure returns empty string.
+static std::string rpc_call_raw(const std::string& host, uint16_t port,
+                                 const std::string& user, const std::string& pass,
+                                 const std::string& method, const std::string& params_json,
+                                 int timeout_sec, bool suppress_errors = false) {
     std::ostringstream body;
     body << "{\"jsonrpc\":\"2.0\",\"method\":\""
-         << json_escape(opts.method)
+         << json_escape(method)
          << "\",\"params\":" << params_json
          << ",\"id\":1}";
 
-    // Send HTTP request
-    std::string response = http_request(
-        opts.rpc_host, opts.rpc_port,
-        opts.rpc_user, opts.rpc_pass,
-        body.str(), opts.timeout_seconds);
+    std::string response = http_request(host, port, user, pass,
+                                         body.str(), timeout_sec, suppress_errors);
+    if (response.empty()) return "";
+    return extract_body(response);
+}
 
-    if (response.empty()) {
-        std::cerr << "error: no response from server at "
-                  << opts.rpc_host << ":" << opts.rpc_port << std::endl;
+// ============================================================================
+// CLI command: -getinfo
+// ============================================================================
+
+static int cmd_getinfo(const CliOptions& opts, const std::string& host, uint16_t port,
+                        const std::string& user, const std::string& pass) {
+    // Call getblockchaininfo
+    std::string chain_body = rpc_call_raw(host, port, user, pass,
+                                           "getblockchaininfo", "[]", opts.timeout_seconds);
+    // Call getnetworkinfo
+    std::string net_body = rpc_call_raw(host, port, user, pass,
+                                         "getnetworkinfo", "[]", opts.timeout_seconds);
+    // Call getwalletinfo (may fail if no wallet loaded)
+    std::string wallet_body = rpc_call_raw(host, port, user, pass,
+                                            "getwalletinfo", "[]", opts.timeout_seconds, true);
+
+    if (chain_body.empty() && net_body.empty()) {
+        std::cerr << "error: could not connect to " << host << ":" << port << std::endl;
         std::cerr << "Is flowcoind running?" << std::endl;
         return EXIT_CONN_ERROR;
     }
 
-    // Check HTTP status
-    int http_status = extract_http_status(response);
-    if (http_status == 401) {
-        std::cerr << "error: authentication failed (check rpcuser/rpcpassword "
-                  << "or .cookie file)" << std::endl;
-        return EXIT_RPC_ERROR;
-    }
-    if (http_status == 403) {
-        std::cerr << "error: forbidden (check RPC bind settings)" << std::endl;
+    // Extract fields from chain info
+    std::string chain_result = json_extract_value(chain_body, "result");
+    std::string chain_err = json_extract_value(chain_body, "error");
+    if (!json_is_null(chain_err) && !chain_err.empty()) {
+        std::string err_code = json_extract_value(chain_err, "code");
+        std::string err_msg = json_extract_value(chain_err, "message");
+        int code = 0;
+        try { code = std::stoi(err_code); } catch (...) {}
+        if (code == RPC_IN_WARMUP) {
+            std::cerr << "error code: " << err_code << "\n";
+            std::cerr << "error message:\n";
+            std::cerr << json_unquote(err_msg) << std::endl;
+            return 28;
+        }
+        std::cerr << "error code: " << err_code << "\n";
+        std::cerr << "error message:\n";
+        std::cerr << json_unquote(err_msg) << std::endl;
         return EXIT_RPC_ERROR;
     }
 
-    // Extract HTTP body
-    std::string json_body = extract_body(response);
-    if (json_body.empty()) {
-        std::cerr << "error: empty response body (HTTP " << http_status << ")" << std::endl;
+    std::string chain_name = json_unquote(json_extract_value(chain_result, "chain"));
+    std::string blocks = json_extract_value(chain_result, "blocks");
+    std::string headers = json_extract_value(chain_result, "headers");
+    std::string difficulty = json_extract_value(chain_result, "difficulty");
+    std::string bestblockhash = json_unquote(json_extract_value(chain_result, "bestblockhash"));
+
+    // Extract fields from network info
+    std::string net_result = json_extract_value(net_body, "result");
+    std::string version_str = json_extract_value(net_result, "version");
+    std::string subversion = json_unquote(json_extract_value(net_result, "subversion"));
+    std::string protocolversion = json_extract_value(net_result, "protocolversion");
+    std::string connections = json_extract_value(net_result, "connections");
+
+    // Extract fields from wallet info (optional)
+    std::string wallet_result = json_extract_value(wallet_body, "result");
+    std::string balance;
+    std::string keypoolsize;
+    std::string paytxfee;
+    if (!json_is_null(wallet_result) && !wallet_result.empty()) {
+        balance = json_extract_value(wallet_result, "balance");
+        keypoolsize = json_extract_value(wallet_result, "keypoolsize");
+        paytxfee = json_extract_value(wallet_result, "paytxfee");
+    }
+
+    // Collect fields as "key": value lines (values already formatted)
+    std::vector<std::string> fields;
+    if (!version_str.empty()) fields.push_back("  \"version\": " + version_str);
+    if (!protocolversion.empty()) fields.push_back("  \"protocolversion\": " + protocolversion);
+    if (!balance.empty()) fields.push_back("  \"balance\": " + balance);
+    if (!blocks.empty()) fields.push_back("  \"blocks\": " + blocks);
+    if (!headers.empty()) fields.push_back("  \"headers\": " + headers);
+    if (!bestblockhash.empty()) fields.push_back("  \"bestblockhash\": \"" + bestblockhash + "\"");
+    if (!difficulty.empty()) fields.push_back("  \"difficulty\": " + difficulty);
+    if (!connections.empty()) fields.push_back("  \"connections\": " + connections);
+    if (!chain_name.empty()) fields.push_back("  \"chain\": \"" + chain_name + "\"");
+    if (!keypoolsize.empty()) fields.push_back("  \"keypoolsize\": " + keypoolsize);
+    if (!paytxfee.empty()) fields.push_back("  \"paytxfee\": " + paytxfee);
+    if (!subversion.empty()) fields.push_back("  \"subversion\": \"" + subversion + "\"");
+
+    // Print as valid JSON with correct comma placement
+    std::cout << "{\n";
+    for (size_t i = 0; i < fields.size(); ++i) {
+        std::cout << fields[i];
+        if (i + 1 < fields.size()) std::cout << ",";
+        std::cout << "\n";
+    }
+    std::cout << "}" << std::endl;
+
+    return EXIT_OK;
+}
+
+// ============================================================================
+// CLI command: -netinfo
+// ============================================================================
+
+static int cmd_netinfo(const CliOptions& opts, const std::string& host, uint16_t port,
+                        const std::string& user, const std::string& pass) {
+    std::string peer_body = rpc_call_raw(host, port, user, pass,
+                                          "getpeerinfo", "[]", opts.timeout_seconds);
+    if (peer_body.empty()) {
+        std::cerr << "error: could not connect to " << host << ":" << port << std::endl;
+        std::cerr << "Is flowcoind running?" << std::endl;
+        return EXIT_CONN_ERROR;
+    }
+
+    std::string peer_err = json_extract_value(peer_body, "error");
+    if (!json_is_null(peer_err) && !peer_err.empty()) {
+        std::string err_code = json_extract_value(peer_err, "code");
+        std::string err_msg = json_extract_value(peer_err, "message");
+        int code = 0;
+        try { code = std::stoi(err_code); } catch (...) {}
+        if (code == RPC_IN_WARMUP) {
+            std::cerr << "error code: " << err_code << "\n";
+            std::cerr << "error message:\n";
+            std::cerr << json_unquote(err_msg) << std::endl;
+            return 28;
+        }
+        std::cerr << "error code: " << err_code << "\n";
+        std::cerr << "error message:\n";
+        std::cerr << json_unquote(err_msg) << std::endl;
         return EXIT_RPC_ERROR;
     }
 
-    // Parse the JSON-RPC response
+    std::string peer_result = json_extract_value(peer_body, "result");
+
+    // Print the peer info as formatted JSON (the result is an array of peer objects)
+    if (peer_result.empty() || json_is_null(peer_result)) {
+        std::cout << "No peers connected." << std::endl;
+    } else {
+        std::cout << "Peer connections:" << std::endl;
+        std::cout << json_pretty(peer_result) << std::endl;
+    }
+
+    return EXIT_OK;
+}
+
+// ============================================================================
+// Process a JSON-RPC response body (shared by normal and rpcwait paths)
+// Returns exit code.
+// ============================================================================
+
+static int process_rpc_response(const std::string& json_body) {
     std::string error_val = json_extract_value(json_body, "error");
     std::string result_val = json_extract_value(json_body, "result");
 
-    // Check for errors
+    // Check for errors — Bitcoin Core format
     if (!json_is_null(error_val) && !error_val.empty()) {
-        // Extract error message if it's an object
         std::string err_msg = json_extract_value(error_val, "message");
         std::string err_code = json_extract_value(error_val, "code");
 
+        int code = 0;
+        if (!err_code.empty()) {
+            try { code = std::stoi(err_code); } catch (...) {}
+        }
+
         if (!err_msg.empty()) {
-            std::cerr << "error";
-            if (!err_code.empty()) {
-                std::cerr << " (code " << err_code << ")";
-            }
-            std::cerr << ": " << json_unquote(err_msg) << std::endl;
+            // Bitcoin Core format:
+            // error code: -28
+            // error message:
+            // Loading block index...
+            std::cerr << "error code: " << err_code << "\n";
+            std::cerr << "error message:\n";
+            std::cerr << json_unquote(err_msg) << std::endl;
         } else {
-            // Print the raw error
             std::cerr << "error: " << error_val << std::endl;
         }
+
+        // Special exit code for warmup
+        if (code == RPC_IN_WARMUP) {
+            return 28;
+        }
+
         return EXIT_RPC_ERROR;
     }
 
@@ -850,8 +1052,281 @@ int main(int argc, char* argv[]) {
         std::cout << result_val << std::endl;
     }
 
+    return EXIT_OK;
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
+int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+        std::cerr << "error: WSAStartup failed" << std::endl;
+        return 1;
+    }
+#endif
+
+    CliOptions opts = parse_cli_args(argc, argv);
+
+    if (opts.help) {
+        print_usage();
+        return EXIT_OK;
+    }
+
+    if (opts.version) {
+        std::cout << "FlowCoin Core RPC client version v" << CLIENT_VERSION_STRING << std::endl;
+        return EXIT_OK;
+    }
+
+    // -stdinrpcpass: read password from stdin before anything else
+    if (opts.stdin_rpcpass) {
+        std::string pw;
+        if (std::getline(std::cin, pw)) {
+            opts.rpc_pass = trim_ws(pw);
+        }
+    }
+
+    // A CLI command or a regular RPC method is required
+    if (opts.method.empty() && !opts.cli_getinfo && !opts.cli_netinfo) {
+        print_usage();
+        return EXIT_USAGE_ERROR;
+    }
+
+    // Determine data directory for cookie file
+    std::string datadir = opts.datadir;
+    if (datadir.empty()) {
+        datadir = get_default_datadir();
+    }
+    if (opts.testnet) datadir += "/testnet";
+    if (opts.regtest) datadir += "/regtest";
+
+    // Load config file
+    std::string conf_path = opts.config_file;
+    if (conf_path.empty()) {
+        conf_path = datadir + "/flowcoin.conf";
+    } else if (conf_path[0] != '/'
+#ifdef _WIN32
+               && !(conf_path.size() >= 2 && conf_path[1] == ':')
+#endif
+              ) {
+        // Relative path: prefix with datadir
+        conf_path = datadir + "/" + conf_path;
+    }
+    read_config_file(conf_path, opts);
+
+    // Apply network-specific port defaults (only if user didn't set port)
+    if (!opts.port_set) {
+        if (opts.testnet) {
+            opts.rpc_port = 19334;
+        } else if (opts.regtest) {
+            opts.rpc_port = 19443;
+        } else {
+            opts.rpc_port = 9334;
+        }
+    }
+
+    // Cookie file path
+    std::string cookie_path;
+    if (!opts.rpc_cookiefile.empty()) {
+        cookie_path = opts.rpc_cookiefile;
+    } else {
+        cookie_path = datadir;
+        if (!cookie_path.empty() && cookie_path.back() != '/') cookie_path += "/";
+        cookie_path += ".cookie";
+    }
+
+    // Try cookie auth if no user/password specified
+    if (opts.rpc_user.empty() || opts.rpc_pass.empty()) {
+        std::string cookie_user, cookie_pass;
+        if (read_cookie(cookie_path, cookie_user, cookie_pass)) {
+            if (opts.rpc_user.empty()) opts.rpc_user = cookie_user;
+            if (opts.rpc_pass.empty()) opts.rpc_pass = cookie_pass;
+        }
+    }
+
+    // Final fallback for auth
+    if (opts.rpc_user.empty()) opts.rpc_user = "flowcoin";
+    if (opts.rpc_pass.empty()) opts.rpc_pass = "flowcoin";
+
+    // -stdin: read extra arguments from stdin, one per line
+    if (opts.stdin_rpc) {
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            line = trim_ws(line);
+            if (!line.empty()) {
+                opts.params.push_back(line);
+            }
+        }
+    }
+
+    int exit_code = EXIT_OK;
+
+    // Handle CLI commands (-getinfo, -netinfo)
+    if (opts.cli_getinfo) {
+        if (opts.rpcwait) {
+            auto start_time = std::chrono::steady_clock::now();
+            while (true) {
+                int rc = cmd_getinfo(opts, opts.rpc_host, opts.rpc_port,
+                                      opts.rpc_user, opts.rpc_pass);
+                if (rc != EXIT_CONN_ERROR && rc != 28) {
+                    exit_code = rc;
+                    break;
+                }
+                if (opts.rpcwait_timeout > 0) {
+                    auto elapsed = std::chrono::steady_clock::now() - start_time;
+                    if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()
+                        >= opts.rpcwait_timeout) {
+                        std::cerr << "error: timeout waiting for RPC server" << std::endl;
+                        exit_code = EXIT_CONN_ERROR;
+                        break;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        } else {
+            exit_code = cmd_getinfo(opts, opts.rpc_host, opts.rpc_port,
+                                     opts.rpc_user, opts.rpc_pass);
+        }
+    } else if (opts.cli_netinfo) {
+        if (opts.rpcwait) {
+            auto start_time = std::chrono::steady_clock::now();
+            while (true) {
+                int rc = cmd_netinfo(opts, opts.rpc_host, opts.rpc_port,
+                                      opts.rpc_user, opts.rpc_pass);
+                if (rc != EXIT_CONN_ERROR && rc != 28) {
+                    exit_code = rc;
+                    break;
+                }
+                if (opts.rpcwait_timeout > 0) {
+                    auto elapsed = std::chrono::steady_clock::now() - start_time;
+                    if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()
+                        >= opts.rpcwait_timeout) {
+                        std::cerr << "error: timeout waiting for RPC server" << std::endl;
+                        exit_code = EXIT_CONN_ERROR;
+                        break;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        } else {
+            exit_code = cmd_netinfo(opts, opts.rpc_host, opts.rpc_port,
+                                     opts.rpc_user, opts.rpc_pass);
+        }
+    } else {
+        // Regular RPC method call
+
+        // Build params
+        std::string params_json;
+        if (opts.named_args) {
+            params_json = build_named_params_json(opts.params);
+        } else {
+            params_json = build_params_json(opts.params);
+        }
+
+        // Build JSON-RPC request
+        std::ostringstream body;
+        body << "{\"jsonrpc\":\"2.0\",\"method\":\""
+             << json_escape(opts.method)
+             << "\",\"params\":" << params_json
+             << ",\"id\":1}";
+
+        std::string response;
+
+        if (opts.rpcwait) {
+            // -rpcwait: retry until server starts
+            auto start_time = std::chrono::steady_clock::now();
+            bool got_response = false;
+            while (true) {
+                response = http_request(
+                    opts.rpc_host, opts.rpc_port,
+                    opts.rpc_user, opts.rpc_pass,
+                    body.str(), opts.timeout_seconds, true);
+
+                if (!response.empty()) {
+                    // Got a response. Check if it's a warmup error.
+                    std::string wait_body = extract_body(response);
+                    std::string error_val = json_extract_value(wait_body, "error");
+                    if (!json_is_null(error_val) && !error_val.empty()) {
+                        std::string err_code = json_extract_value(error_val, "code");
+                        int code = 0;
+                        try { code = std::stoi(err_code); } catch (...) {}
+                        if (code == RPC_IN_WARMUP) {
+                            // Server is starting up, keep waiting
+                            if (opts.rpcwait_timeout > 0) {
+                                auto elapsed = std::chrono::steady_clock::now() - start_time;
+                                if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()
+                                    >= opts.rpcwait_timeout) {
+                                    std::cerr << "error: timeout waiting for RPC server" << std::endl;
+                                    exit_code = EXIT_CONN_ERROR;
+                                    got_response = false;
+                                    break;
+                                }
+                            }
+                            std::this_thread::sleep_for(std::chrono::seconds(1));
+                            continue;
+                        }
+                    }
+                    // Server responded with something other than warmup
+                    got_response = true;
+                    break;
+                }
+
+                // No response — check timeout
+                if (opts.rpcwait_timeout > 0) {
+                    auto elapsed = std::chrono::steady_clock::now() - start_time;
+                    if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()
+                        >= opts.rpcwait_timeout) {
+                        std::cerr << "error: timeout waiting for RPC server" << std::endl;
+                        exit_code = EXIT_CONN_ERROR;
+                        break;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+
+            if (got_response) {
+                std::string json_body = extract_body(response);
+                exit_code = process_rpc_response(json_body);
+            }
+        } else {
+            // Normal (non-rpcwait) path: send single request
+            response = http_request(
+                opts.rpc_host, opts.rpc_port,
+                opts.rpc_user, opts.rpc_pass,
+                body.str(), opts.timeout_seconds);
+
+            if (response.empty()) {
+                std::cerr << "error: could not connect to " << opts.rpc_host
+                          << ":" << opts.rpc_port << std::endl;
+                std::cerr << "Is flowcoind running?" << std::endl;
+                exit_code = EXIT_CONN_ERROR;
+            } else {
+                // Check HTTP status
+                int http_status = extract_http_status(response);
+                if (http_status == 401) {
+                    std::cerr << "error: authentication failed (check rpcuser/rpcpassword "
+                              << "or .cookie file)" << std::endl;
+                    exit_code = EXIT_RPC_ERROR;
+                } else if (http_status == 403) {
+                    std::cerr << "error: forbidden (check RPC bind settings)" << std::endl;
+                    exit_code = EXIT_RPC_ERROR;
+                } else {
+                    std::string json_body = extract_body(response);
+                    if (json_body.empty()) {
+                        std::cerr << "error: empty response body (HTTP " << http_status << ")" << std::endl;
+                        exit_code = EXIT_RPC_ERROR;
+                    } else {
+                        exit_code = process_rpc_response(json_body);
+                    }
+                }
+            }
+        }
+    }
+
 #ifdef _WIN32
     WSACleanup();
 #endif
-    return EXIT_OK;
+    return exit_code;
 }
