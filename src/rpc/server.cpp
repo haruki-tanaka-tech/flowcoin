@@ -768,17 +768,17 @@ json RpcServer::dispatch(const json& request) {
     // Execute the method
     try {
         json result = handler(params);
-        return {
-            {"jsonrpc", "2.0"},
-            {"result", result},
-            {"id", id}
-        };
+        json resp;
+        resp["result"] = result;
+        resp["error"] = nullptr;
+        resp["id"] = id;
+        return resp;
     } catch (const std::exception& e) {
-        return {
-            {"jsonrpc", "2.0"},
-            {"error", {{"code", -1}, {"message", e.what()}}},
-            {"id", id}
-        };
+        json resp;
+        resp["result"] = nullptr;
+        resp["error"] = {{"code", -1}, {"message", e.what()}};
+        resp["id"] = id;
+        return resp;
     }
 }
 
