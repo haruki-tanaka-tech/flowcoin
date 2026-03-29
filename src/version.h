@@ -11,16 +11,16 @@
 namespace flow {
 namespace version {
 
-    constexpr int MAJOR = 1;
-    constexpr int MINOR = 0;
+    constexpr int MAJOR = 0;
+    constexpr int MINOR = 3;
     constexpr int PATCH = 0;
 
     /// Numeric version: 10000 * major + 100 * minor + patch
     constexpr int CLIENT_VERSION = 10000 * MAJOR + 100 * MINOR + PATCH;
 
     constexpr const char* CLIENT_NAME           = "FlowCoin Core";
-    constexpr const char* CLIENT_VERSION_STRING  = "1.0.0";
-    constexpr const char* USER_AGENT             = "/FlowCoin:1.0.0/";
+    constexpr const char* CLIENT_VERSION_STRING  = "0.3.0";
+    constexpr const char* USER_AGENT             = "/FlowCoin:0.3.0/";
     constexpr const char* COPYRIGHT              = "Copyright (c) 2026 Haruki Tanaka";
     constexpr const char* LICENSE                = "MIT License";
     constexpr const char* URL                    = "https://github.com/haruki-tanaka-tech/flowcoin";
