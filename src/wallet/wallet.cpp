@@ -321,6 +321,22 @@ bool Wallet::set_miner_key(const std::array<uint8_t, 32>& privkey) {
     return db_.store_meta_blob("miner_privkey", blob);
 }
 
+uint64_t Wallet::get_last_scan_height() const {
+    std::vector<uint8_t> blob;
+    if (db_.load_meta_blob("last_scan_height", blob) && blob.size() == 8) {
+        uint64_t h = 0;
+        std::memcpy(&h, blob.data(), 8);
+        return h;
+    }
+    return 0;
+}
+
+void Wallet::set_last_scan_height(uint64_t height) {
+    std::vector<uint8_t> blob(8);
+    std::memcpy(blob.data(), &height, 8);
+    db_.store_meta_blob("last_scan_height", blob);
+}
+
 // ---------------------------------------------------------------------------
 // Import
 // ---------------------------------------------------------------------------

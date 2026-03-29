@@ -141,6 +141,11 @@ public:
     int rescan(uint64_t from_height, const class CBlockIndex* chain_tip,
                class BlockStore& store);
 
+    /// Get/set the last blockchain height scanned by the wallet.
+    /// Used for auto-rescan on startup when wallet is restored.
+    uint64_t get_last_scan_height() const;
+    void set_last_scan_height(uint64_t height);
+
     // ---- Label Management ----
 
     /// Set a label for an address. The label is stored in the wallet database.

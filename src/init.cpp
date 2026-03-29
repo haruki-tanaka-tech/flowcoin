@@ -840,6 +840,25 @@ bool step7_initialize_wallet(NodeContext& node, const AppArgs& args) {
         // If neither exists, that's fine - no miner key yet
     }
 
+    // Auto-rescan: if wallet has keys but no scanned transactions,
+    // or if wallet was restored, rescan the blockchain.
+    // Simple heuristic: if wallet has keys but balance is 0 and chain has blocks.
+    {
+        uint64_t chain_height = node.chain->height();
+        uint64_t last_scan = node.wallet->get_last_scan_height();
+
+        if (last_scan < chain_height && chain_height > 0) {
+            LogInfo("init", "Wallet rescan: scanned to %lu, chain at %lu",
+                    (unsigned long)last_scan, (unsigned long)chain_height);
+            int found = node.wallet->rescan(last_scan, node.chain->tip(),
+                                            node.chain->block_store());
+            if (found > 0) {
+                LogInfo("init", "Wallet rescan: %d transactions found", found);
+            }
+            node.wallet->set_last_scan_height(chain_height);
+        }
+    }
+
     LogInfo("init", "Wallet initialized at %s", wp.c_str());
     return true;
 }
