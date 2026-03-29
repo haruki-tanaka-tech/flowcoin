@@ -643,8 +643,8 @@ void MessageHandler::handle_block(Peer& peer, const uint8_t* data, size_t len) {
     // so we must check for BLOCK_FULLY_VALIDATED rather than mere existence.
     CBlockIndex* existing = chain_.block_tree().find(block_hash);
     if (existing && (existing->status & BLOCK_FULLY_VALIDATED)) {
-        LogInfo("net", "block at height %lu already fully validated, skipping",
-                (unsigned long)block.height);
+        LogDebug("net", "block at height %lu already fully validated, skipping",
+                 (unsigned long)block.height);
         return;
     }
 
