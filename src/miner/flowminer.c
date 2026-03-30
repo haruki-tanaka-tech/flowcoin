@@ -812,15 +812,36 @@ int main(int argc, char *argv[])
     static char cookie_pass[128];
     if (config.rpc_pass[0] == '\0' ||
         (strcmp(config.rpc_user, "flowcoin") == 0 && config.rpc_pass[0] == '\0')) {
+        char datadir[512];
+        int found_cookie = 0;
+#ifdef _WIN32
+        /* Windows: flowcoind uses %APPDATA%\FlowCoin */
+        const char *appdata = getenv("APPDATA");
+        if (appdata) {
+            snprintf(datadir, sizeof(datadir), "%s\\FlowCoin", appdata);
+            found_cookie = rpc_read_cookie(datadir, cookie_user, sizeof(cookie_user),
+                                           cookie_pass, sizeof(cookie_pass));
+        }
+        if (!found_cookie) {
+            const char *userprofile = getenv("USERPROFILE");
+            if (userprofile) {
+                snprintf(datadir, sizeof(datadir), "%s\\FlowCoin", userprofile);
+                found_cookie = rpc_read_cookie(datadir, cookie_user, sizeof(cookie_user),
+                                               cookie_pass, sizeof(cookie_pass));
+            }
+        }
+#else
+        /* Linux/macOS: ~/.flowcoin */
         const char *home = getenv("HOME");
         if (home) {
-            char datadir[512];
             snprintf(datadir, sizeof(datadir), "%s/.flowcoin", home);
-            if (rpc_read_cookie(datadir, cookie_user, sizeof(cookie_user),
-                                cookie_pass, sizeof(cookie_pass))) {
-                config.rpc_user = cookie_user;
-                config.rpc_pass = cookie_pass;
-            }
+            found_cookie = rpc_read_cookie(datadir, cookie_user, sizeof(cookie_user),
+                                           cookie_pass, sizeof(cookie_pass));
+        }
+#endif
+        if (found_cookie) {
+            config.rpc_user = cookie_user;
+            config.rpc_pass = cookie_pass;
         }
     }
 
