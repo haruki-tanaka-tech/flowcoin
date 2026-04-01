@@ -133,7 +133,7 @@ void anneal_kernel(
 
     // Evaluate initial
     int cl, sb;
-    evaluate_full(W, delta, 48, &cl, &sb);  // 48 expanded words = up to round 64
+    evaluate_full(W, delta, 40, &cl, &sb);  // 48 expanded words = up to round 64
     int cur_score = calc_score(cl, sb);
 
     uint32_t best_delta[16];
@@ -284,7 +284,7 @@ void message_anneal(
     fix_d01(W, delta);
 
     int cl,sb;
-    evaluate_full(W,delta,48,&cl,&sb);
+    evaluate_full(W,delta,40,&cl,&sb);
     int cur=calc_score(cl,sb);
     int best_local=cur;
     uint32_t best_W[16];
@@ -307,7 +307,7 @@ void message_anneal(
         fix_d01(trial_W, td);
 
         int tcl,tsb;
-        evaluate_full(trial_W,td,48,&tcl,&tsb);
+        evaluate_full(trial_W,td,40,&tcl,&tsb);
         int ts=calc_score(tcl,tsb);
 
         int ds=ts-cur;
@@ -327,7 +327,7 @@ void message_anneal(
         // Recompute clean/sched for best
         uint32_t td[16];for(int i=0;i<16;i++)td[i]=fixed_delta[i];
         fix_d01(best_W,td);
-        evaluate_full(best_W,td,48,&cl,&sb);
+        evaluate_full(best_W,td,40,&cl,&sb);
         *best_clean=cl;*best_sched=sb;
         for(int i=0;i<16;i++)best_msg[i]=best_W[i];
     }
@@ -342,9 +342,8 @@ int main(){
     cudaMalloc(&d_score,4);cudaMalloc(&d_clean,4);cudaMalloc(&d_sched,4);
     cudaMalloc(&d_delta,64);cudaMalloc(&d_msg,64);cudaMalloc(&d_fixed_delta,64);
 
-    int threads = 1<<19; // 512K threads (reduced for thermal safety)
-    int steps = 4096;     // steps per thread
-    int thermal_sleep_ms = 500; // 500ms pause between epochs
+    int threads = 1<<21; // 2M threads
+    int steps = 8192;     // steps per thread = 17B total evaluations
 
     printf("Phase 1: Delta annealing (%d threads × %d steps = %.1fB evals)\n\n",
            threads, steps, (double)threads*steps/1e9);
@@ -352,12 +351,7 @@ int main(){
     int overall_best_clean = 0;
     uint32_t overall_best_delta[16]={0}, overall_best_msg[16]={0};
 
-    for(int epoch=0; epoch<30; epoch++){
-        // Thermal throttle
-        if(epoch > 0) {
-            struct timespec ts = {0, thermal_sleep_ms * 1000000L};
-            nanosleep(&ts, NULL);
-        }
+    for(int epoch=0; epoch<20; epoch++){
         int h_score=-999999,h_clean=0,h_sched=9999;
         cudaMemcpy(d_score,&h_score,4,cudaMemcpyHostToDevice);
         cudaMemcpy(d_clean,&h_clean,4,cudaMemcpyHostToDevice);
@@ -412,16 +406,14 @@ int main(){
 
     cudaMemcpy(d_fixed_delta, overall_best_delta, 64, cudaMemcpyHostToDevice);
 
-    for(int epoch=0;epoch<30;epoch++){
-        struct timespec ts2 = {0, thermal_sleep_ms * 1000000L};
-        nanosleep(&ts2, NULL);
+    for(int epoch=0;epoch<20;epoch++){
         int h_score=-999999,h_clean=0,h_sched=9999;
         cudaMemcpy(d_score,&h_score,4,cudaMemcpyHostToDevice);
         cudaMemcpy(d_clean,&h_clean,4,cudaMemcpyHostToDevice);
         cudaMemcpy(d_sched,&h_sched,4,cudaMemcpyHostToDevice);
 
         message_anneal<<<threads/256,256>>>(
-            d_fixed_delta,epoch*777773ULL,steps,5000.0f,0.01f,
+            d_fixed_delta,epoch*777773ULL,steps,3000.0f,0.1f,
             d_score,d_clean,d_sched,d_msg,threads);
         cudaDeviceSynchronize();
 
@@ -457,9 +449,7 @@ int main(){
     // Phase 3: Joint delta+message annealing — mutate BOTH simultaneously
     printf("\nPhase 3: Joint delta+message annealing\n\n");
 
-    for(int epoch=0;epoch<40;epoch++){
-        struct timespec ts3 = {0, thermal_sleep_ms * 1000000L};
-        nanosleep(&ts3, NULL);
+    for(int epoch=0;epoch<30;epoch++){
         int h_score=-999999,h_clean=0,h_sched=9999;
         cudaMemcpy(d_score,&h_score,4,cudaMemcpyHostToDevice);
         cudaMemcpy(d_clean,&h_clean,4,cudaMemcpyHostToDevice);
