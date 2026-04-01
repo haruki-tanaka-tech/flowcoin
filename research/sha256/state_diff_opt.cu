@@ -188,7 +188,7 @@ int main(){
     int steps=4096;
     int thermal_ms=500;
 
-    for(int target=32;target<=48;target+=4){
+    for(int target=48;target<=64;target+=4){
         printf("=== Target: Round %d ===\n",target);
 
         int global_best=256;
