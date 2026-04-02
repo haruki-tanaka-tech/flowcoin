@@ -130,10 +130,10 @@ int main(){
     cudaMalloc(&d_diff,4);cudaMalloc(&d_iv,32);cudaMalloc(&d_delta,64);cudaMalloc(&d_msg,64);
     int threads=1<<19,thermal=500,gb=256;
 
-    for(int e=0;e<60;e++){
+    for(int e=0;e<200;e++){
         struct timespec ts={0,thermal*1000000L};nanosleep(&ts,NULL);
         int h=256;cudaMemcpy(d_diff,&h,4,cudaMemcpyHostToDevice);
-        anneal_freestart<<<threads/256,256>>>(e*104729ULL,4096,5000.0f+e*500,0.01f,
+        anneal_freestart<<<threads/256,256>>>(e*104729ULL,8192,8000.0f+e*300,0.01f,
             d_diff,d_iv,d_delta,d_msg,threads);
         cudaDeviceSynchronize();
         cudaMemcpy(&h,d_diff,4,cudaMemcpyDeviceToHost);
