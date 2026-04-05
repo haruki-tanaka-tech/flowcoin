@@ -1,8 +1,8 @@
 FlowCoin: A Peer-to-Peer Electronic Cash System
                     Using Keccak-256d Proof-of-Work
 
-                        Haruki Tanaka
-                    harukitanaka@tutamail.com
+                        Kristian Pilatovich
+                    pilatovichkristian2@gmail.com
 
 
 Abstract. A purely peer-to-peer version of electronic cash would allow
