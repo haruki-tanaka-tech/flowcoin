@@ -3,18 +3,18 @@
 //
 // Consensus validation for FlowCoin blocks and headers.
 //
-// Implements Keccak-256d Proof-of-Work consensus checks:
+// Implements RandomX Proof-of-Work consensus checks:
 //
-// CHECK  FIELD              RULE                                    ERROR CODE
-// -----  -----------------  --------------------------------------  ----------
-//  1     prev_hash          == parent_hash (from context)           bad-prevblk
-//  2     height             == parent_height + 1                    bad-height
-//  3     timestamp          > parent_timestamp                      time-too-old
+// CHECK  FIELD              RULE                                     ERROR CODE
+// -----  -----------------  ---------------------------------------  ----------
+//  1     prev_hash          == parent_hash (from context)            bad-prevblk
+//  2     height             == parent_height + 1                     bad-height
+//  3     timestamp          > parent_timestamp                       time-too-old
 //  4     timestamp          >= parent_timestamp + MIN_BLOCK_INTERVAL bad-time-spacing
-//  5     timestamp          <= adjusted_time + MAX_FUTURE_TIME      time-too-new
-//  6     nbits              == get_next_work_required(...)           bad-diffbits
-//  7     PoW                keccak256d(header[0..91]) <= target     high-hash
-//  8     miner_sig          Ed25519Verify(pubkey, header[0..91])    bad-signature
+//  5     timestamp          <= adjusted_time + MAX_FUTURE_TIME       time-too-new
+//  6     nbits              == get_next_work_required(...)            bad-diffbits
+//  7     PoW                RandomX(header[0..91], pow_seed) <= tgt  high-hash
+//  8     miner_sig          Ed25519Verify(pubkey, header[0..91])     bad-signature
 //
 // check_header() validates checks 1-8 (no block body needed).
 // check_block() validates header + coinbase, merkle root, transactions.
@@ -117,6 +117,10 @@ struct BlockContext {
 
     // Timestamp of block at start of current retarget period
     int64_t     retarget_first_time = 0;
+
+    // RandomX PoW seed: block hash at rx_seed_height(header.height).
+    // Caller looks this up from the block index before validation.
+    uint256     pow_seed;
 
     // True if we are validating the genesis block (no parent exists).
     bool        is_genesis = false;

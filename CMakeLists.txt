@@ -98,6 +98,23 @@ set(LIBUV_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LIBUV_BUILD_BENCH OFF CACHE BOOL "" FORCE)
 add_subdirectory(src/libuv)
 
+# --- RandomX (CPU-only Proof-of-Work from Monero project) ---
+# Pinned to v2.0 via git submodule at src/randomx.
+# Provides the `randomx` static library target.
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/src/randomx/CMakeLists.txt")
+    message(FATAL_ERROR "RandomX submodule not initialized. Run: git submodule update --init --recursive")
+endif()
+add_subdirectory(src/randomx EXCLUDE_FROM_ALL)
+# RandomX is vendor code — same treatment as sqlite/zstd/libuv: suppress our
+# strict warning flags (-Wall -Wextra -Wpedantic propagate from the root
+# add_compile_options into subdirs). Their warnings are upstream's concern.
+target_compile_options(randomx PRIVATE -w)
+# RandomX exports include path via its own target; we re-expose it through the
+# alias "flowcoin_randomx" so downstream targets get both the lib and headers.
+add_library(flowcoin_randomx INTERFACE)
+target_link_libraries(flowcoin_randomx INTERFACE randomx)
+target_include_directories(flowcoin_randomx INTERFACE "${CMAKE_SOURCE_DIR}/src/randomx/src")
+
 # --- json (header-only nlohmann/json) ---
 add_library(json INTERFACE)
 target_include_directories(json INTERFACE src/json)
@@ -184,7 +201,7 @@ add_library(flowcoin_consensus STATIC
     src/consensus/pow.cpp
 )
 target_include_directories(flowcoin_consensus PUBLIC src)
-target_link_libraries(flowcoin_consensus PUBLIC flowcoin_hash flowcoin_util zstd)
+target_link_libraries(flowcoin_consensus PUBLIC flowcoin_hash flowcoin_util zstd flowcoin_randomx)
 
 # --- flowcoin_primitives ---
 add_library(flowcoin_primitives STATIC
@@ -266,7 +283,7 @@ add_library(flowcoin_mining STATIC
     src/mining/stratum.cpp
 )
 target_include_directories(flowcoin_mining PUBLIC src)
-target_link_libraries(flowcoin_mining PUBLIC flowcoin_consensus flowcoin_chain flowcoin_crypto)
+target_link_libraries(flowcoin_mining PUBLIC flowcoin_consensus flowcoin_chain flowcoin_crypto flowcoin_randomx)
 
 # --- flowcoin_script ---
 add_library(flowcoin_script STATIC
@@ -527,6 +544,7 @@ if(BUILD_TESTS)
     add_executable(flowcoin_tests
         src/test/test_main.cpp
         src/test/test_keccak.cpp
+        src/test/test_randomx.cpp
         src/test/test_arith_uint256.cpp
         src/test/test_ed25519.cpp
         src/test/test_slip0010.cpp

@@ -3,8 +3,16 @@
 //
 // Block header and block primitives for FlowCoin.
 //
-// The block header contains standard blockchain fields for Keccak-256d
-// Proof-of-Work, plus the miner's Ed25519 identity for signature verification.
+// FlowCoin uses two distinct hashes per block:
+//
+//   block_id  = keccak256d(header[0..91])      -- cheap, used for chain refs,
+//                                                 P2P, merkle, RPC, indexing.
+//   pow_hash  = RandomX(header[0..91], seed)   -- CPU-only memory-hard PoW,
+//                                                 compared against target.
+//
+// `get_hash()` returns the block_id. `get_pow_hash(seed)` returns the PoW hash;
+// the caller provides the seed, which is the block hash at the seed height
+// computed by `flow::consensus::rx_seed_height(height)`.
 //
 // Header layout (fixed 188 bytes):
 //   Bytes   0- 31: prev_hash        (32 bytes)
@@ -18,7 +26,6 @@
 //   Bytes 124-187: miner_sig        (64 bytes)
 //
 // The unsigned portion (for signing and hashing) is bytes 0-91 (92 bytes).
-// The block hash is keccak256d(bytes 0-91).
 // Miner signs bytes 0-91 with Ed25519.
 
 #ifndef FLOWCOIN_PRIMITIVES_BLOCK_H
@@ -74,11 +81,17 @@ struct CBlockHeader {
     CBlockHeader() = default;
 
     /** Serialize the unsigned portion of the header (bytes 0-91, 92 bytes).
-     *  This is the data that gets signed and hashed. */
+     *  This is the data that gets signed, hashed, and fed to RandomX. */
     std::vector<uint8_t> get_unsigned_data() const;
 
-    /** Compute the block hash: keccak256d of the unsigned header data. */
+    /** Block ID: keccak256d of the unsigned header data. Cheap, used for
+     *  chain references, P2P relay, merkle proofs, and indexing. */
     uint256 get_hash() const;
+
+    /** PoW hash: RandomX(unsigned_data, seed). Expensive (single hash ~1 ms in
+     *  light mode). `seed` must be the block hash at the RandomX seed height
+     *  for this block (see flow::consensus::rx_seed_height). */
+    uint256 get_pow_hash(const uint256& seed) const;
 
     /** Serialize the full 188-byte header (unsigned portion + pubkey + signature). */
     std::vector<uint8_t> serialize() const;
@@ -86,11 +99,6 @@ struct CBlockHeader {
     /** Deserialize a 188-byte header from raw bytes.
      *  @return true on success. */
     bool deserialize(const uint8_t* data, size_t len);
-
-    /** Check if the PoW hash meets the difficulty target.
-     *  @param target  256-bit target value (block hash must be <= this).
-     *  @return true if the block hash is at or below the target. */
-    bool check_pow(const uint256& target) const;
 
     /** Check if this is a null/empty header (all zeros). */
     bool is_null() const { return prev_hash.is_null() && height == 0 && version == 0; }

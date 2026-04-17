@@ -2,12 +2,13 @@
 // Distributed under the MIT software license.
 //
 // Complete consensus validation for FlowCoin blocks.
-// Keccak-256d Proof-of-Work consensus.
+// RandomX Proof-of-Work consensus.
 
 #include "validation.h"
 #include "difficulty.h"
 #include "merkle.h"
 #include "params.h"
+#include "pow.h"
 #include "reward.h"
 #include "../crypto/sign.h"
 #include "../hash/keccak.h"
@@ -73,43 +74,13 @@ bool check_header(const CBlockHeader& header, const BlockContext& ctx,
     } // end non-genesis checks
 
     // -----------------------------------------------------------------------
-    // Check 7: Proof-of-Work -- keccak256d(header[0..91]) <= target
+    // Check 7: Proof-of-Work -- RandomX(header[0..91], ctx.pow_seed) <= target
     // -----------------------------------------------------------------------
-    {
-        arith_uint256 target;
-        if (!derive_target(header.nbits, target)) {
-            return state.invalid(ValidationResult::HEADER_INVALID, "bad-diffbits",
-                "nbits decodes to invalid target");
-        }
-
-        uint256 block_hash = header.get_hash();
-
-        // Convert the arith target back to a uint256 for comparison.
-        // The keccak hash output is big-endian (byte 0 = most significant),
-        // while UintToArith256 assumes little-endian (byte 0 = least
-        // significant). Comparing via uint256 (Blob) uses lexicographic
-        // order which matches the big-endian hash layout.
-        uint256 target_bytes = ArithToUint256(target);
-
-        // ArithToUint256 produces little-endian byte order (least significant
-        // byte first), but the hash is big-endian (most significant byte
-        // first). We must reverse the target bytes so both are in the same
-        // byte order for the lexicographic Blob comparison.
-        uint256 target_be;
-        for (int i = 0; i < 32; ++i) {
-            target_be[i] = target_bytes[31 - i];
-        }
-
-        if (block_hash > target_be) {
-            LogWarn("consensus", "PoW check FAILED at height %lu nbits=0x%08x",
-                    (unsigned long)header.height, header.nbits);
-            LogWarn("consensus", "  hash  : %s",
-                    hex_encode(block_hash.data(), 32).c_str());
-            LogWarn("consensus", "  target: %s",
-                    hex_encode(target_be.data(), 32).c_str());
-            return state.invalid(ValidationResult::HEADER_INVALID, "high-hash",
-                "block hash exceeds difficulty target");
-        }
+    if (!CheckProofOfWork(header, ctx.pow_seed)) {
+        LogWarn("consensus", "PoW check FAILED at height %lu nbits=0x%08x",
+                (unsigned long)header.height, header.nbits);
+        return state.invalid(ValidationResult::HEADER_INVALID, "high-hash",
+            "RandomX hash exceeds difficulty target");
     }
 
     // -----------------------------------------------------------------------

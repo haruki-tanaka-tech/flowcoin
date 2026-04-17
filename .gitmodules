@@ -1,0 +1,4 @@
+[submodule "src/randomx"]
+	path = src/randomx
+	url = https://github.com/tevador/RandomX.git
+	branch = master

@@ -9,6 +9,7 @@
 #include "../util/arith_uint256.h"
 #include "../consensus/params.h"
 #include "../consensus/difficulty.h"
+#include "../consensus/pow.h"
 #include "../chain/blockindex.h"
 
 #include <algorithm>
@@ -91,12 +92,21 @@ std::vector<uint8_t> CBlockHeader::get_unsigned_data() const {
 }
 
 // ---------------------------------------------------------------------------
-// get_hash -- keccak256d of the unsigned header
+// get_hash -- block ID (keccak256d of the unsigned header)
 // ---------------------------------------------------------------------------
 
 uint256 CBlockHeader::get_hash() const {
     auto data = get_unsigned_data();
     return keccak256d(data.data(), data.size());
+}
+
+// ---------------------------------------------------------------------------
+// get_pow_hash -- RandomX(unsigned header, seed)
+// ---------------------------------------------------------------------------
+
+uint256 CBlockHeader::get_pow_hash(const uint256& seed) const {
+    auto data = get_unsigned_data();
+    return consensus::ComputePowHash(data.data(), data.size(), seed);
 }
 
 // ---------------------------------------------------------------------------
@@ -134,15 +144,6 @@ bool CBlockHeader::deserialize(const uint8_t* data, size_t len) {
     std::memcpy(miner_sig.data(), data + 124, 64);
 
     return true;
-}
-
-// ---------------------------------------------------------------------------
-// check_pow
-// ---------------------------------------------------------------------------
-
-bool CBlockHeader::check_pow(const uint256& target) const {
-    uint256 hash = get_hash();
-    return hash <= target;
 }
 
 // ---------------------------------------------------------------------------
