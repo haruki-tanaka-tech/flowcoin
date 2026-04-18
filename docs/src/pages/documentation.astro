@@ -1,0 +1,190 @@
+---
+import Base from '../layouts/Base.astro';
+
+const repo = 'https://github.com/KristianPilatovich/flowcoin/blob/main';
+
+const sections = [
+  {
+    title: 'Getting Started',
+    items: [
+      { name: 'Build guide', href: `${repo}/doc/build-unix.md`, desc: 'Compile flowcoind on Linux / macOS.' },
+      { name: 'Running a node', href: `${repo}/README.md#running-a-node`, desc: 'First-run setup, config, data directory.' },
+      { name: 'JSON-RPC reference', href: `${repo}/doc/rpc-api.md`, desc: 'All RPC methods, request / response shape, examples.' },
+    ],
+  },
+  {
+    title: 'Protocol',
+    items: [
+      { name: 'Protocol specification', href: `${repo}/doc/protocol.md`, desc: 'Consensus rules, block format, transaction format, network protocol.' },
+      { name: 'Architecture', href: `${repo}/doc/architecture.md`, desc: 'Module layout, validation pipeline, storage, networking internals.' },
+      { name: 'Whitepaper', href: `${repo}/whitepaper.txt`, desc: 'Plain-text whitepaper covering design rationale and economics.' },
+    ],
+  },
+  {
+    title: 'Mining',
+    items: [
+      { name: 'Mining guide', href: `${repo}/doc/mining.md`, desc: 'Hardware requirements, flags, output format, troubleshooting.' },
+      { name: 'Economics', href: `${repo}/doc/economics.md`, desc: 'Emission schedule, cost structure, security budget, comparisons.' },
+    ],
+  },
+];
+---
+
+<Base title="Documentation — FlowCoin">
+  <section class="page-hero">
+    <div class="container">
+      <div class="eyebrow">Documentation</div>
+      <h1>Protocol, code, operation.</h1>
+      <p class="lead">
+        FlowCoin's documentation lives in the source tree. Every spec is
+        version-controlled alongside the code that implements it — so the
+        docs can't drift out of sync without somebody noticing in review.
+      </p>
+    </div>
+  </section>
+
+  <section class="container doc-grid">
+    {sections.map(s => (
+      <div class="doc-section">
+        <h2>{s.title}</h2>
+        <div class="cards">
+          {s.items.map(item => (
+            <a class="card" href={item.href}>
+              <div class="card-head">
+                <h3>{item.name}</h3>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <path d="M3 11L11 3M11 3H4.5M11 3V9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <p>{item.desc}</p>
+            </a>
+          ))}
+        </div>
+      </div>
+    ))}
+  </section>
+
+  <section class="container specs">
+    <h2>Protocol at a glance</h2>
+    <div class="spec-table">
+      <div class="spec"><span class="k">PoW</span><span class="v">RandomX (2 GiB dataset / 256 MiB light)</span></div>
+      <div class="spec"><span class="k">Block-ID hash</span><span class="v mono">keccak256d (SHA-3 style, pad 0x01)</span></div>
+      <div class="spec"><span class="k">Signatures</span><span class="v">Ed25519 (RFC 8032), per-block + per-input</span></div>
+      <div class="spec"><span class="k">Addresses</span><span class="v mono">Bech32 v0 — fl1q… (BIP-173)</span></div>
+      <div class="spec"><span class="k">Block time</span><span class="v">10 minutes</span></div>
+      <div class="spec"><span class="k">Difficulty retarget</span><span class="v">Every 2,016 blocks (±4× clamp)</span></div>
+      <div class="spec"><span class="k">RandomX seed rotation</span><span class="v">Every 2,048 blocks, 64-block lag</span></div>
+      <div class="spec"><span class="k">Halving</span><span class="v">Every 210,000 blocks</span></div>
+      <div class="spec"><span class="k">Max supply</span><span class="v">21,000,000 FLOW</span></div>
+      <div class="spec"><span class="k">Coinbase maturity</span><span class="v">100 blocks</span></div>
+      <div class="spec"><span class="k">P2P port</span><span class="v mono">9333 (main) / 19333 (test) / 29333 (regtest)</span></div>
+      <div class="spec"><span class="k">RPC port</span><span class="v mono">9334 (main) / 19334 (test) / 29334 (regtest)</span></div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .page-hero {
+    padding: 4rem 0 2rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .eyebrow {
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.75rem;
+  }
+
+  .lead {
+    font-size: 1.1rem;
+    max-width: 700px;
+    line-height: 1.6;
+  }
+
+  .doc-grid {
+    margin-top: 3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3rem;
+  }
+
+  .doc-section h2 {
+    font-size: 1.25rem;
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+
+  .card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    color: var(--text);
+    transition: border-color 120ms ease, transform 120ms ease;
+  }
+
+  .card:hover {
+    border-color: var(--border-strong);
+    color: var(--text);
+  }
+
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+
+  .card-head svg { color: var(--text-dim); }
+  .card:hover .card-head svg { color: var(--accent); }
+
+  .card h3 { font-size: 1rem; }
+
+  .card p {
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+
+  .specs {
+    margin-top: 5rem;
+  }
+
+  .specs h2 { margin-bottom: 1.5rem; }
+
+  .spec-table {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .spec {
+    background: var(--bg-elevated);
+    padding: 0.875rem 1.25rem;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.9rem;
+  }
+
+  .spec .k { color: var(--text-muted); }
+  .spec .v { color: var(--text); text-align: right; }
+
+  @media (max-width: 820px) {
+    .cards { grid-template-columns: 1fr; }
+    .spec-table { grid-template-columns: 1fr; }
+  }
+</style>

@@ -1,0 +1,124 @@
+---
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <div class="col brand-col">
+      <div class="brand">
+        <img src="/logo.svg" alt="FlowCoin" width="28" height="28" />
+        <span>FlowCoin</span>
+      </div>
+      <p class="tagline">CPU-only Proof-of-Work cryptocurrency. Open source, no premine, no ICO.</p>
+    </div>
+
+    <div class="col">
+      <h4>Project</h4>
+      <a href="/download">Download</a>
+      <a href="/documentation">Documentation</a>
+      <a href="https://explorer.flowcoin.org">Block Explorer</a>
+    </div>
+
+    <div class="col">
+      <h4>Resources</h4>
+      <a href="https://github.com/KristianPilatovich/flowcoin">GitHub</a>
+      <a href="https://github.com/KristianPilatovich/flowcoin/blob/main/whitepaper.txt">Whitepaper</a>
+      <a href="https://github.com/KristianPilatovich/flowcoin/blob/main/doc/protocol.md">Protocol Spec</a>
+    </div>
+
+    <div class="col">
+      <h4>Community</h4>
+      <a href="https://t.me/flowcoin">Telegram</a>
+      <a href="https://github.com/KristianPilatovich/flowcoin/discussions">Discussions</a>
+      <a href="https://github.com/KristianPilatovich/flowcoin/issues">Issues</a>
+    </div>
+  </div>
+
+  <div class="container footer-bottom">
+    <span class="muted">© {year} FlowCoin contributors. Released under the MIT license.</span>
+    <span class="muted mono">flowcoind {'–'} v1.0.0</span>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--border);
+    background: var(--bg-elevated);
+    margin-top: 6rem;
+    padding: 3rem 0 1.5rem;
+  }
+
+  .footer-inner {
+    display: grid;
+    grid-template-columns: 1.6fr repeat(3, 1fr);
+    gap: 2.5rem;
+    padding-bottom: 2.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+
+  .brand-col .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    color: var(--text);
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .tagline {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    max-width: 300px;
+  }
+
+  .col h4 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+
+  .col a {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .col a:hover {
+    color: var(--text);
+  }
+
+  .footer-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 1.5rem;
+    font-size: 0.85rem;
+  }
+
+  @media (max-width: 720px) {
+    .footer-inner {
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+    }
+    .footer-bottom {
+      flex-direction: column;
+      gap: 0.5rem;
+      align-items: flex-start;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .footer-inner {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

@@ -1,0 +1,245 @@
+---
+import Base from '../layouts/Base.astro';
+
+const version = 'v1.0.0';
+const repoUrl = 'https://github.com/KristianPilatovich/flowcoin';
+const releasesUrl = `${repoUrl}/releases`;
+---
+
+<Base title="Download — FlowCoin">
+  <section class="page-hero">
+    <div class="container">
+      <div class="eyebrow">Releases</div>
+      <h1>Download FlowCoin</h1>
+      <p class="lead">
+        Open-source under the MIT license. Current release: <code>{version}</code>.
+        All binaries are built reproducibly — verify checksums before you trust them.
+      </p>
+    </div>
+  </section>
+
+  <section class="container platforms">
+    <div class="plat">
+      <div class="plat-head">
+        <h3>Linux</h3>
+        <span class="pill">Recommended</span>
+      </div>
+      <p>x86-64 and ARM64. Debian, Ubuntu, Fedora, Arch — all supported.</p>
+      <div class="plat-actions">
+        <a href={releasesUrl} class="btn btn-primary">Download tarball</a>
+        <a href="#build" class="btn btn-secondary">Build from source</a>
+      </div>
+      <pre><code><span class="cmt">$</span> tar xzf flowcoin-{version}-linux-x86_64.tar.gz
+<span class="cmt">$</span> cd flowcoin-{version}
+<span class="cmt">$</span> ./bin/flowcoind -daemon</code></pre>
+    </div>
+
+    <div class="plat">
+      <div class="plat-head">
+        <h3>macOS</h3>
+        <span class="pill pill-soft">Build from source</span>
+      </div>
+      <p>Apple Silicon (M1/M2/M3/M4) and Intel. Use Homebrew for the toolchain.</p>
+      <pre><code><span class="cmt">$</span> brew install cmake git
+<span class="cmt">$</span> git clone {repoUrl}
+<span class="cmt">$</span> cd flowcoin && cmake -B build -DCMAKE_BUILD_TYPE=Release
+<span class="cmt">$</span> cmake --build build -j$(sysctl -n hw.ncpu)</code></pre>
+    </div>
+
+    <div class="plat">
+      <div class="plat-head">
+        <h3>Windows</h3>
+        <span class="pill pill-soft">Via WSL2</span>
+      </div>
+      <p>Run inside WSL2 (Ubuntu). Native Windows builds on the roadmap.</p>
+      <pre><code><span class="cmt">PS&gt;</span> wsl --install
+<span class="cmt">$</span> sudo apt install build-essential cmake git
+<span class="cmt">$</span> git clone {repoUrl} && cd flowcoin
+<span class="cmt">$</span> cmake -B build && cmake --build build -j$(nproc)</code></pre>
+    </div>
+  </section>
+
+  <section class="container build-section" id="build">
+    <h2>Build from source</h2>
+    <p class="lead">
+      If you can't find a prebuilt binary for your platform, or you want to
+      verify that the release matches the source, build it yourself.
+    </p>
+
+    <div class="steps">
+      <div class="step">
+        <span class="step-n">1</span>
+        <div>
+          <h4>Install toolchain</h4>
+          <p>GCC 10+ or Clang 12+, CMake 3.20+, git. Nothing else — all crypto and DB libraries are vendored.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-n">2</span>
+        <div>
+          <h4>Clone and build</h4>
+          <pre><code><span class="cmt">$</span> git clone {repoUrl}
+<span class="cmt">$</span> cd flowcoin
+<span class="cmt">$</span> cmake -B build -DCMAKE_BUILD_TYPE=Release
+<span class="cmt">$</span> cmake --build build -j$(nproc)</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-n">3</span>
+        <div>
+          <h4>Run</h4>
+          <pre><code><span class="cmt">$</span> ./build/flowcoind -daemon
+<span class="cmt">$</span> ./build/flowcoin-cli getblockchaininfo</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <p class="lead" style="margin-top: 2.5rem;">
+      Full build guide including reproducible-build flags, cross-compilation
+      notes, and troubleshooting:
+      <a href={`${repoUrl}/blob/main/doc/build-unix.md`}>doc/build-unix.md</a>.
+    </p>
+  </section>
+
+  <section class="container verify-section">
+    <h2>Verify the release</h2>
+    <p class="lead">
+      Every release tarball ships with a SHA-256 manifest. Verify before you run.
+    </p>
+    <pre><code><span class="cmt">$</span> sha256sum -c flowcoin-{version}-linux-x86_64.tar.gz.sha256
+flowcoin-{version}-linux-x86_64.tar.gz: OK</code></pre>
+  </section>
+</Base>
+
+<style>
+  .page-hero {
+    padding: 4rem 0 2rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .eyebrow {
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.75rem;
+  }
+
+  .page-hero h1 { margin-bottom: 1rem; }
+
+  .lead {
+    font-size: 1.1rem;
+    max-width: 640px;
+    line-height: 1.6;
+  }
+
+  .platforms {
+    margin-top: 3rem;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+
+  .plat {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .plat-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .plat h3 { font-size: 1.1rem; }
+
+  .pill {
+    padding: 0.25rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid rgba(242, 160, 61, 0.2);
+  }
+
+  .pill-soft {
+    background: transparent;
+    color: var(--text-muted);
+    border-color: var(--border);
+  }
+
+  .plat p { font-size: 0.925rem; }
+
+  .plat-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .plat pre { font-size: 0.8rem; }
+
+  .build-section {
+    margin-top: 5rem;
+  }
+
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    margin-top: 2.5rem;
+  }
+
+  .step {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 1.25rem;
+    align-items: flex-start;
+  }
+
+  .step-n {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    border: 1px solid rgba(242, 160, 61, 0.25);
+  }
+
+  .step h4 {
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+  }
+
+  .step pre {
+    margin-top: 0.75rem;
+    font-size: 0.85rem;
+  }
+
+  .verify-section {
+    margin-top: 5rem;
+  }
+
+  .verify-section pre {
+    margin-top: 1.5rem;
+    max-width: 640px;
+    font-size: 0.85rem;
+  }
+
+  .cmt { color: var(--text-dim); user-select: none; }
+
+  @media (max-width: 820px) {
+    .platforms { grid-template-columns: 1fr; }
+  }
+</style>

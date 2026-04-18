@@ -1,0 +1,304 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base>
+  <section class="hero">
+    <div class="container hero-inner">
+      <div class="tag">
+        <span class="dot"></span>
+        <span class="mono">v1.0.0 — RandomX era</span>
+      </div>
+      <h1>Open-source cryptocurrency<br/>that mines on <span class="accent">any CPU</span>.</h1>
+      <p class="subtitle">
+        FlowCoin is a Proof-of-Work cryptocurrency secured by RandomX —
+        the CPU-oriented, memory-hard algorithm used by Monero.
+        No ASICs. No GPUs. No premine. No ICO.
+      </p>
+      <div class="cta">
+        <a href="/download" class="btn btn-primary">
+          Download FlowCoin
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 11L11 3M11 3H4.5M11 3V9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </a>
+        <a href="/documentation" class="btn btn-secondary">Read the docs</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="stats container">
+    <div class="stat"><span class="v">21M</span><span class="l">Max supply</span></div>
+    <div class="stat"><span class="v">10 min</span><span class="l">Block time</span></div>
+    <div class="stat"><span class="v">50 FLOW</span><span class="l">Initial reward</span></div>
+    <div class="stat"><span class="v">210K</span><span class="l">Blocks per halving</span></div>
+  </section>
+
+  <section class="features container">
+    <div class="section-head">
+      <h2>Why FlowCoin</h2>
+      <p>Bitcoin's monetary policy. Monero's mining fairness. Modern cryptography.</p>
+    </div>
+
+    <div class="grid">
+      <article class="feat">
+        <div class="ico">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="6" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M8 10h8M8 14h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </div>
+        <h3>CPU-only by design</h3>
+        <p>RandomX uses a 2 GiB dataset, IEEE-754 floats, and runtime-generated VM programs. ASICs can't compete with general-purpose silicon — Monero has proved this since 2019.</p>
+      </article>
+
+      <article class="feat">
+        <div class="ico">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3l8 4v5c0 5-3.5 8.5-8 9-4.5-.5-8-4-8-9V7l8-4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h3>Bitcoin's monetary policy</h3>
+        <p>21 million total supply. Halving every 210,000 blocks. 10-minute target. Exactly the same economic properties that made Bitcoin work — just more accessible mining.</p>
+      </article>
+
+      <article class="feat">
+        <div class="ico">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </div>
+        <h3>Bitcoin-compatible tooling</h3>
+        <p>Wire-compatible P2P. Bitcoin-Core-style JSON-RPC. Cookie auth. Same command-line patterns. If a tool works with <code>bitcoind</code>, it likely works with <code>flowcoind</code>.</p>
+      </article>
+
+      <article class="feat">
+        <div class="ico">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l3 3M16 16l3 3M5 19l3-3M16 8l3-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </div>
+        <h3>No premine, no ICO</h3>
+        <p>Every single FLOW is mined from genesis on. No developer tax, no treasury, no venture allocation. The only way to get coins is to mine them or receive them.</p>
+      </article>
+
+      <article class="feat">
+        <div class="ico">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M8 7a4 4 0 018 0v3h1a2 2 0 012 2v7a2 2 0 01-2 2H7a2 2 0 01-2-2v-7a2 2 0 012-2h1V7z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </div>
+        <h3>Modern cryptography</h3>
+        <p>Ed25519 signatures (RFC 8032). keccak256d block IDs and merkle roots. Real Bech32 v0 addresses — structurally identical to Bitcoin P2WPKH, just with the <code>fl</code> prefix.</p>
+      </article>
+
+      <article class="feat">
+        <div class="ico">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 4h16v16H4z" stroke="currentColor" stroke-width="1.6"/><path d="M9 9h6v6H9z" fill="currentColor"/></svg>
+        </div>
+        <h3>Audit-friendly codebase</h3>
+        <p>Vendored dependencies, no hidden magic. ~126K lines of C++20. 55 assert-based test groups covering consensus, crypto, network, wallet. Reproducible builds.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="quickstart container">
+    <div class="section-head">
+      <h2>Start mining in three commands</h2>
+      <p>On a typical Linux box — no pool, no account, no registration.</p>
+    </div>
+
+    <pre><code># Install build deps (Ubuntu / Debian)
+<span class="cmt">$</span> sudo apt install -y build-essential cmake git
+
+# Build FlowCoin
+<span class="cmt">$</span> git clone https://github.com/KristianPilatovich/flowcoin.git
+<span class="cmt">$</span> cd flowcoin && cmake -B build -DCMAKE_BUILD_TYPE=Release
+<span class="cmt">$</span> cmake --build build -j$(nproc)
+
+# Start node + miner
+<span class="cmt">$</span> ./build/flowcoind -daemon
+<span class="cmt">$</span> ./build/flowcoin-miner --cookie ~/.flowcoin/.cookie</code></pre>
+
+    <p class="quickstart-hint">
+      Full mining guide: <a href="/documentation#mining">Documentation → Mining</a>. Benchmarks and hardware tables in the
+      <a href="https://github.com/KristianPilatovich/flowcoin/blob/main/doc/mining.md">mining doc</a>.
+    </p>
+  </section>
+</Base>
+
+<style>
+  .hero {
+    padding: 5rem 0 4rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -200px;
+    left: 50%;
+    width: 800px;
+    height: 800px;
+    background: radial-gradient(circle, rgba(242, 160, 61, 0.08), transparent 60%);
+    transform: translateX(-50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .hero-inner {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.875rem;
+    border: 1px solid var(--border);
+    border-radius: 9999px;
+    background: var(--surface);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 1.75rem;
+  }
+
+  .tag .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+
+  .hero h1 {
+    max-width: 820px;
+    margin: 0 auto 1.5rem;
+  }
+
+  .accent { color: var(--accent); }
+
+  .subtitle {
+    max-width: 620px;
+    margin: 0 auto 2.25rem;
+    font-size: 1.125rem;
+    line-height: 1.6;
+  }
+
+  .cta {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-top: 3rem;
+  }
+
+  .stat {
+    background: var(--bg-elevated);
+    padding: 1.5rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    align-items: center;
+  }
+
+  .stat .v {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+
+  .stat .l {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .section-head {
+    text-align: center;
+    margin-bottom: 2.5rem;
+  }
+
+  .section-head p {
+    max-width: 520px;
+    margin: 0.75rem auto 0;
+  }
+
+  .features {
+    margin-top: 6rem;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+
+  .feat {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    transition: border-color 120ms ease, transform 120ms ease;
+  }
+
+  .feat:hover {
+    border-color: var(--border-strong);
+  }
+
+  .feat .ico {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1rem;
+  }
+
+  .feat h3 {
+    font-size: 1.05rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .feat p {
+    font-size: 0.925rem;
+    line-height: 1.55;
+  }
+
+  .quickstart {
+    margin-top: 6rem;
+  }
+
+  .quickstart pre {
+    max-width: 760px;
+    margin: 0 auto;
+    font-size: 0.875rem;
+  }
+
+  .quickstart .cmt {
+    color: var(--text-dim);
+    user-select: none;
+  }
+
+  .quickstart-hint {
+    text-align: center;
+    margin-top: 1.5rem;
+    font-size: 0.9rem;
+  }
+
+  @media (max-width: 820px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .hero { padding: 3.5rem 0 3rem; }
+  }
+
+  @media (max-width: 520px) {
+    .grid { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: 1fr; }
+  }
+</style>
