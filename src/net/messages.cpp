@@ -256,6 +256,39 @@ void MessageHandler::on_handshake_complete(Peer& peer) {
             (unsigned long)peer.id(), peer.addr().to_string().c_str(),
             listen_addr.to_string().c_str());
 
+    // Post-VERACK announcements — same order as Bitcoin Core's
+    // net_processing.cpp after SuccessfullyConnected().
+    const uint32_t ver = peer.protocol_version();
+
+    // BIP130: ask the peer to announce new blocks via headers, not inv.
+    if (ver >= SENDHEADERS_VERSION) {
+        send(peer, NetCmd::SENDHEADERS);
+    }
+
+    // BIP152: advertise compact-block support. Two messages, high-bandwidth
+    // first (fAnnounceNewBlocks=true), then low-bandwidth (false) — matches
+    // Bitcoin Core's MaybeSendSendcmpct ordering. Version 2 is the witness-
+    // aware variant; we send version 1 since we do not ship a witness commit.
+    if (ver >= SHORT_IDS_BLOCKS_VERSION) {
+        DataWriter w;
+        w.write_u8(1);          // announce compact-block-first
+        w.write_u64_le(1);      // BIP152 version 1
+        send(peer, NetCmd::SENDCMPCT, w.release());
+
+        DataWriter w2;
+        w2.write_u8(0);         // low-bandwidth fallback
+        w2.write_u64_le(1);
+        send(peer, NetCmd::SENDCMPCT, w2.release());
+    }
+
+    // BIP133: advertise our minimum relay fee so the peer can drop
+    // sub-threshold transactions without sending them.
+    if (ver >= FEEFILTER_VERSION) {
+        DataWriter w;
+        w.write_i64_le(consensus::MIN_RELAY_FEE);
+        send(peer, NetCmd::FEEFILTER, w.release());
+    }
+
     // Request peer's address list for addr propagation
     send(peer, NetCmd::GETADDR);
 
@@ -1626,17 +1659,78 @@ void MessageHandler::handle_sendaddrv2(Peer& peer) {
     peer.set_sendaddrv2(true);
 }
 
-// addrv2 — BIP155 extended address relay (supports Tor v3, I2P, CJDNS).
-// Not parsed in detail yet; we only accept from peers that negotiated it.
-void MessageHandler::handle_addrv2(Peer& peer, const uint8_t* /*data*/, size_t len) {
+// addrv2 — BIP155 extended address relay (IPv4, IPv6, Tor v3, I2P, CJDNS).
+// Per-entry layout:
+//   uint32 timestamp
+//   CompactSize services               (note: CompactSize, NOT uint64 like v1)
+//   uint8  network_id
+//   CompactSize address_length
+//   bytes  address (length fixed per network_id; see BIP155)
+//   uint16 port (big-endian)
+//
+// Non-IP networks (Tor v3, I2P, CJDNS) are accepted and logged but not
+// forwarded to addrman — we have no proxy / overlay transport yet.
+void MessageHandler::handle_addrv2(Peer& peer, const uint8_t* data, size_t len) {
     if (!peer.sendaddrv2()) {
         LogInfo("net", "peer %lu sent addrv2 without negotiation, ignoring",
                 (unsigned long)peer.id());
         peer.add_misbehavior(10);
         return;
     }
-    LogDebug("net", "peer %lu addrv2 (%zu bytes) — parsing not yet implemented",
-             (unsigned long)peer.id(), len);
+
+    DataReader r(data, len);
+    uint64_t count = r.read_compact_size();
+    if (r.error() || count > static_cast<uint64_t>(consensus::ADDR_RELAY_MAX)) {
+        peer.add_misbehavior(20);
+        return;
+    }
+
+    const int64_t now = GetTime();
+    int accepted = 0;
+    int skipped_network = 0;
+
+    for (uint64_t i = 0; i < count; ++i) {
+        uint32_t ts = r.read_u32_le();
+        /*uint64_t services =*/ r.read_compact_size();
+        uint8_t  net_id = r.read_u8();
+        uint64_t addr_len = r.read_compact_size();
+        if (r.error() || addr_len > 512) break;
+
+        auto raw = r.read_bytes(static_cast<size_t>(addr_len));
+        uint8_t hi = r.read_u8();
+        uint8_t lo = r.read_u8();
+        uint16_t port = static_cast<uint16_t>((hi << 8) | lo);
+        if (r.error()) break;
+
+        // BIP155 network IDs. 1=IPv4, 2=IPv6, 3=TORv2(removed), 4=TORv3,
+        // 5=I2P, 6=CJDNS. We only route IPv4/IPv6 traffic today.
+        CNetAddr addr;
+        addr.port = port;
+        if (net_id == 1 && addr_len == 4) {
+            // IPv4 — lift into the IPv4-in-IPv6 wrapper our CNetAddr uses.
+            addr.ip[10] = 0xff;
+            addr.ip[11] = 0xff;
+            std::memcpy(&addr.ip[12], raw.data(), 4);
+        } else if (net_id == 2 && addr_len == 16) {
+            std::memcpy(addr.ip, raw.data(), 16);
+        } else {
+            ++skipped_network;
+            continue;
+        }
+
+        if (static_cast<int64_t>(ts) < now - 3 * 3600) continue;
+        if (addr.port == 0) continue;
+        if (netman_.is_self_address(addr)) continue;
+
+        netman_.addrman().add(addr, static_cast<int64_t>(ts));
+        ++accepted;
+    }
+
+    if (accepted > 0 || skipped_network > 0) {
+        LogInfo("net", "addrv2 from peer %lu: accepted=%d skipped_non_ip=%d total=%lu",
+                (unsigned long)peer.id(), accepted, skipped_network,
+                (unsigned long)count);
+    }
 }
 
 // mempool — BIP35; peer wants our mempool inventory. We ignore until the
