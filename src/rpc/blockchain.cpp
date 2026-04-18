@@ -301,7 +301,7 @@ void register_blockchain_rpcs(RpcServer& server, ChainState& chain) {
         j["chainwork"]            = std::string(64, '0');
         j["size_on_disk"]         = int64_t(0);
         j["pruned"]               = false;
-        j["warnings"]             = "";
+        j["warnings"]             = json::array();   // Bitcoin Core 30.x: array, not string
 
         // FlowCoin-specific bonus fields
         j["halving_interval"]     = consensus::HALVING_INTERVAL;

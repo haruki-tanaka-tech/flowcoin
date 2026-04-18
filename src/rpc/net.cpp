@@ -180,7 +180,7 @@ void register_net_rpcs(RpcServer& server, NetManager& net) {
         j["connections_in"]    = static_cast<int64_t>(net.inbound_count());
         j["connections_out"]   = static_cast<int64_t>(net.outbound_count());
         j["localaddresses"]    = json::array();
-        j["warnings"]          = "";
+        j["warnings"]          = json::array();   // Bitcoin Core 30.x: array, not string
 
         // Network interfaces
         json networks = json::array();
