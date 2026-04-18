@@ -253,8 +253,9 @@ private:
     std::string process_request(const std::string& request,
                                  const std::string& client_ip);
 
-    /// Parse JSON-RPC request, dispatch to registered method, return JSON-RPC response.
-    json dispatch(const json& request);
+    /// Parse JSON-RPC request, dispatch to registered method, return a
+    /// pre-formatted JSON-RPC 2.0 response string in bitcoind's field order.
+    std::string dispatch(const json& request);
 
     /// Validate the Authorization header against stored credentials.
     bool check_auth(const std::string& request) const;

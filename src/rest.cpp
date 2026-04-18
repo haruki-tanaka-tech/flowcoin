@@ -371,7 +371,7 @@ RestResponse RestServer::handle_headers(int count,
                     tip_height - hdr.height + 1 : 0);
                 j.push_back(hj);
             }
-            std::string s = j.dump(2) + "\n";
+            std::string s = j.dump();
             return RestResponse::json_ok(
                 std::vector<uint8_t>(s.begin(), s.end()));
         }
@@ -533,13 +533,13 @@ RestResponse RestServer::handle_getutxos(const std::string& params,
     j["utxos"] = utxos;
 
     if (format == RestFormat::JSON) {
-        std::string s = j.dump(2) + "\n";
+        std::string s = j.dump();
         return RestResponse::json_ok(
             std::vector<uint8_t>(s.begin(), s.end()));
     }
 
     // For binary/hex: serialize the response
-    std::string s = j.dump(2) + "\n";
+    std::string s = j.dump();
     auto data = std::vector<uint8_t>(s.begin(), s.end());
     if (format == RestFormat::HEX) {
         return RestResponse::hex_ok(to_hex_bytes(data));
@@ -575,7 +575,7 @@ RestResponse RestServer::handle_blockhashbyheight(
         case RestFormat::JSON: {
             json j;
             j["blockhash"] = hash_hex;
-            std::string s = j.dump(2) + "\n";
+            std::string s = j.dump();
             return RestResponse::json_ok(
                 std::vector<uint8_t>(s.begin(), s.end()));
         }
@@ -638,7 +638,7 @@ RestResponse RestServer::handle_chaininfo() {
     j["mempool_size"] = mempool_.size();
     j["mempool_bytes"] = mempool_.total_bytes();
 
-    std::string s = j.dump(2) + "\n";
+    std::string s = j.dump();
     return RestResponse::json_ok(
         std::vector<uint8_t>(s.begin(), s.end()));
 }
@@ -662,7 +662,7 @@ RestResponse RestServer::handle_mempool_info() {
     j["minrelaytxfee"] = 0.00001;  // 1 sat/byte in FLOW
     j["orphan_count"] = stats.orphan_count;
 
-    std::string s = j.dump(2) + "\n";
+    std::string s = j.dump();
     return RestResponse::json_ok(
         std::vector<uint8_t>(s.begin(), s.end()));
 }
@@ -699,7 +699,7 @@ RestResponse RestServer::handle_mempool_contents() {
         j[txid_hex] = tx_info;
     }
 
-    std::string s = j.dump(2) + "\n";
+    std::string s = j.dump();
     return RestResponse::json_ok(
         std::vector<uint8_t>(s.begin(), s.end()));
 }
@@ -782,7 +782,7 @@ std::vector<uint8_t> RestServer::block_to_json(const CBlock& block,
     }
     j["tx"] = txs;
 
-    std::string s = j.dump(2) + "\n";
+    std::string s = j.dump();
     return std::vector<uint8_t>(s.begin(), s.end());
 }
 
@@ -801,7 +801,7 @@ std::vector<uint8_t> RestServer::header_to_json(const CBlockHeader& header,
     j["confirmations"] = confirmations;
 
 
-    std::string s = j.dump(2) + "\n";
+    std::string s = j.dump();
     return std::vector<uint8_t>(s.begin(), s.end());
 }
 
@@ -847,7 +847,7 @@ std::vector<uint8_t> RestServer::tx_to_json(const CTransaction& tx,
     }
     j["vout"] = vout;
 
-    std::string s = j.dump(2) + "\n";
+    std::string s = j.dump();
     return std::vector<uint8_t>(s.begin(), s.end());
 }
 
@@ -862,7 +862,7 @@ std::vector<uint8_t> RestServer::utxo_to_json(const uint256& txid,
     j["height"] = entry.height;
     j["coinbase"] = entry.is_coinbase;
 
-    std::string s = j.dump(2) + "\n";
+    std::string s = j.dump();
     return std::vector<uint8_t>(s.begin(), s.end());
 }
 
@@ -1124,7 +1124,7 @@ std::vector<uint8_t> json_error(int code, const std::string& message) {
         {"code", code},
         {"message", message}
     };
-    std::string s = j.dump(2) + "\n";
+    std::string s = j.dump();
     return std::vector<uint8_t>(s.begin(), s.end());
 }
 

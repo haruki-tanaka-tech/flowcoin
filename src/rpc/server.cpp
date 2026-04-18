@@ -19,6 +19,31 @@
 namespace flow {
 
 // ---------------------------------------------------------------------------
+// JSON-RPC 2.0 response formatting — bitcoind-compatible.
+//
+// Bitcoin Core writes its JSON-RPC reply as compact JSON with the field
+// order `jsonrpc, result|error, id` and *omits* the unused half (no
+// "error": null on success, no "result": null on failure). nlohmann::json
+// uses an alphabetically-sorted map, so we build the response as a raw
+// string to preserve field order.
+// ---------------------------------------------------------------------------
+
+static std::string jsonrpc_reply(const json& id, const json& result) {
+    std::string s = "{\"jsonrpc\":\"2.0\",\"result\":";
+    s += result.is_null() ? "null" : result.dump();
+    s += ",\"id\":" + id.dump() + "}";
+    return s;
+}
+
+static std::string jsonrpc_error(const json& id, int code, const std::string& msg) {
+    json err = { {"code", code}, {"message", msg} };
+    std::string s = "{\"jsonrpc\":\"2.0\",\"error\":";
+    s += err.dump();
+    s += ",\"id\":" + id.dump() + "}";
+    return s;
+}
+
+// ---------------------------------------------------------------------------
 // Base64 encoding (for Basic auth)
 // ---------------------------------------------------------------------------
 
@@ -443,12 +468,8 @@ void RpcServer::on_read(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf)
     if (ctx->buffer.size() > ctx->server->max_body_size_ + 4096) {
         // Headers + body exceeds limit
         uv_read_stop(client);
-        json err_resp = {
-            {"jsonrpc", "2.0"},
-            {"error", {{"code", -32600}, {"message", "Request too large"}}},
-            {"id", nullptr}
-        };
-        std::string response = ctx->server->http_response(413, err_resp.dump(2) + "\n");
+        std::string response = ctx->server->http_response(413,
+            jsonrpc_error(nullptr, -32600, "Request too large"));
         send_response(client, response);
         delete ctx;
         client->data = nullptr;
@@ -460,12 +481,8 @@ void RpcServer::on_read(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf)
     auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
     if (seconds > ctx->server->timeout_seconds_) {
         uv_read_stop(client);
-        json err_resp = {
-            {"jsonrpc", "2.0"},
-            {"error", {{"code", -32600}, {"message", "Request timeout"}}},
-            {"id", nullptr}
-        };
-        std::string response = ctx->server->http_response(408, err_resp.dump(2) + "\n");
+        std::string response = ctx->server->http_response(408,
+            jsonrpc_error(nullptr, -32600, "Request timeout"));
         send_response(client, response);
         delete ctx;
         client->data = nullptr;
@@ -523,12 +540,8 @@ void RpcServer::on_read(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf)
 
     // Only accept POST requests for JSON-RPC
     if (method != "POST") {
-        json err_resp = {
-            {"jsonrpc", "2.0"},
-            {"error", {{"code", -32600}, {"message", "Only POST method is supported"}}},
-            {"id", nullptr}
-        };
-        std::string response = ctx->server->http_response(405, err_resp.dump(2) + "\n");
+        std::string response = ctx->server->http_response(405,
+            jsonrpc_error(nullptr, -32600, "Only POST method is supported"));
         send_response(client, response);
         delete ctx;
         client->data = nullptr;
@@ -599,24 +612,16 @@ std::string RpcServer::process_request(const std::string& request,
 
     // Check rate limit
     if (!check_rate_limit(client_ip)) {
-        json err_resp = {
-            {"jsonrpc", "2.0"},
-            {"error", {{"code", -32600}, {"message", "Rate limit exceeded"}}},
-            {"id", nullptr}
-        };
         failed_requests_++;
-        return http_response(429, err_resp.dump(2) + "\n");
+        return http_response(429,
+            jsonrpc_error(nullptr, -32600, "Rate limit exceeded"));
     }
 
     // Check authentication
     if (!check_auth(request)) {
         auth_failures_++;
-        json err_resp = {
-            {"jsonrpc", "2.0"},
-            {"error", {{"code", -32600}, {"message", "Unauthorized"}}},
-            {"id", nullptr}
-        };
-        return http_response(401, err_resp.dump(2) + "\n");
+        return http_response(401,
+            jsonrpc_error(nullptr, -32600, "Unauthorized"));
     }
 
     // Extract body
@@ -645,23 +650,15 @@ std::string RpcServer::process_request(const std::string& request,
     }
     if (body.empty()) {
         failed_requests_++;
-        json err_resp = {
-            {"jsonrpc", "2.0"},
-            {"error", {{"code", -32700}, {"message", "Parse error: empty body"}}},
-            {"id", nullptr}
-        };
-        return http_response(400, err_resp.dump(2) + "\n");
+        return http_response(400,
+            jsonrpc_error(nullptr, -32700, "Parse error: empty body"));
     }
 
     // Check body size
     if (body.size() > max_body_size_) {
         failed_requests_++;
-        json err_resp = {
-            {"jsonrpc", "2.0"},
-            {"error", {{"code", -32600}, {"message", "Request body too large"}}},
-            {"id", nullptr}
-        };
-        return http_response(413, err_resp.dump(2) + "\n");
+        return http_response(413,
+            jsonrpc_error(nullptr, -32600, "Request body too large"));
     }
 
     // Parse JSON
@@ -674,33 +671,22 @@ std::string RpcServer::process_request(const std::string& request,
         req_json = json::parse(trimmed);
     } catch (const json::parse_error& e) {
         failed_requests_++;
-        json err_resp = {
-            {"jsonrpc", "2.0"},
-            {"error", {{"code", -32700}, {"message", std::string("Parse error: ") + e.what()}}},
-            {"id", nullptr}
-        };
-        return http_response(200, err_resp.dump(2) + "\n");
+        return http_response(200,
+            jsonrpc_error(nullptr, -32700, std::string("Parse error: ") + e.what()));
     }
 
     // Handle batch requests (JSON array)
     if (req_json.is_array()) {
         if (req_json.empty()) {
             failed_requests_++;
-            json err_resp = {
-                {"jsonrpc", "2.0"},
-                {"error", {{"code", -32600}, {"message", "Empty batch request"}}},
-                {"id", nullptr}
-            };
-            return http_response(200, err_resp.dump(2) + "\n");
+            return http_response(200,
+                jsonrpc_error(nullptr, -32600, "Empty batch request"));
         }
 
-        json batch_response = json::array();
+        std::vector<std::string> batch_response;
         for (const auto& single : req_json) {
-            json result = dispatch(single);
-            // Only include non-notification responses (those with an "id")
-            if (!result.is_null()) {
-                batch_response.push_back(result);
-            }
+            std::string result = dispatch(single);
+            if (!result.empty()) batch_response.push_back(std::move(result));
         }
 
         if (batch_response.empty()) {
@@ -710,23 +696,30 @@ std::string RpcServer::process_request(const std::string& request,
         }
 
         successful_requests_++;
-        return http_response(200, batch_response.dump(2) + "\n");
+        // Batch response is an array of pre-formatted JSON-RPC strings.
+        std::string out = "[";
+        for (size_t i = 0; i < batch_response.size(); ++i) {
+            if (i) out += ",";
+            out += batch_response[i];
+        }
+        out += "]";
+        return http_response(200, out);
     }
 
     // Single request
-    json result = dispatch(req_json);
+    std::string result = dispatch(req_json);
 
-    // Check if it was an error
-    if (result.contains("error") && !result["error"].is_null()) {
+    // Rough success/failure classification based on response contents.
+    if (result.find("\"error\":") != std::string::npos) {
         failed_requests_++;
     } else {
         successful_requests_++;
     }
 
-    return http_response(200, result.dump(2) + "\n");
+    return http_response(200, result);
 }
 
-json RpcServer::dispatch(const json& request) {
+std::string RpcServer::dispatch(const json& request) {
     // Extract id (can be null, number, or string)
     json id = nullptr;
     if (request.contains("id")) {
@@ -735,11 +728,7 @@ json RpcServer::dispatch(const json& request) {
 
     // Extract method
     if (!request.contains("method") || !request["method"].is_string()) {
-        return {
-            {"jsonrpc", "2.0"},
-            {"error", {{"code", -32600}, {"message", "Invalid request: missing method"}}},
-            {"id", id}
-        };
+        return jsonrpc_error(id, -32600, "Invalid request: missing method");
     }
 
     std::string method = request["method"].get<std::string>();
@@ -756,11 +745,7 @@ json RpcServer::dispatch(const json& request) {
         std::lock_guard<std::mutex> lock(methods_mutex_);
         auto it = methods_.find(method);
         if (it == methods_.end()) {
-            return {
-                {"jsonrpc", "2.0"},
-                {"error", {{"code", -32601}, {"message", "Method not found: " + method}}},
-                {"id", id}
-            };
+            return jsonrpc_error(id, -32601, "Method not found: " + method);
         }
         handler = it->second;
     }
@@ -768,17 +753,9 @@ json RpcServer::dispatch(const json& request) {
     // Execute the method
     try {
         json result = handler(params);
-        json resp;
-        resp["result"] = result;
-        resp["error"] = nullptr;
-        resp["id"] = id;
-        return resp;
+        return jsonrpc_reply(id, result);
     } catch (const std::exception& e) {
-        json resp;
-        resp["result"] = nullptr;
-        resp["error"] = {{"code", -1}, {"message", e.what()}};
-        resp["id"] = id;
-        return resp;
+        return jsonrpc_error(id, -1, e.what());
     }
 }
 
