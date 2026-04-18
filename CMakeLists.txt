@@ -471,66 +471,30 @@ if(WIN32)
 endif()
 
 # =============================================================================
-# FlowCoin Miner (standalone, native C with ncurses TUI + optional OpenCL)
+# FlowCoin Miner — standalone CPU-only RandomX miner (XMRig-style CLI).
 # =============================================================================
 option(BUILD_MINER "Build flowcoin-miner" ON)
-option(USE_OPENCL "Enable OpenCL GPU mining in flowcoin-miner" OFF)
 
 if(BUILD_MINER)
-    # Find curses (ncurses on Linux/macOS, pdcurses on Windows)
-    find_package(Curses)
-    if(NOT CURSES_FOUND AND WIN32)
-        # MSYS2: try to find ncurses manually
-        find_library(CURSES_LIBRARIES ncurses)
-        find_path(CURSES_INCLUDE_DIRS ncurses.h)
-        if(CURSES_LIBRARIES)
-            set(CURSES_FOUND TRUE)
-        endif()
-    endif()
-
-    if(CURSES_FOUND)
-        set(MINER_SOURCES
-            src/miner/flowminer.c
-            src/miner/mining.c
-            src/miner/rpc.c
-            src/miner/keccak2.c
-            src/hash/KeccakHash.c
-            src/hash/KeccakSponge.c
-            src/hash/KeccakP-1600-reference.c
-            src/crypto/ed25519.c
-        )
-
-        if(USE_OPENCL)
-            list(APPEND MINER_SOURCES src/miner/ocl_miner.c)
-        endif()
-
-        add_executable(flowcoin-miner ${MINER_SOURCES})
-        target_include_directories(flowcoin-miner PRIVATE
-            src/hash src/crypto src/miner ${CURSES_INCLUDE_DIRS})
-        target_compile_definitions(flowcoin-miner PRIVATE
-            ED25519_CUSTOMHASH ED25519_CUSTOMRNG)
-        # On Windows, compile C files as C++ to avoid MinGW C-mode header conflicts
-        if(WIN32)
-            set_source_files_properties(${MINER_SOURCES} PROPERTIES LANGUAGE CXX)
-        endif()
-        target_link_libraries(flowcoin-miner PRIVATE
-            ${CURSES_LIBRARIES} pthread m)
-
-        if(USE_OPENCL)
-            find_package(OpenCL REQUIRED)
-            target_compile_definitions(flowcoin-miner PRIVATE USE_OPENCL)
-            target_link_libraries(flowcoin-miner PRIVATE OpenCL::OpenCL)
-        endif()
-
-        if(WIN32)
-            target_link_libraries(flowcoin-miner PRIVATE ws2_32 bcrypt)
-        elseif(APPLE)
-            target_link_libraries(flowcoin-miner PRIVATE "-framework Security")
-        endif()
-    else()
-        message(WARNING "Curses not found — flowcoin-miner will not be built")
-    endif()
+    add_executable(flowcoin-miner
+        src/miner/flowminer.cpp
+    )
+    target_include_directories(flowcoin-miner PRIVATE
+        src
+        src/randomx/src
+    )
+    target_compile_definitions(flowcoin-miner PRIVATE
+        ED25519_CUSTOMHASH ED25519_CUSTOMRNG)
+    target_link_libraries(flowcoin-miner PRIVATE
+        flowcoin_randomx
+        ed25519
+        xkcp         # ed25519 uses Keccak via ED25519_CUSTOMHASH for its hash
+        json
+        pthread
+        m
+    )
 endif()
+
 
 # =============================================================================
 # Tests (assert-based, no external framework required)
