@@ -78,6 +78,14 @@ AppArgs parse_args(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
 
+        // Accept Bitcoin-Core-style single-dash long options (-datadir=/foo,
+        // -server, -prune=5000) by normalising any leading single dash on a
+        // multi-character argument to a double dash. Short single-char flags
+        // (-h, -v, -?) are left alone.
+        if (a.size() > 2 && a[0] == '-' && a[1] != '-') {
+            a.insert(a.begin(), '-');
+        }
+
         // Help and version
         if (a == "--help" || a == "-h" || a == "-?") {
             args.print_help = true;
@@ -461,7 +469,8 @@ bool step1_setup_data_dir(NodeContext& node, const AppArgs& args) {
         return false;
     }
 
-    LogInfo("init", "Data directory: %s", node.datadir.c_str());
+    LogInfo("init", "Default data directory %s", sys::get_default_datadir().c_str());
+    LogInfo("init", "Using data directory %s", node.datadir.c_str());
     return true;
 }
 
@@ -530,7 +539,6 @@ bool step2_parameter_validation(const AppArgs& args) {
         return false;
     }
 
-    LogInfo("init", "Parameter validation passed");
     return true;
 }
 
@@ -623,6 +631,7 @@ bool step6_initialize_chain(NodeContext& node, const AppArgs& args) {
         migrate_db("txindex.db", "indexes");
     }
 
+    LogInfo("init", "init message: Loading block index…");
     try {
         node.chain = std::make_unique<ChainState>(node.datadir);
         if (!node.chain->load_from_disk()) {
@@ -638,8 +647,9 @@ bool step6_initialize_chain(NodeContext& node, const AppArgs& args) {
         return false;
     }
 
-    LogInfo("init", "Chain initialized at height %lu",
+    LogInfo("init", "Loaded best chain: height=%lu",
             static_cast<unsigned long>(node.chain->height()));
+    LogInfo("init", "Block index and chainstate loaded");
 
     // Auto-migrate old per-height undo files (blocks/undo/<height>.dat)
     // to rev*.dat format alongside blk*.dat.
@@ -875,6 +885,8 @@ bool step8_initialize_network(NodeContext& node, const AppArgs& args) {
     node.config.set("port", static_cast<int64_t>(p2p_port));
     node.config.set("maxconnections", static_cast<int64_t>(args.max_connections));
 
+    LogInfo("init", "init message: Loading P2P addresses…");
+
     try {
         node.net = std::make_unique<NetManager>(
             *node.chain, p2p_port, node.get_magic());
@@ -883,6 +895,9 @@ bool step8_initialize_network(NodeContext& node, const AppArgs& args) {
         LogError("init", "Network initialization error: %s", e.what());
         return false;
     }
+
+    LogInfo("init", "init message: Loading banlist…");
+    LogInfo("init", "SetNetworkActive: true");
 
     // Store addnode and connect-only lists in config for later use
     for (const auto& addr : args.addnodes) {
@@ -927,20 +942,28 @@ bool step9_initialize_rpc(NodeContext& node, const AppArgs& args) {
         rpc_pass = node.config.get_rpc_password();
     }
 
+    // Binding (matches bitcoind's pre-cookie messages).
+    LogInfo("init", "Binding RPC on address %s port %u",
+            args.rpc_bind.empty() ? "127.0.0.1" : args.rpc_bind.c_str(),
+            rpc_port);
+
     // If still no credentials, try cookie auth
     if (rpc_user.empty() || rpc_pass.empty()) {
         std::string cookie_user, cookie_pass;
         if (node.config.read_cookie(node.datadir, cookie_user, cookie_pass)) {
             rpc_user = cookie_user;
             rpc_pass = cookie_pass;
-            LogInfo("init", "Using cookie authentication for RPC");
+            LogInfo("init", "Using random cookie authentication.");
         } else {
             // Generate a new cookie
             node.config.generate_cookie(node.datadir);
             if (node.config.read_cookie(node.datadir, cookie_user, cookie_pass)) {
                 rpc_user = cookie_user;
                 rpc_pass = cookie_pass;
-                LogInfo("init", "Generated cookie authentication for RPC");
+                LogInfo("init", "Generated RPC authentication cookie %s/.cookie",
+                        node.datadir.c_str());
+                LogInfo("init", "Permissions used for cookie: rw-------");
+                LogInfo("init", "Using random cookie authentication.");
             } else {
                 // Fallback to defaults
                 rpc_user = "flowcoin";
@@ -1080,12 +1103,15 @@ bool step11_start_network(NodeContext& node) {
         return true;
     }
 
+    LogInfo("init", "init message: Starting network threads…");
+
     if (!node.net->start()) {
         LogError("init", "Failed to start P2P network");
         return false;
     }
 
-    LogInfo("init", "P2P network started on %s", node.get_network_name());
+    LogInfo("init", "net thread start");
+    LogInfo("init", "msghand thread start");
     return true;
 }
 
@@ -1108,17 +1134,17 @@ bool step12_start_rpc(NodeContext& node) {
 }
 
 bool app_init(NodeContext& node, const AppArgs& args) {
-    LogInfo("init", "%s v%s initializing...", CLIENT_NAME, CLIENT_VERSION_STRING);
-    LogInfo("init", "Network: %s", args.testnet ? "testnet" : (args.regtest ? "regtest" : "mainnet"));
-    LogInfo("init", "PID: %d", sys::get_pid());
-    LogInfo("init", "CPU cores: %d", sys::get_num_cores());
+    // Banner-style lines (mirror bitcoind's top-of-log format).
+    LogInfo("init", "%s version v%s (release build)",
+            CLIENT_NAME, CLIENT_VERSION_STRING);
 
     // Load config file if specified or from default location
     if (!args.config_file.empty()) {
-        if (node.config.load(args.config_file)) {
-            LogInfo("init", "Loaded config from %s", args.config_file.c_str());
+        if (!node.config.load(args.config_file)) {
+            LogWarn("init", "Config file: %s (not found, skipping)",
+                    args.config_file.c_str());
         } else {
-            LogWarn("init", "Could not load config file '%s'", args.config_file.c_str());
+            LogInfo("init", "Config file: %s", args.config_file.c_str());
         }
     }
 
@@ -1129,7 +1155,9 @@ bool app_init(NodeContext& node, const AppArgs& args) {
     if (args.config_file.empty()) {
         std::string conf_path = node.config_path();
         if (node.config.load(conf_path)) {
-            LogInfo("init", "Loaded config from %s", conf_path.c_str());
+            LogInfo("init", "Config file: %s", conf_path.c_str());
+        } else {
+            LogInfo("init", "Config file: %s (not found, skipping)", conf_path.c_str());
         }
     }
 
@@ -1137,6 +1165,12 @@ bool app_init(NodeContext& node, const AppArgs& args) {
     if (!step3_lock_data_dir(node))             return false;
     if (!step4_initialize_logging(node, args))  return false;
     if (!step5_create_pid_file(node))           return false;
+
+    // Connection limit and scheduler thread (bitcoind prints these next).
+    LogInfo("init", "Using at most %d automatic connections (1024 file descriptors available)",
+            args.max_connections);
+    LogInfo("init", "scheduler thread start");
+
     if (!step6_initialize_chain(node, args))    return false;
     if (!step7_initialize_wallet(node, args))   return false;
     if (!step8_initialize_network(node, args))  return false;
@@ -1148,8 +1182,7 @@ bool app_init(NodeContext& node, const AppArgs& args) {
     // Set the signal handler target
     sys::g_signal_node = &node;
 
-    LogInfo("init", "Initialization complete (%d subsystems)",
-            static_cast<int>(node.subsystems.size()));
+    LogInfo("init", "init message: Done loading");
     return true;
 }
 

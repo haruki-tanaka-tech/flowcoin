@@ -87,24 +87,6 @@ static void install_signal_handlers() {
 }
 
 // ============================================================================
-// Banner printing
-// ============================================================================
-
-static void print_banner() {
-    std::cout << "\n"
-              << "  ╔═══════════════════════════════════════╗\n"
-              << "  ║         FlowCoin Core v"
-              << CLIENT_VERSION_STRING << "            ║\n"
-              << "  ║   Keccak-256d Proof-of-Work Consensus  ║\n"
-              << "  ╚═══════════════════════════════════════╝\n"
-              << "\n"
-              << "  " << flow::version::COPYRIGHT << "\n"
-              << "  " << flow::version::LICENSE << "\n"
-              << "  " << flow::version::URL << "\n"
-              << "\n";
-}
-
-// ============================================================================
 // Main entry point
 // ============================================================================
 
@@ -122,15 +104,8 @@ int main(int argc, char* argv[]) {
         return EXIT_SUCCESS;
     }
 
-    // ---- Print banner (before daemonizing) ----
-    if (!args.daemon) {
-        print_banner();
-    }
-
     // ---- Daemonize if requested ----
     if (args.daemon) {
-        std::cout << CLIENT_NAME << " v" << CLIENT_VERSION_STRING
-                  << " starting in daemon mode..." << std::endl;
 
         if (!flow::sys::daemonize()) {
             std::cerr << "Error: daemonization failed" << std::endl;

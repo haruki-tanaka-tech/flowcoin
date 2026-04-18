@@ -112,7 +112,9 @@ bool NetManager::start() {
     struct sockaddr_in6 bind_addr6;
     uv_ip6_addr("::", port_, &bind_addr6);
     r = uv_tcp_bind(server_, reinterpret_cast<const struct sockaddr*>(&bind_addr6), 0);
-    if (r < 0) {
+    if (r >= 0) {
+        LogInfo("net", "Bound to [::]:%u", port_);
+    } else {
         // IPv6 not available — fallback to IPv4 only
         LogInfo("net", "IPv6 bind failed (%s), falling back to IPv4", uv_strerror(r));
         uv_close(reinterpret_cast<uv_handle_t*>(server_), on_close);
@@ -135,6 +137,7 @@ bool NetManager::start() {
             loop_ = nullptr;
             return false;
         }
+        LogInfo("net", "Bound to 0.0.0.0:%u", port_);
     }
 
     // Start listening
@@ -152,7 +155,7 @@ bool NetManager::start() {
         return false;
     }
 
-    LogInfo("net", "listening on port %u", port_);
+    // (Bound-to lines already emitted above.)
 
     // Create periodic timer (fires every 30 seconds)
     timer_ = new uv_timer_t;

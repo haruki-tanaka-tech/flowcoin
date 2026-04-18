@@ -104,11 +104,10 @@ const char* log_category_name(uint32_t cat) {
 // Timestamp formatting
 // ============================================================================
 
+// ISO 8601 UTC timestamp matching bitcoind's format: "2026-04-18T06:32:03Z".
 static void format_timestamp(char* buf, size_t len) {
     auto now = std::chrono::system_clock::now();
     auto time_t_now = std::chrono::system_clock::to_time_t(now);
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()) % 1000;
 
     struct tm tm_buf;
 #ifdef _WIN32
@@ -117,11 +116,7 @@ static void format_timestamp(char* buf, size_t len) {
     gmtime_r(&time_t_now, &tm_buf);
 #endif
 
-    int written = static_cast<int>(std::strftime(buf, len, "%Y-%m-%d %H:%M:%S", &tm_buf));
-    if (written > 0 && static_cast<size_t>(written) + 5 < len) {
-        std::snprintf(buf + written, len - static_cast<size_t>(written),
-                     ".%03d", static_cast<int>(ms.count()));
-    }
+    std::strftime(buf, len, "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
 }
 
 static int64_t now_us() {
@@ -274,7 +269,7 @@ static void update_stats(LogLevel level);
 void log_writev(LogLevel level, const char* category, const char* fmt, va_list args) {
     if (level < g_min_level) return;
 
-    // Build timestamp
+    // Build timestamp — bitcoind layout: "2026-04-18T06:32:03Z message\n".
     char timestamp[40];
     if (g_print_timestamps) {
         format_timestamp(timestamp, sizeof(timestamp));
@@ -284,17 +279,16 @@ void log_writev(LogLevel level, const char* category, const char* fmt, va_list a
     char msg[8192];
     std::vsnprintf(msg, sizeof(msg), fmt, args);
 
-    // Build the full line
+    // Assemble the full line. We intentionally do not prepend [LEVEL] or
+    // [category] — bitcoind shows only the timestamp and the message.
+    // Thread ids are optional (enabled by log_set_thread_id).
     char line[8400];
     int offset = 0;
 
     if (g_print_timestamps) {
         offset += std::snprintf(line + offset, sizeof(line) - static_cast<size_t>(offset),
-                               "[%s] ", timestamp);
+                               "%s ", timestamp);
     }
-
-    offset += std::snprintf(line + offset, sizeof(line) - static_cast<size_t>(offset),
-                           "[%-5s] ", log_level_name(level));
 
     if (g_print_thread_id) {
         std::ostringstream tid;
@@ -304,7 +298,8 @@ void log_writev(LogLevel level, const char* category, const char* fmt, va_list a
     }
 
     offset += std::snprintf(line + offset, sizeof(line) - static_cast<size_t>(offset),
-                           "[%s] %s\n", category, msg);
+                           "%s\n", msg);
+    (void)category;  // retained in the API for filtering; not printed
 
     // Push to ring buffer and update stats before taking the log mutex
     {
