@@ -1,11 +1,19 @@
 # FlowCoin RPC API Reference
 
-FlowCoin exposes a JSON-RPC 2.0 interface over HTTP. All requests require
-HTTP Basic authentication using the `rpcuser` and `rpcpassword` configured
-in `flowcoin.conf` or passed via command-line flags.
+FlowCoin exposes a JSON-RPC 2.0 interface over HTTP. The method names,
+field order, and response layout mirror Bitcoin Core 30.x so existing
+Bitcoin tooling works unchanged.
 
 **Default endpoint:** `http://127.0.0.1:9334`
-(testnet: 19334, regtest: 29334)
+(testnet: `19334`, regtest: `29334`)
+
+## Authentication
+
+By default the node writes a one-line cookie at `<datadir>/.cookie` on
+startup (format: `username:password`, same as Bitcoin Core). `flowcoin-cli`
+picks it up automatically — no configuration required. For explicit
+credentials, set `rpcuser` / `rpcpassword` in `flowcoin.conf` or via
+command-line flags (`-rpcuser=…`, `-rpcpassword=…`).
 
 ## Request Format
 
@@ -20,31 +28,22 @@ in `flowcoin.conf` or passed via command-line flags.
 
 ## Response Format
 
-Success:
+Success — compact single-line JSON, field order `jsonrpc, result, id`,
+no `"error"` field:
 ```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": 12345
-}
+{"jsonrpc":"2.0","result":12345,"id":1}
 ```
 
-Error:
+Error — same shape, no `"result"` field:
 ```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -1,
-    "message": "Error description"
-  }
-}
+{"jsonrpc":"2.0","error":{"code":-1,"message":"Error description"},"id":1}
 ```
 
 ## Using curl
 
 ```bash
-curl -u user:pass -X POST http://127.0.0.1:9334 \
+USERPASS=$(cat ~/.flowcoin/.cookie)
+curl -s -u "$USERPASS" -X POST http://127.0.0.1:9334/ \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"METHOD","params":[ARGS]}'
 ```
@@ -52,7 +51,11 @@ curl -u user:pass -X POST http://127.0.0.1:9334 \
 ## Using flowcoin-cli
 
 ```bash
-flowcoin-cli --rpcuser=user --rpcpassword=pass METHOD [ARGS...]
+flowcoin-cli METHOD [ARGS...]          # cookie auth picked up automatically
+flowcoin-cli help                      # list every registered method
+flowcoin-cli help METHOD               # detailed usage for one method
+flowcoin-cli -getinfo                  # one-line dashboard
+flowcoin-cli -netinfo                  # peer connection summary
 ```
 
 ---

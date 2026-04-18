@@ -3,298 +3,280 @@
 ## Quick Start
 
 ```bash
-# Build the miner
-cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc) flowcoin-miner
+# Build the miner (bundled with the standard CMake build)
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 
-# Run miner (auto-detects GPU)
-./flowcoin-miner
+# Start the full node (miner talks to it over JSON-RPC)
+./build/flowcoind -daemon
+
+# Start the miner — cookie auth, all threads, full-memory mode
+./build/flowcoin-miner --cookie ~/.flowcoin/.cookie
 ```
 
 ## Overview
 
-FlowCoin uses Keccak-256d Proof-of-Work, where miners search for a nonce
-such that the double Keccak-256 hash of the block header falls below the
-difficulty target. The miner (`flowminer`) is a standalone native C++
-binary with an ncurses TUI for real-time feedback. It connects to a
-running `flowcoind` via JSON-RPC.
+FlowCoin uses [RandomX v2](https://github.com/tevador/RandomX) — the
+same CPU-oriented memory-hard proof-of-work that has secured the Monero
+network since November 2019. Each hash executes a pseudo-randomly
+generated program of 256 instructions against a 2 GiB deterministic
+dataset in a virtual machine. The bottleneck is DRAM bandwidth, not
+silicon gate count, so general-purpose CPUs outperform both GPUs and
+bespoke hardware by an order of magnitude.
 
-Each block includes:
-- A block header with a nonce that satisfies the PoW target
-- Transactions from the mempool
-- A coinbase transaction paying the block reward to the miner
+The `flowcoin-miner` binary is a standalone C++ process that talks to
+a running `flowcoind` over HTTP JSON-RPC (`getblocktemplate`,
+`submitblock`). Output style follows XMRig conventions — a banner at
+start-up, then timestamped tagged events, a `speed 10s/60s/15m` line
+every ten seconds, and `accepted (N/M)` / `rejected` events per
+submit.
 
-Mining uses GPU acceleration via OpenCL. The full Keccak-f[1600]
-permutation is implemented in a single OpenCL kernel for maximum
-throughput.
+Mining runs purely on the CPU. There is no OpenCL, no CUDA, no GPU
+path — and none is planned. A GPU port would be at best 10× slower
+per watt and serves no legitimate purpose for this chain.
 
-## GPU Support
+## Hardware requirements
 
-The miner uses OpenCL for cross-platform GPU mining:
-
-| GPU Vendor | Support |
-|------------|---------|
-| NVIDIA (GTX/RTX/Tesla) | OpenCL via NVIDIA drivers |
-| AMD (RX/Radeon/Instinct) | OpenCL via ROCm or AMDGPU-PRO |
-| Intel (Arc/UHD) | OpenCL via Intel compute runtime |
-| Apple (M1/M2/M3/M4) | OpenCL via Apple frameworks |
-| CPU fallback | Always available |
-
-The miner auto-detects the best available OpenCL device. Use `--cpu` to
-force CPU-only operation.
-
-## Hardware Requirements
-
-### Minimum (testnet / early mainnet)
+### Minimum
 
 | Component | Requirement |
 |---|---|
-| CPU | 4 cores |
-| RAM | 4 GB |
-| Storage | 20 GB SSD |
-| Network | Stable internet connection |
-| GPU | Optional (CPU-only works) |
+| CPU | Any x86-64 CPU with AES-NI (basically anything since ~2010). ARM64 also supported. |
+| RAM | 3 GiB (the 2 GiB dataset plus ~500 MiB for the node plus OS overhead) |
+| Storage | 1 GiB for node state — chain size is tiny at launch |
+| Network | Any broadband connection, incoming port 9333 preferably open |
 
-### Recommended (competitive mainnet mining)
+### Recommended
 
 | Component | Requirement |
 |---|---|
-| GPU | NVIDIA RTX 3080 or better (10GB+ VRAM) |
-| CPU | 8+ cores |
-| RAM | 16 GB |
-| Storage | 100 GB NVMe SSD |
-| Network | Low-latency broadband |
+| CPU | Modern desktop/laptop (Ryzen 7+, Core i7+, Apple Silicon) with ≥8 threads |
+| RAM | 8 GiB system memory — more threads benefit from more L3 cache |
+| Storage | NVMe SSD for the node (not the miner — the miner is RAM-bound) |
+| Network | Stable 24/7 uplink if you want to keep blocks in flight |
 
-## Software Setup
+Expected per-thread throughput in **full** memory mode (2 GiB dataset,
+JIT, AES-NI):
 
-### 1. Build the miner
-
-```bash
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make flowcoin-miner -j$(nproc)
-```
-
-### 2. Start the FlowCoin node
-
-```bash
-./flowcoind --datadir=$HOME/.flowcoin
-```
-
-Wait for the node to sync to the tip of the chain before mining.
-
-### 3. Configure RPC credentials
-
-Add credentials to `~/.flowcoin/flowcoin.conf`:
-
-```
-rpcuser=your_username
-rpcpassword=your_password
-```
-
-The miner reads this file automatically.
-
-## Running the Miner
-
-### Basic usage (zero arguments required)
-
-```bash
-flowcoin-miner
-```
-
-The miner will:
-1. Read RPC credentials from `~/.flowcoin/flowcoin.conf`
-2. Connect to flowcoind at `127.0.0.1:9334`
-3. Request a block template
-4. Begin hashing with Keccak-256d on the GPU
-
-### Command-line options
-
-| Option | Default | Description |
+| CPU class | H/s per thread | 8-thread aggregate |
 |---|---|---|
-| `--datadir <path>` | `~/.flowcoin` | Data directory |
-| `--rpcport <port>` | `9334` | Node RPC port |
-| `--rpcuser <user>` | from config | RPC username |
-| `--rpcpassword <pw>` | from config | RPC password |
-| `--cpu` | | Force CPU backend (no GPU) |
-| `--device <id>` | `0` | OpenCL device index |
-| `--help` | | Show help message |
+| Ryzen 9 5950X / 7950X | 1100–1600 | 9–13 kH/s |
+| Core i9-13900K | 1000–1400 | 8–11 kH/s |
+| Apple M2 Pro | 900–1200 | 7–10 kH/s |
+
+In **light** mode (256 MiB cache only, no dataset) expect ~40–90 H/s
+per thread — fine for verification, way too slow for competitive
+mining.
+
+## Configuring the node
+
+The miner needs a running `flowcoind` to hand it block templates and
+accept submitted blocks. First start the node:
+
+```bash
+./build/flowcoind -daemon
+```
+
+On first launch the node writes `~/.flowcoin/.cookie` — a one-line
+file in Bitcoin Core's format (`username:password`). The miner reads
+it directly. No `rpcuser` / `rpcpassword` config is needed.
+
+If you run the node on a separate machine, expose RPC to your LAN:
+
+```bash
+# node.example.lan
+./build/flowcoind -daemon -rpcbind=0.0.0.0 -rpcallowip=192.168.1.0/24
+```
+
+Then copy `~/.flowcoin/.cookie` from that machine to where the miner
+runs, and point the miner at the node's URL.
+
+## Running the miner
+
+### Everyday usage
+
+```bash
+./build/flowcoin-miner --cookie ~/.flowcoin/.cookie
+```
+
+This picks up all logical cores, allocates the 2 GiB dataset (~1.5 s
+init on a fast CPU), connects to `http://127.0.0.1:9334`, and starts
+hashing.
+
+### Flags
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `-o URL`, `--url URL` | `http://127.0.0.1:9334` | Node RPC endpoint |
+| `--cookie PATH` | — | Read HTTP Basic auth from Bitcoin-Core-style cookie file |
+| `-u U`, `--user U` / `-p P`, `--pass P` | — | Explicit credentials (alternative to `--cookie`) |
+| `-t N`, `--threads N` | auto | Worker threads |
+| `-a ADDR`, `--address ADDR` | node's wallet | Coinbase reward address (bech32 `fl1q...`) |
+| `--key PATH` | `~/.flowcoin/miner_key` | Ed25519 signing key (generated on first run) |
+| `-b SEC`, `--benchmark SEC` | — | Run RandomX for N seconds, print H/s, exit |
+| `--light` | — | Use the 256 MiB cache instead of the 2 GiB dataset |
+| `--no-color` | — | Disable ANSI colours |
 
 ### Examples
 
 ```bash
-# Default -- reads config from ~/.flowcoin
-flowcoin-miner
+# Default — full mode, all threads, node on localhost
+./build/flowcoin-miner --cookie ~/.flowcoin/.cookie
 
-# Custom RPC credentials
-flowcoin-miner --rpcuser flowcoin --rpcpassword pass123
+# Mine against a remote node with basic auth
+./build/flowcoin-miner -o http://node.example.lan:9334 \
+                       -u flow -p secret
 
-# Force CPU backend
-flowcoin-miner --cpu
+# 10-second RandomX benchmark (fast mode)
+./build/flowcoin-miner --benchmark 10
 
-# Custom data directory
-flowcoin-miner --datadir /mnt/data/flowcoin
+# 10-second benchmark in light mode (no 2 GiB allocation)
+./build/flowcoin-miner --benchmark 10 --light
 
-# Select specific GPU
-flowcoin-miner --device 1
+# Restrict to 4 threads, pay rewards to a specific address
+./build/flowcoin-miner --cookie ~/.flowcoin/.cookie \
+                       --threads 4 \
+                       --address fl1q…
 ```
 
-### Miner TUI output
+### Output
 
-The miner provides real-time feedback via an ncurses TUI:
-
-```
-  FlowCoin Miner v1.0.0
-  Keccak-256d PoW | OpenCL
-
-  Device: NVIDIA GeForce RTX 5080
-  Hashrate: 752.3 MH/s
-  Difficulty: 1.000000
-  Height: 42
-  Uptime: 00:12:34
-
-  [00:12:34] nonce=0x1A3F7B2C  hashrate=752.3 MH/s  blocks=0
-
-  +----------------------------------------------+
-  |              BLOCK FOUND!                    |
-  |  Height:   43                                |
-  |  Hash:     00001a3f7b2c4e89...               |
-  |  Reward:   50.00000000 FLC                   |
-  +----------------------------------------------+
-```
-
-## How Mining Works
-
-### Keccak-256d Proof-of-Work
-
-The miner searches for a nonce such that:
+Startup banner plus a live event stream:
 
 ```
-Keccak-256d(block_header) < target
+ * ABOUT        flowcoin-miner/0.1.0 gcc/15.2
+ * LIBS         RandomX/2.0 nlohmann-json/3.x
+ * CPU          AMD Ryzen 9 7950X  64-bit AES
+ *              threads:32
+ * NODE         127.0.0.1:9334
+ * ADDRESS      inherited from node wallet
+ * ALGO         randomx
+ * THREADS      32
+
+[2026-04-18 17:03:07.578]  config   miner pubkey c32e968b3cb9658a
+[2026-04-18 17:03:07.579]  net      connected to 127.0.0.1:9334  height=0
+[2026-04-18 17:03:07.823]  randomx  cache seed=9f32dc6a53fa6074  (243 ms)
+[2026-04-18 17:03:09.330]  randomx  dataset ready (2080 MB)  (1507 ms)
+[2026-04-18 17:03:09.331]  net      new job from 127.0.0.1:9334  height 1  diff 1.000  algo randomx
+[2026-04-18 17:03:17.580]  miner    speed 10s/60s/15m 12.34 kH/s 12.40 kH/s 12.40 kH/s
+[2026-04-18 17:05:42.114]  miner    accepted (1/1) height 1  nonce 487221  (22 ms)
 ```
 
-Where `Keccak-256d(x) = Keccak-256(Keccak-256(x))` using the Keccak
-padding byte 0x01 (Ethereum-style, not NIST SHA-3 0x06 padding).
+## How it works
 
-Each nonce attempt produces a completely different hash. The miner
-runs millions of nonce attempts per second on the GPU, each computing
-the full Keccak-f[1600] permutation twice.
+### The RandomX hash
 
-### OpenCL Kernel
+For each nonce:
 
-The GPU kernel implements the complete 24-round Keccak-f[1600]
-permutation. Each GPU work item processes a unique nonce:
+1. Initialise a 4 KiB scratchpad with AES-based mixing keyed on the
+   header bytes.
+2. Execute a pseudo-randomly generated program of 256 VM instructions
+   against the scratchpad and a shared 2 GiB dataset, looping eight
+   times. The instruction mix covers integer, floating-point, and
+   memory ops.
+3. Finalise the scratchpad with AES and produce a 256-bit digest via
+   Blake2b.
 
-1. Copy the block header template into local memory
-2. Insert the work item's nonce into the header
-3. Compute Keccak-256 (first pass)
-4. Compute Keccak-256 of the result (second pass)
-5. Compare against the target
-6. If below target, report the winning nonce
+Miners search for a nonce such that
 
-## Block Reward Schedule
+```
+RandomX(header[0..91], seed) <= target(nbits)
+```
 
-FlowCoin uses the same halving schedule as Bitcoin:
+where `seed` is the block hash at `rx_seed_height(height)` — the
+chain's own history keys the hash function. This forces every
+participant to rebuild the dataset on every epoch boundary (2048
+blocks) with a 64-block lag, preventing pre-computed-table attacks.
 
-| Era | Block Range | Reward per Block |
+### Seed rotation
+
+The RandomX cache / dataset is keyed on a seed that advances every
+2,048 blocks, with a 64-block lag so nodes converge on the new seed
+before it takes effect. The miner rebuilds the dataset (~1.5 s on a
+fast CPU) when the seed changes — visible in the `randomx  cache
+seed=…` log line.
+
+### Why CPU-only in practice
+
+- **Generated code.** Each hash runs a fresh 256-instruction program.
+  A fixed-function pipeline cannot run arbitrary programs; a
+  competitive implementation needs a general-purpose decode/issue
+  stage — i.e. a CPU.
+- **Memory-bandwidth bound.** DRAM transactions per outer iteration
+  cap throughput at the chip's DRAM pin rate. An ASIC gets no edge
+  over a commodity CPU on that bottleneck.
+- **Float determinism.** RandomX includes IEEE-754 double-precision
+  arithmetic with deterministic rounding modes. An ASIC without a
+  full FPU cannot run the algorithm.
+
+Monero has shipped RandomX since November 2019 with no ASIC reaching
+market. FlowCoin inherits that track record.
+
+## Block reward schedule
+
+Matches Bitcoin exactly:
+
+| Era | Blocks | Reward / block |
 |---|---|---|
-| 0 | 0 -- 209,999 | 50 FLC |
-| 1 | 210,000 -- 419,999 | 25 FLC |
-| 2 | 420,000 -- 629,999 | 12.5 FLC |
-| 3 | 630,000 -- 839,999 | 6.25 FLC |
-| ... | ... | halves every 210,000 blocks |
+| 0 | 0 – 209,999 | 50 FLOW |
+| 1 | 210,000 – 419,999 | 25 FLOW |
+| 2 | 420,000 – 629,999 | 12.5 FLOW |
+| … | … | halves every 210,000 blocks |
 
-Total supply converges to 21,000,000 FLC.
+Total supply converges to 21,000,000 FLOW. Coinbase outputs mature
+after `COINBASE_MATURITY = 100` confirmations.
 
-At 10-minute block intervals, each halving period lasts approximately 4 years.
-Coinbase outputs require 100 confirmations (COINBASE_MATURITY) before
-they can be spent.
+## Difficulty
 
-## Difficulty Adjustment
-
-Difficulty adjusts every 2,016 blocks (approximately 2 weeks at 10-minute
-blocks), using Bitcoin's exact retarget algorithm:
-
-1. Compute `actual_timespan` = timestamp of block 2015 - timestamp of block 0
-   in the current retarget period
-2. Clamp to `[RETARGET_TIMESPAN/4, RETARGET_TIMESPAN*4]` (between 3.5 days
-   and 8 weeks)
-3. `new_target = old_target * actual_timespan / RETARGET_TIMESPAN`
-4. Clamp to powLimit if exceeded
-
-If blocks are mined faster than 10 minutes, difficulty increases.
-If slower, difficulty decreases.
-
-Initial difficulty is very easy (nbits = 0x1f00ffff, approximately 2^226
-target), allowing early miners to find blocks with minimal hardware.
-
-## Mining Strategy Tips
-
-### Hardware optimization
-
-- Use a modern GPU with OpenCL support for maximum hashrate
-- Use NVMe storage for fast block data access
-- Keep the node and miner on the same machine to minimize RPC latency
-
-### Timing your submissions
-
-- The miner checks for new blocks every 5 seconds
-- If a new block arrives from another miner, the miner immediately
-  requests a fresh block template and restarts hashing
-- Submitting stale blocks (wrong prev_hash) wastes hash effort
+Retarget every 2,016 blocks using Bitcoin's algorithm (clamped to ±4×
+per period). The network floor is `nbits = 0x1d00ffff` (difficulty 1,
+target ≈ 2^224). At launch a solo CPU miner finds roughly one block
+per several days; once more miners join, difficulty retargets upward.
 
 ## Troubleshooting
 
-### "Block rejected: high-hash"
-
-The block hash did not meet the difficulty target. This is normal --
-keep mining. The miner will automatically retry with a new nonce range.
-
-### No OpenCL devices found
-
-Ensure your GPU drivers include OpenCL support:
-- NVIDIA: install the proprietary driver (nvidia-driver-xxx)
-- AMD: install ROCm or AMDGPU-PRO
-- Intel: install the Intel compute runtime
-
-### Cannot connect to flowcoind
-
-- Verify `flowcoind` is running
-- Check RPC credentials in `~/.flowcoin/flowcoin.conf`
-- Ensure the node has synced past IBD (initial block download)
-- Check `debug.log` for error messages
-
-### Low hashrate
-
-- Verify the GPU is being used: check the TUI device line
-- Ensure no other GPU-intensive programs are running
-- Try a different `--device` index if multiple GPUs are installed
+- **`error: could not connect to 127.0.0.1:9334` / `Is flowcoind running?`**
+  Start `flowcoind -daemon` first, give it a few seconds, retry.
+- **0 H/s for more than 10 seconds** — the 2 GiB dataset is still
+  initialising. On very slow machines this can take 5–10 s. If it
+  stays at 0 forever, switch to `--light` (256 MiB cache, init in
+  ~40 ms).
+- **Block rejected: `high-hash`** — hash was computed against a stale
+  target. Happens naturally when a new block arrives mid-search;
+  miner restarts against the fresh template automatically.
+- **Block rejected: `bad-diffbits`** — the node and miner disagree
+  on the expected `nbits`. Usually means they're running different
+  binaries; rebuild both.
+- **No peers** — `flowcoin-cli getpeerinfo` empty. Check that port
+  9333 isn't firewalled and that the seed (`seed.flowcoin.org`) is
+  reachable.
 
 ## Monitoring
 
-### Via RPC
-
 ```bash
-# Current mining status
-flowcoin-cli getmininginfo
-
-# Difficulty progress
-flowcoin-cli getdifficulty
-
-# Wallet balance (including mining rewards)
-flowcoin-cli getbalance
+./build/flowcoin-cli getmininginfo        # network difficulty, our hashrate, next block fee estimate
+./build/flowcoin-cli getdifficulty        # current target as a float
+./build/flowcoin-cli getnetworkhashps     # estimated global hashrate
+./build/flowcoin-cli getbalance           # rewards credited to your wallet
 ```
 
-## Pool Mining
+## Pool mining
 
-FlowCoin does not natively support pool mining in the initial release.
-Future protocol updates may introduce stratum-compatible pool support.
+Not supported yet. Stratum is on the roadmap once the network is
+stable enough to justify pool infrastructure; until then every miner
+is solo. The reward is the full coinbase output (50 FLOW) plus the
+transaction fees in the block.
 
-## Security Considerations
+## Security notes
 
-- Keep your `wallet.dat` backed up and encrypted
-- Use unique RPC credentials (not the defaults)
-- Do not expose the RPC port to the public internet
-- The miner generates a new address for each mined block automatically
-- Monitor for unusual difficulty adjustments that might indicate an attack
+- Back up `~/.flowcoin/wallet.dat` (while the node is stopped). The
+  HD seed derives every future address, so a single file is the
+  whole backup.
+- Never expose RPC (`port 9334`) to the public internet without a
+  firewall or TLS terminator in front.
+- The miner generates a fresh coinbase address per block by default —
+  do not override `--address` with a reused address unless you
+  understand the privacy trade-off.
+- Keep your miner's Ed25519 signing key (`~/.flowcoin/miner_key` by
+  default) backed up; losing it means losing the ability to sign new
+  blocks from that identity.

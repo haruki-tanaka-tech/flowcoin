@@ -48,18 +48,21 @@ By year 20, annual inflation drops below 0.5%.
 
 ## Mining Economics
 
-FlowCoin uses Keccak-256d Proof-of-Work, where hashrate is a function of
-GPU compute power and electricity cost. The larger internal state of
-Keccak (1600-bit vs SHA-256's 256-bit) naturally favors general-purpose
-GPU hardware over custom ASICs.
+FlowCoin uses RandomX v2 Proof-of-Work — the same CPU-oriented,
+memory-hard algorithm that has secured Monero since November 2019.
+Each hash runs a 256-instruction VM program against a 2 GiB
+deterministic dataset. The bottleneck is DRAM bandwidth, not silicon
+gate count, so general-purpose CPUs outperform both GPUs and bespoke
+ASICs by an order of magnitude.
 
 ### Cost Structure
 
 | Component | Bitcoin | FlowCoin |
 |-----------|---------|----------|
-| Capital (hardware) | ASIC miners | GPUs |
+| Capital (hardware) | ASIC miners | Commodity CPUs |
 | Recurring (energy) | Electricity | Electricity |
-| Output | SHA-256d hashes | Keccak-256d hashes |
+| Output | SHA-256d hashes | RandomX hashes |
+| Bottleneck | Silicon gate density | DRAM bandwidth |
 | Network benefit | Security | Security |
 
 ### Mining Revenue Formula
@@ -71,24 +74,31 @@ Daily revenue = blocks_per_day * block_reward * (local_hashrate / network_hashra
 
 At genesis: 144 * 50 = 7,200 FLOW/day for the entire network.
 
-## GPU Requirements Over Time
+## CPU Requirements Over Time
 
 ### Era 0 (Blocks 0-209,999)
 
-- **Early blocks**: A single consumer GPU suffices. Difficulty is
-  at minimum, so even modest GPUs can find blocks.
-- **Later in era 0**: As difficulty increases with more miners,
-  higher-end GPUs provide an advantage.
+- **Early blocks**: A single laptop or desktop CPU suffices. Difficulty
+  is at minimum, so even modest hardware can find blocks.
+- **Later in era 0**: As difficulty rises with more miners, multi-core
+  desktops or small server boxes provide an advantage. Every step is
+  linear in thread count and DRAM channels, so there is no winner-take-all
+  hardware tier.
 
 ### Era 1+ (Blocks 210,000+)
 
-- **Competitive mining**: Multiple high-end GPUs or cloud GPU clusters.
-- As difficulty rises, only efficient operations remain profitable.
+- **Competitive mining**: Multi-socket workstations and small server
+  racks. The economics favour many commodity machines over a few
+  specialised ones because per-thread H/s is flat across CPU generations
+  once memory bandwidth is saturated.
+- As difficulty rises, only efficient operations (good perf/watt CPUs,
+  cheap electricity) remain profitable.
 
 ### Node Requirements (Non-Mining)
 
-- **CPU**: x86-64 with SSE4.2.
-- **RAM**: 4 GB minimum.
+- **CPU**: x86-64 with AES-NI, or ARM64.
+- **RAM**: 1 GB minimum for a pruned node; 3 GB to also run the miner
+  in full mode (2 GiB dataset).
 - **Disk**: 1 GB base + ~1 GB per 100K blocks of chain data.
 - **Network**: 1 Mbps symmetric minimum.
 
@@ -106,7 +116,7 @@ Fee policy mirrors Bitcoin:
 
 ### Phase 2: Fee Emergence (Era 3-5)
 
-Block reward drops to 1.5-6.25 FLC. As the network grows,
+Block reward drops to 1.5-6.25 FLOW. As the network grows,
 transaction demand rises. Fees become a meaningful portion of
 miner revenue.
 
@@ -127,22 +137,25 @@ FlowCoin uses a bucketed fee estimator similar to Bitcoin Core:
 | Property | Bitcoin | Ethereum | FlowCoin |
 |----------|---------|----------|----------|
 | Max supply | 21M | Unlimited | 21M |
-| Consensus | PoW (SHA-256d) | PoS | PoW (Keccak-256d) |
+| Consensus | PoW (SHA-256d) | PoS | PoW (RandomX) |
 | Block time | 10 min | 12 sec | 10 min |
-| Block reward | 6.25 BTC (2024) | ~2 ETH | 50 FLC (genesis) |
+| Block reward | 6.25 BTC (2024) | ~2 ETH | 50 FLOW (genesis) |
 | Halving | Every 210K blocks | N/A | Every 210K blocks |
-| Hardware | ASICs | Validators | GPUs |
-| Barrier to entry | Very high (ASICs) | 32 ETH stake | Consumer GPU |
+| Hardware | ASICs | Validators | Commodity CPUs |
+| Barrier to entry | Very high (ASICs) | 32 ETH stake | Any laptop/desktop |
 
 ### Key Economic Differences
 
-1. **GPU mining**: Keccak-256d's large internal state (1600 bits)
-   naturally favors general-purpose GPU hardware over custom ASICs,
-   keeping mining more accessible.
+1. **CPU mining**: RandomX's VM-generated programs, DRAM-bandwidth
+   ceiling, and IEEE-754 float ops make ASIC specialisation
+   economically pointless — Monero has run RandomX since November 2019
+   with no ASIC reaching market. Mining stays open to anyone with a
+   general-purpose computer.
 
-2. **GPU depreciation curve**: GPUs depreciate more slowly than ASICs
-   and have resale value for other compute tasks. This lowers the
-   effective cost of mining hardware.
+2. **Hardware depreciation curve**: Commodity CPUs depreciate far
+   more slowly than ASICs and retain full resale value as ordinary
+   computers. There is no dedicated mining hardware to strand when
+   price drops.
 
 3. **Same monetary policy as Bitcoin**: The familiar 21M supply cap
    and halving schedule provide economic predictability.
@@ -151,21 +164,25 @@ FlowCoin uses a bucketed fee estimator similar to Bitcoin Core:
 
 ### Value Accrual Mechanisms
 
-1. **Token demand**: Using the network requires holding FLC for fees.
+1. **Token demand**: Using the network requires holding FLOW for fees.
 
-2. **Mining economics**: Mining requires GPU compute investment,
-   creating natural demand for the token.
+2. **Mining economics**: Mining requires CPU compute and electricity
+   investment, creating natural demand for the token.
 
 3. **Network effects**: As adoption grows, transaction volume
    and fee revenue increase.
 
 ## Risk Factors
 
-1. **GPU centralization**: If mining becomes dominated by a few
-   large GPU clusters, it mirrors Bitcoin's ASIC centralization concern.
+1. **Hashrate centralisation**: If mining becomes dominated by a few
+   large CPU-farm operators, the network loses some of its
+   decentralisation premise. RandomX's flat per-thread throughput curve
+   makes this much less likely than in SHA-256 or GPU-mineable chains,
+   but it is not impossible.
 
-2. **Competition**: Other Keccak-based or GPU-mineable projects may
-   compete for hashrate. Network effects provide some moat.
+2. **Competition**: Other RandomX-based chains (notably Monero) compete
+   for CPU hashrate. Network effects and the Bitcoin-compatible tooling
+   provide some moat.
 
 ## Token Utility
 
@@ -181,9 +198,9 @@ Every transaction requires a fee paid in FLOW. Fees serve two purposes:
 
 ### 2. Mining Collateral
 
-Miners must invest compute resources (GPUs, electricity) to find
-valid proof-of-work. The expected FLC reward must exceed these costs
-for mining to be profitable. This creates an implicit collateral
+Miners must invest compute resources (CPU time, electricity, RAM) to
+find valid proof-of-work. The expected FLOW reward must exceed these
+costs for mining to be profitable. This creates an implicit collateral
 requirement: miners stake their compute costs against the probability
 of earning block rewards.
 
@@ -198,9 +215,9 @@ E[profit] = P(win) * reward - cost_compute - cost_data - cost_energy
 ```
 
 Where P(win) depends on:
-- Hashrate (more Keccak-256d hashes per second -> higher probability)
+- Hashrate (more RandomX hashes per second -> higher probability)
 - Network difficulty (more miners -> lower win probability)
-- Hardware efficiency (better GPU -> more hashes per watt)
+- Hardware efficiency (better CPU + DRAM -> more hashes per watt)
 
 ### Selfish Mining
 
@@ -214,7 +231,11 @@ A miner controlling >51% of the network hashrate could:
 - Censor transactions
 
 The cost of a 51% attack is the hashrate required to exceed all
-other miners, which scales with total network GPU power.
+other miners, which scales with total network CPU power. Because
+RandomX cannot be accelerated by specialised silicon, an attacker
+must acquire or rent comparable quantities of general-purpose
+compute — a commodity that is competitive, auditable, and expensive
+at scale.
 
 ### Free-Rider Problem
 
@@ -262,12 +283,12 @@ If FLOW price falls:
 
 | Property | Proof-of-Stake | Proof-of-Work (FlowCoin) |
 |----------|---------------|--------------------------|
-| Capital type | Financial (tokens) | Physical (GPUs) |
+| Capital type | Financial (tokens) | Physical (CPUs + RAM) |
 | Lock-up | Token staking | Compute commitment |
 | Slashing | Token destruction | Wasted compute |
-| Centralization risk | Wealth concentration | GPU concentration |
-| Energy use | Very low | Moderate |
-| Barrier to entry | Capital requirement | Hardware |
+| Centralisation risk | Wealth concentration | CPU-farm concentration |
+| Energy use | Very low | Moderate (CPU TDP, not ASIC farms) |
+| Barrier to entry | Capital requirement | Any general-purpose computer |
 | Validator income | Proportional to stake | Proportional to hashrate |
 
 ### Key Advantage Over PoS
@@ -285,51 +306,57 @@ access to block rewards.
 
 ### Mining Cost Breakdown (Era 0, Year 1)
 
-Assumptions: 1 FLOW = $1.00 USD (illustrative)
+Assumptions: 1 FLOW = $1.00 USD (illustrative). Operation: four
+mid-range desktop boxes, each a 16-thread CPU with 16 GiB DRAM,
+colocated at modest power density.
 
 | Cost Component | Monthly | % of Total |
 |----------------|---------|------------|
-| GPU hardware (amortized 3y) | $800 | 44% |
-| Electricity (8 GPUs x 350W) | $420 | 23% |
-| Internet bandwidth (100 Mbps) | $100 | 5.5% |
-| Server hosting/cooling | $300 | 16.5% |
-| Storage (chain data) | $50 | 2.7% |
-| Maintenance and monitoring | $130 | 7.1% |
-| **Total** | **$1,800** | **100%** |
+| CPU + board + RAM (amortised 3y) | $320 | 28% |
+| Electricity (4 boxes x ~200W) | $230 | 20% |
+| Internet bandwidth (50 Mbps) | $80 | 7% |
+| Hosting/cooling | $200 | 18% |
+| Storage (chain data) | $40 | 3% |
+| Maintenance and monitoring | $130 | 11% |
+| Overhead (backups, spare parts) | $150 | 13% |
+| **Total** | **$1,150** | **100%** |
 
 Expected revenue (1% of network hashrate):
-- 144 blocks/day * 50 FLC * 1% = 72 FLC/day
-- 72 * 30 = 2,160 FLC/month = $2,160/month
+- 144 blocks/day * 50 FLOW * 1% = 72 FLOW/day
+- 72 * 30 = 2,160 FLOW/month = $2,160/month
 
-Profit margin: ~17% (thin margin encourages efficiency competition).
+Profit margin: ~47% at this price point. Margins compress as
+difficulty rises and more operators join the network.
 
 ### Break-Even Analysis
 
-The break-even FLC price for a mining operation depends on:
+The break-even FLOW price for a mining operation depends on:
 
 ```
 break_even_price = monthly_cost / (blocks_per_month * reward * share)
-                 = $1,800 / (4,320 * 50 * 0.01)
-                 = $1,800 / 2,160
-                 = $0.83 per FLC
+                 = $1,150 / (4,320 * 50 * 0.01)
+                 = $1,150 / 2,160
+                 = $0.53 per FLOW
 ```
 
-If FLC trades above $0.83, the operation is profitable.
+If FLOW trades above $0.53, the operation is profitable.
 If below, rational miners exit, difficulty drops, and remaining
 miners' shares increase until equilibrium is restored.
 
 ### Hardware ROI Timeline
 
-| GPU Model | Cost | Hash Equivalent | Payback Period |
-|-----------|------|-----------------|----------------|
-| RTX 4090 | $1,600 | High | 6-12 months |
-| RTX 4080 | $1,200 | Medium-High | 8-14 months |
-| RTX 3090 | $800 | Medium | 10-16 months |
-| A100 80GB | $10,000 | Very High | 12-18 months |
-| H100 80GB | $25,000 | Highest | 18-24 months |
+Throughput figures below are full-mode RandomX (2 GiB dataset, JIT,
+AES-NI).
 
-Unlike ASICs, GPUs retain resale value for gaming, rendering,
-and general-purpose AI workloads.
+| CPU class | Street price | Throughput | Payback (at illustrative $1/FLOW) |
+|---|---|---|---|
+| Ryzen 7 7700 (8c/16t) | $300 | ~10 kH/s | ~4–8 months |
+| Ryzen 9 7950X (16c/32t) | $550 | ~20 kH/s | ~3–6 months |
+| EPYC 9654 (96c/192t) | $11,000 | ~80 kH/s | ~10–16 months |
+| Apple M2 Pro laptop | $2,000 | ~8 kH/s | ~12–18 months |
+
+Unlike ASICs, these CPUs retain full resale value as general-purpose
+computers — the hardware is never stranded if the chain price drops.
 
 ## Treasury and Funding Model
 

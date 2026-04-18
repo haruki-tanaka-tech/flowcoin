@@ -2,9 +2,11 @@
 
 ## Overview
 
-FlowCoin is a Keccak-256d Proof-of-Work cryptocurrency that closely
-mirrors Bitcoin Core's design, using modern cryptographic primitives
-(Keccak-256 hashing, Ed25519 signatures, Bech32m addresses).
+FlowCoin is a CPU-only Proof-of-Work cryptocurrency that closely mirrors
+Bitcoin Core's design. The proof-of-work hash is RandomX (the same
+algorithm Monero has used on mainnet since November 2019); the block-id
+hash is keccak256d; addresses are Bech32 v0 with the `fl` HRP; signatures
+are Ed25519 (RFC 8032).
 
 ## Module Dependency Graph
 
@@ -26,17 +28,18 @@ flowcoind (main binary)
   |
   +-- flowcoin_primitives        (block, transaction)
   +-- flowcoin_crypto            (Ed25519, bech32, AES-256, SLIP-0010)
-  +-- flowcoin_hash              (Keccak-256, Merkle trees, Bloom filters)
+  +-- flowcoin_hash              (keccak256d, Merkle trees, Bloom filters)
   +-- flowcoin_util              (arith_uint256, time, random, threading)
   +-- flowcoin_script            (script evaluation, standard scripts)
   |
   +-- sqlite (vendored)          (UTXO set, wallet DB, chain DB)
-  +-- xkcp (vendored)            (Keccak reference implementation)
+  +-- randomx (vendored)         (RandomX v2 PoW from tevador)
+  +-- xkcp (vendored)            (Keccak reference implementation for block IDs)
   +-- libuv (vendored)           (async I/O, event loop)
   +-- nlohmann/json (vendored)   (JSON parsing)
 ```
 
-## Data Flow: Block Received -> Validation -> Chain State -> Model Update
+## Data Flow: Block Received → Validation → Chain State
 
 ### 1. Block Reception
 
@@ -55,12 +58,15 @@ A block arrives via the P2P network through `flowcoin_net`:
 |-------|-------|------|
 | 1 | prev_hash | Must match parent block hash |
 | 2 | height | Must be parent_height + 1 |
-| 3 | timestamp | Must be after parent timestamp |
-| 4 | timestamp | Must respect MIN_BLOCK_INTERVAL (60s) |
-| 5 | timestamp | Must not be >2h in the future |
-| 6 | block_hash | Keccak-256d(header) must be below difficulty target |
-| 7 | nbits | Must match retarget algorithm output |
-| 8 | miner_sig | Ed25519 signature must verify |
+| 3 | timestamp | Must be strictly greater than Median Time Past of last 11 blocks |
+| 4 | timestamp | Must not be >2h in the future |
+| 5 | nbits | Must match retarget algorithm output |
+| 6 | pow_hash | `RandomX(header[0..91], pow_seed)` must be ≤ target decoded from nbits |
+| 7 | miner_sig | Ed25519 signature must verify against miner_pubkey |
+
+The RandomX seed is the block hash at `rx_seed_height(height)` —
+an earlier block from the same chain. It rotates every 2,048 blocks
+with a 64-block lag to avoid cache thrash around epoch boundaries.
 
 ### 3. Block Body Validation
 
@@ -87,7 +93,6 @@ FlowCoin uses a multi-threaded architecture with clear ownership rules:
 - Startup/shutdown coordination
 - Signal handling
 - Block validation (single-threaded for determinism)
-- Model evaluation (single-threaded, float32, fixed order)
 
 ### Network Thread (libuv event loop)
 - TCP connection management
@@ -101,9 +106,10 @@ FlowCoin uses a multi-threaded architecture with clear ownership rules:
 - Read-only access to chain state (shared mutex)
 - Write operations (send, mine) acquire exclusive lock
 
-### Mining Thread
-- Block template construction
-- Nonce search (Keccak-256d PoW)
+### Mining Thread Pool
+- Block template construction (single-thread)
+- Nonce search (one RandomX VM per worker thread; each worker scans
+  a disjoint nonce stripe; first to find a valid hash wins)
 
 ### Wallet Thread
 - UTXO scanning
@@ -126,11 +132,13 @@ FlowCoin uses a multi-threaded architecture with clear ownership rules:
 - **Peer state**: ~1 KB per peer. 125 peers: ~125 KB.
 
 ### On Disk
-- **Block files** (`blocks/blk?????.dat`): Raw serialized blocks, 128 MB per file.
-- **UTXO database** (`utxo.db`): SQLite with WAL mode.
-- **Wallet database** (`wallet.dat`): SQLite, encrypted keys.
+- **Block files** (`blocks/blk?????.dat`): Raw serialized blocks, 128 MiB per file.
+- **Undo files** (`blocks/rev?????.dat`): Per-block undo data for reorg rollback.
+- **UTXO database** (`chainstate/`): SQLite with WAL mode.
+- **Wallet database** (`wallet.dat` at datadir root, not `wallets/`): SQLite
+  with an HD seed (SLIP-0010 path `m/44'/9555'/0'/0/i`) and encrypted keys.
 - **Chain database** (`chaindb.db`): Block index, chain state metadata.
-- **Transaction index** (`txindex.db`): Optional, maps txid -> block position.
+- **Transaction index** (`indexes/`): Optional, maps txid → block position.
 
 ## Database Schemas
 
@@ -296,12 +304,15 @@ Deterministic build support:
 
 - **Determinism**: All consensus-critical computation produces identical
   results across platforms.
-- **Cryptography**: Ed25519 for signatures, Keccak-256 for hashing,
-  AES-256-CBC for wallet encryption, SLIP-0010 for HD key derivation.
-- **Network**: All peer messages are checksummed (Keccak-256 truncated to 4 bytes).
-  Misbehaving peers are scored and banned at threshold.
-- **Wallet**: Private keys encrypted at rest, per-block mining address rotation,
-  keypool for address pre-generation.
+- **Cryptography**: Ed25519 for signatures, keccak256d for block IDs,
+  merkle roots, and address hashing, RandomX v2 for proof-of-work,
+  SLIP-0010 for HD key derivation.
+- **Network**: All peer messages are checksummed (keccak256d truncated
+  to 4 bytes). Misbehaving peers are scored and banned at threshold.
+- **Wallet**: HD-derived from a single seed (SLIP-0010). Keys currently
+  stored unencrypted in `wallet.dat` — back up the file with ordinary
+  filesystem permissions. Per-block mining address rotation; keypool
+  for address pre-generation.
 
 ## Configuration System
 
@@ -434,7 +445,9 @@ Clean shutdown follows this order:
 | Operation | Time (typical) |
 |-----------|---------------|
 | Header validation | <1 ms |
-| PoW hash check (Keccak-256d) | <0.01 ms |
+| PoW hash check (RandomX light mode) | ~10 ms |
+| PoW hash check (RandomX full dataset) | ~0.7 ms |
+| Block-id hash (keccak256d) | <0.01 ms |
 | Transaction signature verification | ~0.1 ms per sig |
 | UTXO lookups | ~0.01 ms per input |
 | Merkle root computation | ~0.1 ms for 100 txs |
@@ -586,16 +599,21 @@ if the previous fails or times out.
 
 ### Address Formats
 
-FlowCoin uses Bech32m encoding (BIP-350) with network-specific
-human-readable prefixes:
+FlowCoin uses Bech32 v0 — BIP-173 format — with network-specific HRPs.
+Witness version 0 means the checksum polynomial is the original
+Bech32 constant (not the Bech32m constant used for witness v1+, per
+BIP-350), which makes the on-wire bytes structurally identical to a
+Bitcoin P2WPKH address (`bc1q...`) except for the HRP:
 
-| Network | Prefix | Example |
-|---------|--------|---------|
-| Mainnet | `fl` | `fl1q2w3e4r5t6y7u8i9o0p` |
-| Testnet | `tfl` | `tfl1a2s3d4f5g6h7j8k9l0` |
-| Regtest | `rfl` | `rfl1z2x3c4v5b6n7m8q9w0` |
+| Network | HRP | Example |
+|---------|-----|---------|
+| Mainnet | `fl` | `fl1qdd2j0j3zz0s7q4xzu4huznu7zr5udt3sgg73kv` |
+| Testnet | `tfl` | `tfl1q…` |
+| Regtest | `rfl` | `rfl1q…` |
 
-Address payload: 32-byte keccak256(pubkey) encoded in Bech32m.
+Address payload: 20-byte `keccak256d(pubkey)[0..20]`, encoded as a
+v0 witness program in Bech32. That gives 42-character addresses,
+the same length as Bitcoin P2WPKH.
 
 ## REST API Details
 

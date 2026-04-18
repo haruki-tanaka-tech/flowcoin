@@ -2,14 +2,20 @@
 
 ## 1. Overview
 
-FlowCoin is a Keccak-256d Proof-of-Work cryptocurrency that combines Bitcoin's proven
-economic model (21M supply, 10-minute blocks, halving schedule) with modern cryptographic
-primitives.
+FlowCoin is a CPU-only Proof-of-Work cryptocurrency that combines Bitcoin's
+proven economic model (21M supply, 10-minute blocks, halving schedule) with
+a memory-hard PoW and modern signatures.
 
 The protocol uses:
-- Keccak-256d (double Keccak-256, padding byte 0x01) for all hashing and proof-of-work
-- Ed25519 signatures instead of secp256k1 ECDSA
-- Bech32m addresses with the "fl" human-readable prefix
+- **RandomX v2** (from tevador, deployed on Monero since Nov 2019) for proof-of-work
+- **keccak256d** (double Keccak-256, padding byte 0x01) for block IDs, merkle roots,
+  transaction IDs, and address derivation
+- **Ed25519** signatures (RFC 8032) instead of secp256k1 ECDSA
+- **Bech32 v0** addresses with the `fl` human-readable prefix (structurally
+  identical to Bitcoin P2WPKH `bc1q...` format, modulo the HRP)
+- **Bitcoin-Core-compatible** P2P wire format and JSON-RPC on-disk layout,
+  so existing Bitcoin tooling can read our traffic and data directories with
+  only magic-byte / hash-function changes
 
 This document specifies the complete protocol: consensus rules, block format,
 transaction format, network protocol, and storage format.
@@ -35,11 +41,22 @@ data followed by a 32-byte Ed25519 public key and a 64-byte signature.
 
 Total: 188 bytes.
 
-The block hash is computed as:
+Each block carries two distinct hashes:
+
 ```
-block_hash = Keccak256d(header[0..187])
+block_id = keccak256d(header[0..91])              # cheap, used for chain refs,
+                                                   #   P2P, merkle, RPC, indexing
+pow_hash = RandomX(header[0..91], pow_seed)       # CPU-only memory-hard PoW,
+                                                   #   compared against target
 ```
-where Keccak256d(x) = Keccak256(Keccak256(x)).
+
+where `keccak256d(x) = Keccak-256(Keccak-256(x))` using the original Keccak
+padding byte `0x01` (not the `0x06` used by NIST SHA-3).
+
+`pow_seed` is the block hash at `rx_seed_height(height)` — an earlier block
+from the chain itself. The seed rotates every 2,048 blocks with a 64-block
+lag so nodes agree on the seed well before rotation takes effect and reorgs
+across an epoch boundary don't thrash the RandomX cache.
 
 ### 2.2 Block Validation
 
@@ -55,25 +72,24 @@ Every block must pass all validation checks to be accepted:
    - `block.timestamp > median_time_past(11)` (median of last 11 block timestamps)
    - `block.timestamp <= current_time + 7200` (no more than 2 hours in the future)
 
-5. **Minimum block interval**: `block.timestamp >= parent.timestamp + 60` (1 minute minimum).
-
-6. **Difficulty target**: `block.nbits` must equal the expected difficulty:
+5. **Difficulty target**: `block.nbits` must equal the expected difficulty:
    - At retarget boundaries (height % 2016 == 0): recalculated from the last 2016 blocks
    - Otherwise: inherited from parent
 
-7. **Proof-of-Work**: `Keccak256d(block_header) < target_from_nbits(block.nbits)`.
+6. **Proof-of-Work**: `RandomX(header[0..91], pow_seed) < target_from_nbits(block.nbits)`,
+   where `pow_seed = block_id(chain[rx_seed_height(block.height)])`.
 
-8. **Merkle root**: `block.merkle_root == compute_merkle_root(block.vtx)`.
+7. **Merkle root**: `block.merkle_root == compute_merkle_root(block.vtx)`.
 
-9. **Signature verification**: Ed25519 verify `miner_sig` over `header[0..91]` with
+8. **Signature verification**: Ed25519 verify `miner_sig` over `header[0..91]` with
     `miner_pubkey`.
 
-10. **Coinbase validation**: First transaction must be a valid coinbase:
+9. **Coinbase validation**: First transaction must be a valid coinbase:
     - Exactly one input with null prevout
     - Output amount <= block_reward + total_fees
     - Height encoded in coinbase input's pubkey field (BIP34 style)
 
-11. **Transaction validation**: All non-coinbase transactions must:
+10. **Transaction validation**: All non-coinbase transactions must:
     - Have valid Ed25519 signatures for all inputs
     - Reference existing unspent outputs
     - Total output amount <= total input amount
@@ -81,7 +97,8 @@ Every block must pass all validation checks to be accepted:
 
 ### 2.3 Difficulty Adjustment
 
-FlowCoin uses Bitcoin's difficulty adjustment algorithm with Keccak-256 hashing.
+FlowCoin uses Bitcoin's difficulty adjustment algorithm, retargeting
+against the RandomX work-per-block rate.
 
 Retarget occurs every 2016 blocks. The new target is calculated as:
 
@@ -309,12 +326,17 @@ key derivation:
 
 ### 5.2 Address Format
 
-Addresses use Bech32m encoding (BIP350) with:
+Addresses use **Bech32 v0** (BIP-173; not Bech32m) with:
 - Human-readable prefix (HRP): `"fl"`
 - Witness version: 0
-- Witness program: 20 bytes (first 20 bytes of Keccak256(pubkey))
+- Witness program: 20 bytes — `keccak256d(pubkey)[0..20]`
 
-Example address: `fl1qw508d6qejxtdg4y5r3zarvaryvg6gdjs`
+Per BIP-350, witness version 0 uses the original Bech32 checksum
+polynomial; witness v1+ would use Bech32m. That matches Bitcoin's
+P2WPKH (`bc1q...`) format exactly, modulo the HRP: 42 characters,
+same checksum, same encoding.
+
+Example address: `fl1qdd2j0j3zz0s7q4xzu4huznu7zr5udt3sgg73kv`
 
 ### 5.3 Key Management
 
