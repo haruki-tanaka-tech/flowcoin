@@ -13,8 +13,6 @@ Why are these changes needed?
 ## Testing
 
 - [ ] Unit tests pass (`./flowcoin_tests`)
-- [ ] Benchmarks pass (`./flowcoin_bench --iters 10`)
-- [ ] Functional tests pass (`python3 test/functional/test_runner.py`)
 - [ ] Valgrind clean (`ci/valgrind.sh`)
 - [ ] New tests added for new functionality
 
