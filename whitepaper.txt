@@ -275,13 +275,80 @@ The probability of an attacker catching up from z blocks behind is:
   q_z = (q/p)^z    if p > q
 
 where p is the probability the honest network finds the next block,
-q the probability the attacker does. With RandomX, the per-attempt
-cost is dominated by memory accesses against the 2 GiB dataset
-rather than by silicon-efficient integer arithmetic, so raw hash
-rate scales with DRAM bandwidth rather than with ASIC gate count.
-The economic cost of sustaining a 51 % attack therefore tracks
-the cost of general-purpose compute rather than of specialised
-hardware.
+q the probability the attacker does. The Nakamoto analysis is
+algorithm-independent; the useful question for FlowCoin is not
+whether the formula holds — it does — but what it costs the
+attacker to achieve q > p. Here the choice of RandomX over a
+pure-hash PoW changes the answer qualitatively.
+
+
+10.1 Why the 51 % cost tracks DRAM, not silicon
+
+In a SHA-256d chain, hash-rate is roughly proportional to silicon
+gate count: the compression function fits in a few hundred gates,
+state is small enough to pin in flip-flops, and the pipeline has
+no control flow. The marginal cost of one more H/s is therefore
+very close to the marginal cost of one more gate — small, fixed
+by process node, and improvable by a small number of ASIC
+designers. A state-level attacker can, in principle, fab more
+silicon than every other participant combined faster than the
+community can respond.
+
+RandomX inverts this. The bottleneck in each hash is not logic
+but memory: data-dependent addresses into the 2 GiB dataset force
+a DRAM transaction on almost every outer iteration. Hash rate
+therefore scales with DRAM bandwidth per machine, not with gate
+count per die. The economic consequences are:
+
+  (a) DRAM bandwidth is a commodity. The six companies that
+      manufacture DRAM (Samsung, SK Hynix, Micron, and a handful
+      of smaller fabs) compete on price across every consumer
+      and datacentre channel. A RandomX-dedicated chip with, say,
+      8 DRAM channels performs roughly the same as a server CPU
+      with 8 DRAM channels — the chip cannot be made faster than
+      physics allows the DRAM pins to toggle. There is no
+      silicon advantage waiting to be exploited.
+
+  (b) Supply cannot be covertly scaled. A SHA-256 ASIC attacker
+      can quietly tape out at a single foundry. A RandomX
+      attacker needs to source DRAM modules at scale, which
+      shows up in the channel: large orders move prices and are
+      visible to competitors and exchanges.
+
+  (c) Cost scales linearly with CPU-thread count. At roughly
+      1,000–1,500 H/s per modern CPU core, a 51 % attack at a
+      network size of N threads requires buying or renting on
+      the order of N more threads. Because those threads are
+      general-purpose compute, they retain resale value on
+      failure of the attack — but that salvage value caps how
+      much an attacker is willing to invest, since it is roughly
+      the price of used CPUs on the open market at the time the
+      attack fails.
+
+  (d) Cloud rental is bounded by visible capacity. The three
+      hyperscalers together offer a finite number of CPU cores
+      at any moment. A 51 %-scale rental of RandomX-suitable
+      cores would saturate that capacity and alert operators,
+      who have both the ability and the commercial incentive to
+      refuse the workload once identified.
+
+None of these guarantees that no 51 % attack is ever possible.
+The claim is narrower: a RandomX attack costs roughly the price
+of buying or renting commodity compute at near-retail rates,
+whereas a SHA-256d attack can cost the marginal price of silicon
+inside a vertically-integrated operation. The ratio is large
+enough to matter.
+
+
+10.2 Empirical reference point
+
+Monero has run RandomX continuously since November 2019 on a
+network that, as of this writing, sustains several GH/s of
+aggregate hashrate. No RandomX ASIC has been offered for sale
+in that time, despite Monero's market cap providing ample
+economic incentive. This is the strongest available evidence
+that the memory-bandwidth argument holds in practice — and it
+is what FlowCoin is inheriting.
 
 
 11. Technical Specifications
