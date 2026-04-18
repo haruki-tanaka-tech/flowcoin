@@ -38,6 +38,120 @@ Full argument in [whitepaper.txt](whitepaper.txt) §10.
 ./flowcoin-cli getblockcount
 ```
 
+## Running a node
+
+### First run
+
+```bash
+./flowcoind -daemon
+```
+
+On first launch the node:
+
+1. Creates `~/.flowcoin/` (Linux/macOS) or `%APPDATA%\FlowCoin\` (Windows).
+2. Generates a fresh HD wallet at `~/.flowcoin/wallet.dat` (SLIP-0010,
+   currently unencrypted — see below).
+3. Writes an RPC auth cookie to `~/.flowcoin/.cookie` so `flowcoin-cli`
+   authenticates automatically (same pattern as Bitcoin Core).
+4. Opens P2P port 9333 and RPC port 9334 on localhost only.
+5. Connects to the DNS seed `seed.flowcoin.org` to discover peers.
+
+Watch startup messages:
+
+```bash
+tail -f ~/.flowcoin/debug.log
+```
+
+### Typical commands
+
+```bash
+./flowcoin-cli getblockcount                # chain tip height
+./flowcoin-cli getpeerinfo                  # connected peers + negotiated features
+./flowcoin-cli getmempoolinfo               # unconfirmed tx count + bytes
+./flowcoin-cli getblockchaininfo            # network / sync / difficulty snapshot
+./flowcoin-cli -getinfo                     # one-liner dashboard (Bitcoin-cli-style)
+./flowcoin-cli help                         # every RPC method
+./flowcoin-cli help <method>                # detailed usage for one method
+./flowcoin-cli stop                         # graceful shutdown
+```
+
+### Wallet basics
+
+```bash
+./flowcoin-cli getnewaddress                   # fresh receive address (bech32 fl1q...)
+./flowcoin-cli getbalance                      # spendable balance in FLOW
+./flowcoin-cli listunspent                     # UTXOs you control
+./flowcoin-cli sendtoaddress fl1q... 10.0      # send 10 FLOW
+./flowcoin-cli listtransactions                # last 10 wallet transactions
+```
+
+**Backup:** copy `~/.flowcoin/wallet.dat` somewhere safe *while the node
+is stopped*. The HD seed derives every address you'll ever use, so a
+single file is the whole backup.
+
+### Mining
+
+The miner is a standalone process that talks to a running node over
+RPC:
+
+```bash
+./flowcoin-miner --cookie ~/.flowcoin/.cookie --light
+```
+
+Flags:
+
+| Flag                    | Purpose                                          |
+|-------------------------|--------------------------------------------------|
+| `--url http://host:9334` | RPC endpoint (default: `http://127.0.0.1:9334`) |
+| `--cookie PATH`          | Read HTTP Basic auth from Bitcoin-Core-style cookie file |
+| `--user U --pass P`      | Alternative: explicit credentials               |
+| `--threads N`            | Worker threads (default: all logical cores)     |
+| `--address ADDR`         | Coinbase reward address (default: node's wallet) |
+| `--light`                | 256 MiB cache, ~40 H/s per thread (fast init, low memory) |
+| *(no `--light`)*         | 2 GiB dataset, ~1000–1500 H/s per thread (the real deal) |
+| `--benchmark 10`         | Run RandomX for N seconds and print H/s, exit   |
+
+At launch difficulty the network floor is `nbits = 0x1d00ffff`
+(difficulty 1). A solo miner on a modern CPU will find one block
+every few hours to days depending on thread count; once more miners
+join, difficulty retargets upward every 2,016 blocks.
+
+### Remote access
+
+By default `rpcbind = 127.0.0.1` — the RPC port is **not** reachable
+from other machines. To expose it on a trusted LAN:
+
+```bash
+./flowcoind -daemon -rpcbind=0.0.0.0 -rpcallowip=192.168.1.0/24
+```
+
+Never expose RPC to the public internet without a firewall and TLS
+termination.
+
+### Logs, shutdown, cleanup
+
+```bash
+./flowcoin-cli stop                 # graceful, saves mempool + peers.dat
+tail -f ~/.flowcoin/debug.log       # watch node events live
+
+# Nuke state and start fresh (wipes chain data AND wallet)
+rm -rf ~/.flowcoin
+```
+
+### Troubleshooting
+
+- **`error: could not connect to 127.0.0.1:9334`** — flowcoind isn't
+  running. Start it with `./flowcoind -daemon`, wait a couple seconds,
+  retry.
+- **`Is flowcoind running? / Cannot obtain lock on data directory`** —
+  another flowcoind instance has the lock. `pkill flowcoind; sleep 1`
+  and try again.
+- **Miner shows 0 H/s** — allocating the 2 GiB RandomX dataset takes
+  ~1.5 seconds on a fast CPU. If it stays at 0 for more than 10
+  seconds, switch to `--light` mode.
+- **No peers** — check that port 9333 isn't firewalled. `./flowcoin-cli
+  getpeerinfo` should show entries within a minute.
+
 ## Download
 
 Releases are produced by `cpack` from the main branch. Layout matches
