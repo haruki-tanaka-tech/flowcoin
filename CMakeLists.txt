@@ -99,11 +99,8 @@ set(LIBUV_BUILD_BENCH OFF CACHE BOOL "" FORCE)
 add_subdirectory(src/libuv)
 
 # --- RandomX (CPU-only Proof-of-Work from Monero project) ---
-# Pinned to v2.0 via git submodule at src/randomx.
+# Vendored in src/randomx at v2.0 (BSD-3-Clause).
 # Provides the `randomx` static library target.
-if(NOT EXISTS "${CMAKE_SOURCE_DIR}/src/randomx/CMakeLists.txt")
-    message(FATAL_ERROR "RandomX submodule not initialized. Run: git submodule update --init --recursive")
-endif()
 add_subdirectory(src/randomx EXCLUDE_FROM_ALL)
 # RandomX is vendor code — same treatment as sqlite/zstd/libuv: suppress our
 # strict warning flags (-Wall -Wextra -Wpedantic propagate from the root
