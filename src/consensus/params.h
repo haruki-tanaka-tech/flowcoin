@@ -33,8 +33,10 @@ constexpr const char* MAINNET_HRP      = "fl";
 constexpr const char* TESTNET_HRP      = "tfl";
 constexpr const char* REGTEST_HRP      = "rfl";
 
-constexpr uint32_t PROTOCOL_VERSION    = 2;
-constexpr uint32_t MIN_PROTOCOL_VERSION = 2;  // reject peers with older protocol
+// Bitcoin-Core-compatible numeric values so version/nServices fields read
+// out naturally in tooling. 70016 = wtxidrelay-era; 31800 = BIP14 floor.
+constexpr uint32_t PROTOCOL_VERSION     = 70016;
+constexpr uint32_t MIN_PROTOCOL_VERSION = 31800;
 
 // BIP-44 coin type for HD derivation path: m/44'/9555'/...
 constexpr uint32_t BIP44_COIN_TYPE     = 9555;

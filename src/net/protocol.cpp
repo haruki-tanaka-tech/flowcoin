@@ -130,11 +130,13 @@ std::string MessageHeader::command_string() const {
 }
 
 // ===========================================================================
-// Checksum computation
+// Checksum computation — first 4 bytes of keccak256d(payload). Bitcoin uses
+// SHA-256d; we substitute our Keccak-based double-hash so that the codebase
+// has one fewer hash dependency and the checksum matches the block-id hash.
 // ===========================================================================
 
 uint32_t compute_checksum(const uint8_t* data, size_t len) {
-    uint256 hash = keccak256(data, len);
+    uint256 hash = keccak256d(data, len);
     uint32_t result = 0;
     std::memcpy(&result, hash.data(), 4);
     return result;
@@ -179,23 +181,28 @@ std::vector<uint8_t> build_message(uint32_t magic, const std::string& command,
 std::vector<uint8_t> VersionMessage::serialize() const {
     DataWriter w(128);
 
-    w.write_u32_le(protocol_version);
+    // Fixed-size prefix — matches Bitcoin's version layout byte-for-byte.
+    w.write_u32_le(static_cast<uint32_t>(protocol_version));
     w.write_u64_le(services);
     w.write_i64_le(timestamp);
 
-    addr_recv.serialize(w);
+    w.write_u64_le(addr_recv_services);
+    addr_recv.serialize(w);           // 16 bytes ip + 2 bytes port (big-endian)
+
+    w.write_u64_le(addr_from_services);
     addr_from.serialize(w);
 
     w.write_u64_le(nonce);
 
-    // User agent: compact size prefix + string bytes
+    // User agent
     w.write_compact_size(user_agent.size());
     if (!user_agent.empty()) {
         w.write_bytes(reinterpret_cast<const uint8_t*>(user_agent.data()),
                       user_agent.size());
     }
 
-    w.write_u64_le(start_height);
+    w.write_u32_le(static_cast<uint32_t>(start_height));
+    w.write_u8(relay ? 1 : 0);
 
     return w.release();
 }
@@ -203,14 +210,17 @@ std::vector<uint8_t> VersionMessage::serialize() const {
 bool VersionMessage::deserialize(const uint8_t* data, size_t len, VersionMessage& out) {
     DataReader r(data, len);
 
-    out.protocol_version = r.read_u32_le();
-    out.services = r.read_u64_le();
-    out.timestamp = r.read_i64_le();
+    out.protocol_version    = static_cast<int32_t>(r.read_u32_le());
+    out.services            = r.read_u64_le();
+    out.timestamp           = r.read_i64_le();
 
-    out.addr_recv = CNetAddr::deserialize(r);
-    out.addr_from = CNetAddr::deserialize(r);
+    out.addr_recv_services  = r.read_u64_le();
+    out.addr_recv           = CNetAddr::deserialize(r);
 
-    out.nonce = r.read_u64_le();
+    out.addr_from_services  = r.read_u64_le();
+    out.addr_from           = CNetAddr::deserialize(r);
+
+    out.nonce               = r.read_u64_le();
 
     uint64_t ua_len = r.read_compact_size();
     if (r.error() || ua_len > 256) return false;
@@ -224,7 +234,14 @@ bool VersionMessage::deserialize(const uint8_t* data, size_t len, VersionMessage
         out.user_agent.clear();
     }
 
-    out.start_height = r.read_u64_le();
+    out.start_height = static_cast<int32_t>(r.read_u32_le());
+
+    // fRelay is optional for backward compatibility with pre-70001 peers.
+    if (!r.error() && r.remaining() >= 1) {
+        out.relay = r.read_u8() != 0;
+    } else {
+        out.relay = true;
+    }
 
     return !r.error();
 }

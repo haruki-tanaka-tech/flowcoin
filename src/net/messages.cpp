@@ -120,14 +120,17 @@ void MessageHandler::send(Peer& peer, const std::string& command) {
 
 void MessageHandler::send_version(Peer& peer) {
     VersionMessage ver;
-    ver.protocol_version = consensus::PROTOCOL_VERSION;
-    ver.services = NODE_NETWORK;
-    ver.timestamp = GetTime();
-    ver.addr_recv = peer.addr();
-    ver.addr_from = CNetAddr("0.0.0.0", netman_.port());
-    ver.nonce = netman_.local_nonce();
-    ver.user_agent = "/FlowCoin:1.0.0/";
-    ver.start_height = chain_.height();
+    ver.protocol_version    = static_cast<int32_t>(consensus::PROTOCOL_VERSION);
+    ver.services            = NODE_NETWORK;
+    ver.timestamp           = GetTime();
+    ver.addr_recv_services  = 0;                // we do not know peer's services yet
+    ver.addr_recv           = peer.addr();
+    ver.addr_from_services  = NODE_NETWORK;     // our own services (duplicated, Bitcoin-legacy)
+    ver.addr_from           = CNetAddr("0.0.0.0", netman_.port());
+    ver.nonce               = netman_.local_nonce();
+    ver.user_agent          = "/FlowCoin:1.0.0/";
+    ver.start_height        = static_cast<int32_t>(chain_.height());
+    ver.relay               = true;
 
     send(peer, NetCmd::VERSION, ver.serialize());
     peer.set_version_sent(true);
