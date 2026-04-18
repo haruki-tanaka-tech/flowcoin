@@ -128,7 +128,6 @@ struct VersionMessage {
     uint64_t nonce;            // random, for self-connection detection
     std::string user_agent;    // e.g. "/FlowCoin:1.0.0/"
     uint64_t start_height;     // sender's best block height
-    uint64_t node_id;          // persistent node identity (for multi-address dedup)
 
     std::vector<uint8_t> serialize() const;
     static bool deserialize(const uint8_t* data, size_t len, VersionMessage& out);

@@ -78,7 +78,6 @@ NetManager::NetManager(ChainState& chain, uint16_t port, uint32_t magic)
     , port_(port)
     , magic_(magic)
     , local_nonce_(GetRandUint64())
-    , node_id_(0)
     , handler_(chain, *this)
 {
 }
@@ -170,40 +169,6 @@ bool NetManager::start() {
 
     // Load previously known peers from peers.dat
     load_peers();
-
-    // Load or generate persistent node identity
-    if (!data_dir_.empty()) {
-        std::string node_id_path = data_dir_ + "/node_id.dat";
-        FILE* f = fopen(node_id_path.c_str(), "rb");
-        if (f) {
-            uint8_t buf[8];
-            if (fread(buf, 1, 8, f) == 8) {
-                node_id_ = static_cast<uint64_t>(buf[0])
-                         | (static_cast<uint64_t>(buf[1]) << 8)
-                         | (static_cast<uint64_t>(buf[2]) << 16)
-                         | (static_cast<uint64_t>(buf[3]) << 24)
-                         | (static_cast<uint64_t>(buf[4]) << 32)
-                         | (static_cast<uint64_t>(buf[5]) << 40)
-                         | (static_cast<uint64_t>(buf[6]) << 48)
-                         | (static_cast<uint64_t>(buf[7]) << 56);
-            }
-            fclose(f);
-        }
-        if (node_id_ == 0) {
-            node_id_ = GetRandUint64();
-            f = fopen(node_id_path.c_str(), "wb");
-            if (f) {
-                uint8_t buf[8];
-                for (int i = 0; i < 8; ++i)
-                    buf[i] = static_cast<uint8_t>(node_id_ >> (i * 8));
-                fwrite(buf, 1, 8, f);
-                fclose(f);
-            }
-        }
-    } else {
-        node_id_ = GetRandUint64();
-    }
-    LogInfo("net", "node_id: %016llx", (unsigned long long)node_id_);
 
     // Add hardcoded seed nodes to address manager
     const auto& seeds = GetSeeds(magic_);
@@ -449,48 +414,30 @@ std::vector<Peer*> NetManager::connected_peers() const {
 
 size_t NetManager::peer_count() const {
     std::lock_guard<std::mutex> lock(peers_mutex_);
-    std::set<uint64_t> seen_node_ids;
     size_t count = 0;
     for (const auto& [id, peer] : peers_) {
         if (peer->state() == PeerState::DISCONNECTED) continue;
-        uint64_t nid = peer->node_id();
-        if (nid != 0) {
-            if (seen_node_ids.count(nid)) continue;  // same node, already counted
-            seen_node_ids.insert(nid);
-        }
-        count++;
+        ++count;
     }
     return count;
 }
 
 size_t NetManager::outbound_count() const {
     std::lock_guard<std::mutex> lock(peers_mutex_);
-    std::set<uint64_t> seen_node_ids;
     size_t count = 0;
     for (const auto& [id, peer] : peers_) {
         if (peer->is_inbound() || peer->state() == PeerState::DISCONNECTED) continue;
-        uint64_t nid = peer->node_id();
-        if (nid != 0) {
-            if (seen_node_ids.count(nid)) continue;
-            seen_node_ids.insert(nid);
-        }
-        count++;
+        ++count;
     }
     return count;
 }
 
 size_t NetManager::inbound_count() const {
     std::lock_guard<std::mutex> lock(peers_mutex_);
-    std::set<uint64_t> seen_node_ids;
     size_t count = 0;
     for (const auto& [id, peer] : peers_) {
         if (!peer->is_inbound() || peer->state() == PeerState::DISCONNECTED) continue;
-        uint64_t nid = peer->node_id();
-        if (nid != 0) {
-            if (seen_node_ids.count(nid)) continue;
-            seen_node_ids.insert(nid);
-        }
-        count++;
+        ++count;
     }
     return count;
 }
@@ -498,14 +445,8 @@ size_t NetManager::inbound_count() const {
 void NetManager::broadcast(const std::string& command, const std::vector<uint8_t>& payload) {
     auto msg = build_message(magic_, command, payload);
     std::lock_guard<std::mutex> lock(peers_mutex_);
-    std::set<uint64_t> sent_node_ids;
     for (auto& [id, peer] : peers_) {
         if (peer->state() == PeerState::HANDSHAKE_DONE) {
-            uint64_t nid = peer->node_id();
-            if (nid != 0) {
-                if (sent_node_ids.count(nid)) continue;
-                sent_node_ids.insert(nid);
-            }
             send_to(*peer, msg);
         }
     }
@@ -515,18 +456,9 @@ void NetManager::broadcast_except(const std::string& command, const std::vector<
                                    const Peer* exclude) {
     auto msg = build_message(magic_, command, payload);
     std::lock_guard<std::mutex> lock(peers_mutex_);
-    std::set<uint64_t> sent_node_ids;
     for (auto& [id, peer] : peers_) {
         if (peer->state() == PeerState::HANDSHAKE_DONE) {
-            // Skip the peer that sent us this block
             if (exclude && peer->id() == exclude->id()) continue;
-            uint64_t nid = peer->node_id();
-            if (nid != 0) {
-                // Skip if same node_id as exclude (dual-stack)
-                if (exclude && nid == exclude->node_id()) continue;
-                if (sent_node_ids.count(nid)) continue;
-                sent_node_ids.insert(nid);
-            }
             send_to(*peer, msg);
         }
     }

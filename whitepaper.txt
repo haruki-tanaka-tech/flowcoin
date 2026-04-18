@@ -208,10 +208,12 @@ The peer-to-peer protocol uses a binary wire format:
 
   [4 magic] [12 command] [4 size] [4 checksum] [payload]
 
-Nodes maintain both IPv4 and IPv6 connections simultaneously. A
-persistent 64-bit node identity (node_id) is exchanged during the
-version handshake so that two connections from different addresses
-belonging to the same physical node are recognised and deduplicated.
+Nodes accept both IPv4 and IPv6 connections and do not try to
+deduplicate them. A single physical host reachable over two address
+families counts as two peers. The two slots are cheap — each carries
+one TCP connection's worth of state — and allowing both avoids the
+subtle bugs that arise when the same node appears on two networks
+(different latencies, different routing, asymmetric visibility).
 
 
 6. Incentive

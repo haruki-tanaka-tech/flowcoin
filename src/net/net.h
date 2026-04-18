@@ -94,9 +94,6 @@ public:
     // Our random nonce for self-connection detection
     uint64_t local_nonce() const { return local_nonce_; }
 
-    // Persistent node identity (survives restarts, used for multi-address dedup)
-    uint64_t node_id() const { return node_id_; }
-
     // Broadcast a message to all handshaked peers
     void broadcast(const std::string& command, const std::vector<uint8_t>& payload);
     void broadcast_except(const std::string& command, const std::vector<uint8_t>& payload,
@@ -231,7 +228,6 @@ private:
     uint16_t port_;
     uint32_t magic_;
     uint64_t local_nonce_;
-    uint64_t node_id_;
 
     uv_loop_t* loop_ = nullptr;
     uv_tcp_t* server_ = nullptr;

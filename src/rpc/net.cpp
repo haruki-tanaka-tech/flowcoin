@@ -24,93 +24,47 @@ void register_net_rpcs(RpcServer& server, NetManager& net) {
         json result = json::array();
         auto peers = net.get_peers();
 
-        // Group peers by node_id (same node via IPv4+IPv6 = one entry)
-        std::map<uint64_t, std::vector<const Peer*>> grouped;
-        std::vector<const Peer*> ungrouped; // node_id == 0
-        for (const Peer* peer : peers) {
-            uint64_t nid = peer->node_id();
-            if (nid != 0) {
-                grouped[nid].push_back(peer);
-            } else {
-                ungrouped.push_back(peer);
-            }
-        }
-
         auto now_secs = std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
 
-        auto make_peer_json = [&](const std::vector<const Peer*>& conns) -> json {
-            const Peer* primary = conns[0];
+        for (const Peer* peer : peers) {
             json p;
-            p["id"] = primary->id();
-
-            // node_id hex string (FlowCoin-specific bonus)
-            char nid_hex[17];
-            snprintf(nid_hex, sizeof(nid_hex), "%016llx",
-                     (unsigned long long)primary->node_id());
-            p["node_id"] = nid_hex;
-
-            // addr: always a single string (first address), matching Bitcoin Core
-            p["addr"] = primary->addr().to_string();
+            p["id"]        = peer->id();
+            p["addr"]      = peer->addr().to_string();
             p["addrlocal"] = "";
-            p["network"] = primary->addr().is_ipv4() ? "ipv4" : "ipv6";
+            p["network"]   = peer->addr().is_ipv4() ? "ipv4" : "ipv6";
+            p["inbound"]   = peer->is_inbound();
+            p["version"]   = peer->protocol_version();
+            p["subver"]    = peer->user_agent();
 
-            p["inbound"]        = primary->is_inbound();
-            p["version"]        = primary->protocol_version();
-            p["subver"]         = primary->user_agent();
-
-            // services as hex string (Bitcoin Core format)
             char svc_hex[17];
             snprintf(svc_hex, sizeof(svc_hex), "%016llx",
-                     (unsigned long long)primary->services());
+                     (unsigned long long)peer->services());
             p["services"] = svc_hex;
 
-            // servicesnames array
             json svc_names = json::array();
-            if (primary->services() & PEER_NODE_NETWORK)
-                svc_names.push_back("NETWORK");
-            if (primary->services() & PEER_NODE_BLOOM)
-                svc_names.push_back("BLOOM");
-            if (primary->services() & PEER_NODE_COMPACT_FILTERS)
-                svc_names.push_back("COMPACT_FILTERS");
-            if (primary->services() & PEER_NODE_NETWORK_LIMITED)
-                svc_names.push_back("NETWORK_LIMITED");
+            if (peer->services() & PEER_NODE_NETWORK)          svc_names.push_back("NETWORK");
+            if (peer->services() & PEER_NODE_BLOOM)            svc_names.push_back("BLOOM");
+            if (peer->services() & PEER_NODE_COMPACT_FILTERS)  svc_names.push_back("COMPACT_FILTERS");
+            if (peer->services() & PEER_NODE_NETWORK_LIMITED)  svc_names.push_back("NETWORK_LIMITED");
             p["servicesnames"] = svc_names;
 
-            p["startingheight"] = primary->start_height();
-            p["synced_headers"] = primary->start_height();
-            p["synced_blocks"]  = primary->start_height();
-            p["conntime"]       = primary->connect_time();
-            p["lastrecv"]       = primary->last_recv_time();
-            p["lastsend"]       = primary->last_send_time();
-            p["pingtime"]       = static_cast<double>(primary->ping_latency_us()) / 1e6;
-            p["minping"]        = static_cast<double>(primary->min_ping_us()) / 1e6;
+            p["startingheight"] = peer->start_height();
+            p["synced_headers"] = peer->start_height();
+            p["synced_blocks"]  = peer->start_height();
+            p["conntime"]       = peer->connect_time();
+            p["lastrecv"]       = peer->last_recv_time();
+            p["lastsend"]       = peer->last_send_time();
+            p["pingtime"]       = static_cast<double>(peer->ping_latency_us()) / 1e6;
+            p["minping"]        = static_cast<double>(peer->min_ping_us()) / 1e6;
+            p["bytesrecv"]      = peer->bytes_recv();
+            p["bytessent"]      = peer->bytes_sent();
 
-            // Sum bandwidth across all connections
-            uint64_t total_recv = 0, total_sent = 0;
-            for (const Peer* c : conns) {
-                total_recv += c->bytes_recv();
-                total_sent += c->bytes_sent();
-            }
-            p["bytesrecv"] = total_recv;
-            p["bytessent"] = total_sent;
+            // FlowCoin-specific extras
+            p["misbehavior"]        = peer->misbehavior_score();
+            p["connection_duration"] = now_secs - peer->connect_time();
 
-            // FlowCoin-specific bonus fields
-            p["misbehavior"]        = primary->misbehavior_score();
-            p["connection_duration"] = now_secs - primary->connect_time();
-
-            return p;
-        };
-
-        // Grouped peers (same node_id)
-        for (const auto& [nid, conns] : grouped) {
-            result.push_back(make_peer_json(conns));
-        }
-
-        // Ungrouped peers (no node_id)
-        for (const Peer* peer : ungrouped) {
-            std::vector<const Peer*> single = {peer};
-            result.push_back(make_peer_json(single));
+            result.push_back(p);
         }
 
         return result;

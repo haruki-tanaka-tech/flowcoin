@@ -196,7 +196,6 @@ std::vector<uint8_t> VersionMessage::serialize() const {
     }
 
     w.write_u64_le(start_height);
-    w.write_u64_le(node_id);
 
     return w.release();
 }
@@ -226,13 +225,6 @@ bool VersionMessage::deserialize(const uint8_t* data, size_t len, VersionMessage
     }
 
     out.start_height = r.read_u64_le();
-
-    // node_id: optional field for backward compatibility with older peers
-    if (!r.error() && r.remaining() >= 8) {
-        out.node_id = r.read_u64_le();
-    } else {
-        out.node_id = 0;
-    }
 
     return !r.error();
 }
