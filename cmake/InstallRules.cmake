@@ -3,7 +3,7 @@
 include(GNUInstallDirs)
 
 # Binaries
-install(TARGETS flowcoind flowcoin-cli flowcoin-tx
+install(TARGETS flowcoind flowcoin-cli flowcoin-tx flowcoin-miner
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
@@ -12,6 +12,7 @@ install(FILES
     share/flowcoind.1
     share/flowcoin-cli.1
     share/flowcoin-tx.1
+    share/flowcoin-miner.1
     DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
 )
 

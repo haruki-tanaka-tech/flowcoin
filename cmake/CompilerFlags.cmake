@@ -13,8 +13,10 @@ add_compile_options(-Werror=return-type)
 add_compile_options(-Wno-unused-parameter)
 add_compile_options(-Wno-missing-field-initializers)
 
-# CRITICAL: No -ffast-math — breaks IEEE 754 determinism for consensus eval
-# The model forward pass MUST produce bit-identical results on all platforms
+# CRITICAL: No -ffast-math — breaks IEEE 754 determinism.
+# RandomX executes IEEE-754 double-precision float ops as part of each
+# hash, with a deterministic rounding mode. Every node must get
+# bit-identical results or the chain forks.
 
 # Security flags
 add_compile_options(-fstack-protector-strong)
