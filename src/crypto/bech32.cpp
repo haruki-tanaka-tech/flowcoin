@@ -264,8 +264,11 @@ std::string bech32m_encode(const std::string& hrp, uint8_t witness_version,
         return "";
     }
 
-    // Choose encoding: v0 uses Bech32, v1+ uses Bech32m per BIP-350
-    Bech32Encoding enc = (witness_version == 0) ? Bech32Encoding::BECH32M : Bech32Encoding::BECH32M;
+    // Choose encoding: v0 uses Bech32, v1+ uses Bech32m per BIP-350.
+    // (Earlier code mistakenly picked BECH32M for both branches, producing
+    // non-standard v0 addresses. Real Bitcoin P2WPKH 'bc1q...' is bech32.)
+    Bech32Encoding enc = (witness_version == 0) ? Bech32Encoding::BECH32
+                                                : Bech32Encoding::BECH32M;
 
     // Convert 8-bit program bytes to 5-bit groups
     std::vector<uint8_t> data5;
@@ -294,9 +297,15 @@ Bech32mDecoded bech32m_decode(const std::string& addr) {
     uint8_t witness_version = decoded.data5[0];
     if (witness_version > 16) return result;
 
-    // Validate encoding variant:
-    // BIP-350 mandates Bech32m for all witness versions in FlowCoin
-    // (we accept both for decoding flexibility, but flag the encoding)
+    // BIP350: v0 must be bech32, v1+ must be bech32m. Reject mismatches so
+    // we don't accept malformed addresses that the encoder would never
+    // produce (and that Bitcoin wallets would also refuse).
+    if (witness_version == 0 && decoded.encoding != Bech32Encoding::BECH32) {
+        return result;
+    }
+    if (witness_version >= 1 && decoded.encoding != Bech32Encoding::BECH32M) {
+        return result;
+    }
 
     // Convert remaining 5-bit groups to 8-bit program bytes
     std::vector<uint8_t> data_no_ver(decoded.data5.begin() + 1, decoded.data5.end());
