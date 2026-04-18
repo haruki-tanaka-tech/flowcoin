@@ -1,8 +1,8 @@
 FlowCoin: A Peer-to-Peer Electronic Cash System
-                    Using Keccak-256d Proof-of-Work
+            with CPU-Only RandomX Proof-of-Work
 
-                        Kristian Pilatovich
-                    pilatovichkristian2@gmail.com
+                    Kristian Pilatovich
+                pilatovichkristian2@gmail.com
 
 
 Abstract. A purely peer-to-peer version of electronic cash would allow
@@ -11,68 +11,72 @@ going through a financial institution. Digital signatures provide part
 of the solution, but the main benefits are lost if a trusted third
 party is still required to prevent double-spending. We propose a
 solution to the double-spending problem using a peer-to-peer network
-with a proof-of-work consensus based on Keccak-256d, the same
-cryptographic primitive underlying Ethereum's address derivation and
-the SHA-3 standard. The network timestamps transactions by hashing
-them into an ongoing chain of Keccak-256d-based proof-of-work, forming
-a record that cannot be changed without redoing the proof-of-work.
-The use of Keccak over SHA-256d provides inherent ASIC resistance,
-stronger security margins, and a clean sponge construction that
-eliminates length-extension attacks by design.
+that secures its ledger with RandomX, a CPU-oriented memory-hard
+proof-of-work designed by the Monero project and deployed on their
+mainnet since November 2019 with no ASIC having appeared in the five
+years since. RandomX generates a random instruction stream per block,
+executes it in a virtual machine against a 2 GiB deterministic dataset,
+and finalises with AES-based mixing; the result is that general-purpose
+CPUs outperform both GPUs and bespoke hardware by an order of magnitude
+on the workload that matters for mining. FlowCoin preserves Bitcoin's
+economic model (21 M supply, halving every 210,000 blocks, 10-minute
+target) and otherwise keeps hashing and signing at the cheapest
+suitable primitives (keccak256d for block IDs, Ed25519 for signatures).
 
 
 1. Introduction
 
 Commerce on the Internet has come to rely almost exclusively on
 financial institutions serving as trusted third parties to process
-electronic payments. While the system works well enough for most
-transactions, it still suffers from the inherent weaknesses of the
-trust-based model.
+electronic payments. Bitcoin demonstrated that a peer-to-peer cash
+system is viable, using SHA-256d proof-of-work to secure the chain.
+However, the SHA-256d mining ecosystem has become dominated by
+purpose-built ASICs, concentrating hash power in the hands of a few
+manufacturers and industrial operations. This centralization
+undermines the original "one-CPU-one-vote" vision.
 
-Bitcoin demonstrated that a peer-to-peer electronic cash system is
-viable, using SHA-256d proof-of-work to secure the chain. However,
-the SHA-256d mining ecosystem has become dominated by purpose-built
-ASICs, concentrating hash power in the hands of a few manufacturers
-and large mining operations. This centralization undermines the
-original vision of one-CPU-one-vote.
+FlowCoin preserves Bitcoin's architecture — UTXO ledger, 10-minute
+blocks, 21 M supply, Nakamoto consensus — and replaces only what
+caused the centralization: the proof-of-work function. Rather than
+invent a new PoW, we adopt RandomX, the algorithm that has kept
+Monero CPU-mineable since 2019. This is a deliberate choice of a
+battle-tested design over theoretical novelty.
 
-We propose FlowCoin, a system that preserves Bitcoin's proven
-architecture while replacing the hash function with Keccak-256d.
-This substitution is not arbitrary: Keccak is the algorithm selected
-by NIST as the SHA-3 standard after an eight-year public competition,
-and its sponge construction offers both theoretical and practical
-advantages over Merkle-Damgard-based hash functions.
+The network will not be ASIC-free in the future-proof sense; any
+algorithm can eventually be ASIC'd given sufficient economic
+incentive. The bet is more modest: a VM-based PoW with a 2 GiB
+working set that is already aligned with what general-purpose CPUs
+do well keeps the ASIC premium small enough that ordinary hardware
+remains competitive. RandomX's six-year incumbency with no ASIC
+release is the strongest empirical evidence we have.
 
 
 2. Transactions
 
 We define an electronic coin as a chain of digital signatures. Each
-owner transfers the coin to the next by digitally signing a hash of
-the previous transaction and the public key of the next owner and
-adding these to the end of the coin.
+owner transfers the coin to the next by signing a hash of the
+previous transaction and the public key of the next owner.
 
-FlowCoin uses Ed25519 signatures (RFC 8032) instead of ECDSA. Ed25519
-provides several advantages:
+FlowCoin uses Ed25519 signatures (RFC 8032) rather than ECDSA:
 
-  - Deterministic signatures: no random nonce required, eliminating
-    an entire class of key-leaking vulnerabilities.
-  - Faster verification: batch verification is possible, improving
-    block validation throughput.
-  - Compact keys: 32-byte public keys and 64-byte signatures.
-  - Resistance to side-channel attacks by design.
+  - Deterministic signatures — no random nonce, removing an entire
+    class of key-leaking vulnerabilities.
+  - Batch verification — speeds up block validation.
+  - Compact sizes — 32-byte public keys and 64-byte signatures.
+  - Hardened against side-channel attacks by design.
 
-Addresses use the Bech32m encoding format with the human-readable
-prefix "fl", producing addresses such as fl1q7m63z5rzxxg65...
-This encoding includes an error-detection checksum and is case-
-insensitive, reducing transcription errors.
+Addresses use Bech32m with human-readable prefix "fl", producing
+addresses such as fl1q7m63z5rzxxg65...  The encoding includes an
+error-detection checksum and is case-insensitive, reducing
+transcription errors.
 
 
 3. Timestamp Server
 
-The solution we propose begins with a timestamp server. A timestamp
-server works by taking a hash of a block of items to be timestamped
-and publishing the hash. Each timestamp includes the previous
-timestamp in its hash, forming a chain, with each additional timestamp
+The solution begins with a timestamp server. A timestamp server
+works by taking a hash of a block of items to be timestamped and
+publishing the hash. Each timestamp includes the previous
+timestamp, forming a chain, with each additional timestamp
 reinforcing the ones before it.
 
 FlowCoin's block header is 92 bytes (unsigned) with the following
@@ -80,8 +84,8 @@ layout:
 
   Field              Bytes    Description
   -------            -----    -----------
-  prev_hash           32      Keccak-256d of previous block header
-  merkle_root         32      Merkle root of transactions
+  prev_hash           32      keccak256d of previous block header
+  merkle_root         32      Merkle root of transaction IDs
   height               8      Block height (uint64, little-endian)
   timestamp            8      Unix timestamp (int64, little-endian)
   nbits                4      Compact difficulty target
@@ -89,63 +93,102 @@ layout:
   version              4      Protocol version
 
 The full signed header is 188 bytes, appending the miner's 32-byte
-Ed25519 public key and 64-byte signature.
+Ed25519 public key and 64-byte signature over bytes 0-91.
+
+A block is identified by two distinct hashes:
+
+  block_id  = keccak256d(header[0..91])
+  pow_hash  = RandomX(header[0..91], seed)
+
+The block_id is what every other block, every P2P message, every
+RPC response, every merkle proof, every wallet record refers to.
+keccak256d is cheap (a few microseconds per header) so chain-internal
+operations stay fast. The pow_hash is what miners search for and
+what target-comparison uses; it is computed only at block production
+and at validation time, never for chain bookkeeping.
 
 
 4. Proof-of-Work
 
-The proof-of-work involves scanning for a value (nonce) such that
-when the block header is hashed with Keccak-256d, the resulting hash
-is below a target value. Keccak-256d is defined as:
+The proof-of-work involves scanning for a nonce such that, for a
+given block header and a seed derived from the chain state, the
+RandomX hash is at or below the target value:
 
-  Keccak-256d(x) = Keccak-256(Keccak-256(x))
+  RandomX(header[0..91], seed) <= target(nbits)
 
-where Keccak-256 uses the padding byte 0x01 (the original Keccak
-submission), not the 0x06 padding of the NIST SHA-3 standard. This
-distinction is important: FlowCoin uses the same Keccak variant as
-Ethereum, not SHA-3.
+RandomX is a memory-hard PoW designed for CPUs. A single invocation
+does, in order:
 
-The double-hash construction provides defense-in-depth against
-potential weaknesses in the compression function, following the same
-rationale as Bitcoin's SHA-256d.
+  1. Initialise a 4 KiB scratchpad with AES-based mixing.
+  2. Execute a pseudo-randomly generated program of 256 instructions
+     against the scratchpad and a shared 2 GiB dataset, looping
+     eight times.
+  3. Finalise the scratchpad with AES and produce a 256-bit digest
+     via Blake2b.
+
+The instruction mix is deliberately chosen to match the issue width
+and execution-port distribution of general-purpose CPUs. The program
+is regenerated from the program counter each round, and both the
+scratchpad and dataset are accessed with data-dependent indices,
+which prevents a straightforward hard-wired pipeline implementation.
+The 2 GiB dataset forces a working set that exceeds any reasonable
+on-die SRAM budget, so even a custom ASIC must source bytes from
+off-die memory at roughly the same bandwidth as a commodity CPU.
+
+The practical consequence, observed continuously since 2019 on
+Monero's network, is that a 32-thread consumer CPU beats a
+flagship GPU by roughly 10× on the workload, and no ASIC has been
+offered for sale in those five years.
 
 
-4.1. Why Keccak-256d
+4.1 Why RandomX over a Hash-Only PoW
 
-The choice of Keccak-256d over SHA-256d is motivated by several
-factors:
+Keccak, SHA-3, and double-SHA-256 all share a property that
+undermines decentralisation: they are cheap to implement. A
+straightforward Keccak-f[1600] unit fits comfortably on silicon,
+state is small enough to pin in registers, and the absence of
+control flow makes the pipeline trivial to hard-wire. The mining
+ecosystem reflects this — every pure-hash PoW of non-trivial
+economic weight is ASIC-dominated.
 
-  (a) ASIC Resistance. Keccak's sponge construction with its 1600-bit
-      state (25 x 64-bit words) and 24-round permutation requires
-      substantially more silicon area to implement efficiently than
-      SHA-256's 256-bit state. The large internal state makes it
-      more memory-intensive, naturally favoring general-purpose
-      hardware (GPUs, CPUs) over custom ASICs.
+RandomX removes all three of those properties:
 
-  (b) Security Margin. Keccak was designed with a wide security
-      margin. The full 24-round Keccak-f[1600] permutation has no
-      known attacks beyond 8 rounds. With a capacity of 512 bits
-      for 256-bit security, the sponge construction provides a
-      clean and provable security reduction.
+  (a) Generated code. Each block requires executing a fresh
+      program of 256 instructions drawn from an instruction set
+      that includes integer, floating-point, and control-flow ops.
+      A fixed-function pipeline cannot run arbitrary programs; a
+      competitive implementation needs a general-purpose decode/
+      issue stage — i.e., a CPU.
 
-  (c) Length-Extension Immunity. SHA-256, being a Merkle-Damgard
-      construction, is inherently vulnerable to length-extension
-      attacks. Bitcoin mitigates this with double-hashing. Keccak's
-      sponge construction is immune to length-extension attacks by
-      design, making the double-hash a pure defense-in-depth measure
-      rather than a necessary mitigation.
+  (b) Memory-bandwidth bound. The 2 GiB dataset is accessed with
+      data-dependent addresses at every outer iteration. An ASIC
+      gains no advantage over a commodity CPU on the bottleneck
+      (DRAM bandwidth per chip).
 
-  (d) Simplicity. The Keccak permutation consists of five simple
-      sub-operations (theta, rho, pi, chi, iota) applied uniformly
-      across the state. There are no message schedule computations,
-      no block-level padding complexities, and no separate
-      compression function. This simplicity aids auditability and
-      reduces implementation errors.
+  (c) Floating-point determinism. RandomX includes IEEE-754
+      double-precision arithmetic with deterministic rounding modes.
+      An ASIC omitting FPU support cannot run the algorithm.
 
-  (e) Future-Proofing. As the SHA-3 standard, Keccak represents the
-      latest generation of cryptographic hash design. Building on it
-      positions FlowCoin to benefit from the extensive ongoing
-      cryptanalysis of the Keccak family.
+
+4.2 Seed Rotation
+
+The RandomX program generator is keyed on a 32-byte seed. The seed
+for the block at height h is the hash of an earlier block:
+
+  seed(h) = block_id(rx_seed_height(h))
+  rx_seed_height(h) = ((h - 64 - 1) & ~(2048 - 1))   for h > 2048 + 64
+                   = 0                               otherwise
+
+The seed therefore advances on 2048-block epoch boundaries, with a
+64-block lag so nodes converge on the new seed before it takes
+effect and so short reorgs across the boundary do not require
+re-initialising the cache. Each rotation forces every participant
+to rebuild the 2 GiB dataset from the new seed; this prevents a
+hostile miner from amortising pre-computed tables across the life
+of the chain. A full node that only verifies blocks can instead
+run RandomX in light mode, which uses only the 256 MiB Argon2d
+cache at roughly 40 H/s per thread — slow to mine with, more than
+fast enough to catch invalid blocks.
 
 
 5. Network
@@ -158,106 +201,103 @@ The steps to run the network are as follows:
   4) When a node finds a proof-of-work, it broadcasts the block.
   5) Nodes accept the block only if all transactions in it are
      valid and not already spent.
-  6) Nodes express their acceptance of the block by working on
-     creating the next block in the chain, using the hash of the
-     accepted block as the previous hash.
+  6) Nodes express their acceptance by working on the next block
+     with the accepted block as its parent.
 
 The peer-to-peer protocol uses a binary wire format:
 
   [4 magic] [12 command] [4 size] [4 checksum] [payload]
 
-Nodes maintain both IPv4 and IPv6 connections simultaneously.
-A persistent 64-bit node identity (node_id) is exchanged during
-the version handshake, allowing the network to recognize that two
-connections from different IP addresses (e.g., IPv4 and IPv6) belong
-to the same physical node. This prevents double-counting in peer
-statistics and avoids redundant message relay.
+Nodes maintain both IPv4 and IPv6 connections simultaneously. A
+persistent 64-bit node identity (node_id) is exchanged during the
+version handshake so that two connections from different addresses
+belonging to the same physical node are recognised and deduplicated.
 
 
 6. Incentive
 
-By convention, the first transaction in a block is a special
-transaction that creates new coins owned by the creator of the block.
-This adds an incentive for nodes to support the network, and provides
-a way to initially distribute coins into circulation, since there is
-no central authority to issue them.
+By convention, the first transaction in a block creates new coins
+owned by the block's producer. This both incentivises nodes to
+support the network and distributes coins into circulation without
+a central authority.
 
-The block reward follows the same halving schedule as Bitcoin:
+The block reward follows Bitcoin's halving schedule:
 
   Blocks 0 - 209,999:           50 FLOW per block
   Blocks 210,000 - 419,999:     25 FLOW per block
   Blocks 420,000 - 629,999:     12.5 FLOW per block
   ...continuing to halve every 210,000 blocks.
 
-The maximum supply is 21,000,000 FLOW, with the smallest unit being
-1 satoshi (1/100,000,000 FLOW). Target block time is 10 minutes,
-with difficulty retargeting every 2,016 blocks using the same
-algorithm as Bitcoin, clamped to a 4x adjustment per period.
+The maximum supply is 21,000,000 FLOW, with the smallest unit
+being 1 satoshi (1 / 100,000,000 FLOW). Target block time is
+10 minutes. Difficulty retargets every 2,016 blocks using Bitcoin's
+algorithm, clamped to a 4× adjustment per period.
 
 
 7. Disk Space
 
 Once the latest block has enough confirmations, spent transactions
 can be pruned to save disk space. Blocks are stored in flat files
-(blk00000.dat, blk00001.dat, ...) with a maximum size of 128 MB
-per file. The UTXO set is maintained in an SQLite database with WAL
-mode enabled for concurrent reads during block validation.
+(blk00000.dat, blk00001.dat, ...) with a maximum size of 128 MiB
+per file. The UTXO set is maintained in an SQLite database with
+WAL mode enabled so block validation can read the set concurrently
+with writes.
 
 
 8. Simplified Payment Verification
 
-It is possible to verify payments without running a full network
-node. A user only needs to keep a copy of the block headers of the
-longest proof-of-work chain and obtain the Merkle branch linking the
-transaction to the block it was timestamped in. The 92-byte unsigned
-header size keeps the header chain compact: one year of blocks at
-10-minute intervals produces approximately 4.8 MB of headers.
+A user can verify payments without running a full node by keeping
+the block-header chain and obtaining a Merkle branch for each
+transaction of interest. Because block IDs are keccak256d — not
+RandomX — SPV clients only need to keep keccak-chain continuity;
+they never need to allocate the 256 MiB RandomX cache. One year of
+10-minute blocks produces approximately 4.8 MiB of headers.
 
 
 9. Privacy
 
 As an additional firewall, a new key pair is used for each
-transaction. FlowCoin enforces this practice by automatically
-generating a fresh address for every mined block reward, using
-SLIP-0010 HD derivation (path m/44'/9555'/0'/0/i) from a master
-seed stored in the encrypted wallet.dat file.
+transaction. FlowCoin enforces this for coinbase outputs by
+automatically generating a fresh address for every mined block,
+using SLIP-0010 HD derivation (path m/44'/9555'/0'/0/i) from a
+master seed stored in the encrypted wallet.dat file.
 
 Wallet encryption uses AES-256-CBC with a key derived from the
-user's passphrase. The wallet supports importing and exporting
-private keys for interoperability.
+user's passphrase. Private keys can be imported and exported.
 
 
 10. Calculations
 
 An attacker trying to generate an alternate chain faster than the
-honest chain faces the same probabilistic constraints described in
-the Bitcoin whitepaper. The probability of an attacker catching up
-from z blocks behind is:
+honest chain faces the same probabilistic constraints as in Bitcoin.
+The probability of an attacker catching up from z blocks behind is:
 
   q_z = (q/p)^z    if p > q
 
-where p is the probability that an honest node finds the next block,
-q is the probability that the attacker finds the next block, and
-q_z is the probability that the attacker will ever catch up from z
-blocks behind.
-
-With Keccak-256d, the computational cost of each hash attempt is
-higher due to the larger internal state, making the economic cost of
-sustaining a 51% attack proportionally greater for the same nominal
-hash rate.
+where p is the probability the honest network finds the next block,
+q the probability the attacker does. With RandomX, the per-attempt
+cost is dominated by memory accesses against the 2 GiB dataset
+rather than by silicon-efficient integer arithmetic, so raw hash
+rate scales with DRAM bandwidth rather than with ASIC gate count.
+The economic cost of sustaining a 51 % attack therefore tracks
+the cost of general-purpose compute rather than of specialised
+hardware.
 
 
 11. Technical Specifications
 
   Parameter                  Value
   ---------                  -----
-  Algorithm                  Keccak-256d (double Keccak-256, pad=0x01)
+  PoW algorithm              RandomX v2 (2 GiB dataset, 256 MiB cache)
+  PoW seed rotation          Every 2,048 blocks, 64-block lag
+  Block ID hash              keccak256d (pad = 0x01)
   Block time target          600 seconds (10 minutes)
   Initial block reward       50 FLOW
   Halving interval           210,000 blocks
   Maximum supply             21,000,000 FLOW
   Difficulty retarget        Every 2,016 blocks
-  Retarget clamp             4x maximum adjustment
+  Retarget clamp             4× maximum adjustment
+  Minimum target (diff 1)    nbits = 0x1d00ffff (Bitcoin-compatible)
   Signatures                 Ed25519 (RFC 8032)
   Address format             Bech32m, prefix "fl"
   HD derivation              SLIP-0010 (m/44'/9555'/0'/0/i)
@@ -271,29 +311,41 @@ hash rate.
 
 12. Implementation
 
-The reference implementation is written in C/C++ and is available at
-https://github.com/haruki-tanaka-tech/flowcoin. The codebase
-comprises approximately 182,000 lines of original code plus vendored
-libraries (SQLite, zstd, XKCP, ed25519-donna) totaling
-approximately 616,000 lines.
+The reference implementation is written in C++20 and is available at
+https://github.com/KristianPilatovich/flowcoin. It comprises three
+binaries: flowcoind (the full node), flowcoin-cli (the RPC client),
+and flowcoin-miner (the standalone CPU miner).
 
-The GPU miner uses OpenCL for cross-platform compatibility (NVIDIA,
-AMD, Intel, Apple GPUs), implementing the full Keccak-f[1600]
-permutation in a single kernel. On an NVIDIA RTX 5080, the miner
-achieves approximately 750 MH/s at difficulty 1.
+flowcoin-miner talks to flowcoind over HTTP JSON-RPC: it calls
+getblocktemplate (which now returns the RandomX seed alongside the
+header template) and submitblock (a hex-encoded signed block). One
+RandomX VM per worker thread scans a disjoint nonce stripe; found
+blocks are signed with a locally-held Ed25519 key and submitted via
+RPC. The miner does not run a P2P stack or maintain chain state of
+its own, so it can run on hosts far smaller than the node.
+
+Expected hashrate is roughly 1,000–1,500 H/s per modern CPU core
+in full-memory mode. A 24-thread consumer CPU therefore delivers
+on the order of 15–30 kH/s, which at difficulty 1 means blocks
+arrive in a few minutes rather than hours. The difficulty retarget
+algorithm is the same as Bitcoin's; as more miners join, the
+per-node expected time adjusts back toward 10 minutes.
 
 
 13. Conclusion
 
-We have proposed a system for electronic transactions that combines
-the proven architecture of Bitcoin with the cryptographic advantages
-of Keccak-256d. The sponge construction provides ASIC resistance
-through its large internal state, immunity to length-extension
-attacks by design, and the security confidence of a NIST-standardized
-algorithm. By preserving Bitcoin's economic model (21M supply,
-halving schedule, 10-minute blocks, difficulty retargeting) while
-modernizing the cryptographic foundation, FlowCoin aims to provide
-a more accessible and secure peer-to-peer electronic cash system.
+We have proposed a peer-to-peer electronic cash system that pairs
+Bitcoin's proven economic model with RandomX, the proof-of-work
+that has kept Monero CPU-mineable for more than five years. The
+design separates the two concerns a block-hash function has to
+serve: a fast chain-internal identifier (keccak256d, used
+everywhere in the protocol) and a mining-cost function (RandomX,
+used only at block production and validation). By reusing a
+proven CPU-only PoW instead of inventing a new one, we inherit
+six years of adversarial review without asking users to trust a
+novel construction. By preserving Bitcoin's halving schedule,
+supply cap, and 10-minute block target, we inherit a monetary
+policy that users already understand.
 
 
 References
@@ -301,18 +353,21 @@ References
 [1] S. Nakamoto, "Bitcoin: A Peer-to-Peer Electronic Cash System,"
     2008. https://bitcoin.org/bitcoin.pdf
 
-[2] G. Bertoni, J. Daemen, M. Peeters, G. Van Assche, "Keccak,"
+[2] tevador, "RandomX," 2019.
+    https://github.com/tevador/RandomX
+
+[3] tevador, "RandomX: Design notes."
+    https://github.com/tevador/RandomX/blob/master/doc/design.md
+
+[4] G. Bertoni, J. Daemen, M. Peeters, G. Van Assche, "Keccak,"
     https://keccak.team/keccak.html
 
-[3] NIST, "SHA-3 Standard: Permutation-Based Hash and Extendable-
-    Output Functions," FIPS 202, August 2015.
-
-[4] D. J. Bernstein, N. Duif, T. Lange, P. Schwabe, B.-Y. Yang,
+[5] D. J. Bernstein, N. Duif, T. Lange, P. Schwabe, B.-Y. Yang,
     "High-speed high-security signatures," Journal of Cryptographic
     Engineering 2(2):77-89, 2012.
 
-[5] P. Wuille, "Bech32m format for v1+ witness addresses," BIP 350,
+[6] P. Wuille, "Bech32m format for v1+ witness addresses," BIP 350,
     2020.
 
-[6] SLIP-0010, "Universal private key derivation from master private
+[7] SLIP-0010, "Universal private key derivation from master private
     key," SatoshiLabs, 2016.
