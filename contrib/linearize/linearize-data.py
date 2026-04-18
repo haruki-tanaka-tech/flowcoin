@@ -97,18 +97,33 @@ class RPCConnection:
 
 
 def compute_block_hash(raw_block: bytes) -> str:
-    """Compute the keccak256d block hash from the unsigned header.
-    The unsigned header is the first 244 bytes. Hash = keccak256(keccak256(header[:244])).
-    Falls back to SHA-256 when native keccak is unavailable.
+    """Compute the keccak256d block ID.
+    Header layout (188 bytes total):
+        [0..92)  unsigned header  (hashed for the ID)
+        [92..124) Ed25519 miner pubkey
+        [124..188) Ed25519 signature over [0..92)
+    Block ID = keccak256(keccak256(header[0..92))).
+    Requires the original Keccak padding (0x01), which hashlib does NOT
+    provide — stdlib's sha3_256 uses NIST SHA-3 padding (0x06). So we
+    go through pycryptodome.
     """
-    unsigned_header = raw_block[:244]
     try:
-        from hashlib import sha3_256 as hash_func
+        from Crypto.Hash import keccak
     except ImportError:
-        from hashlib import sha256 as hash_func
-    h1 = hash_func(unsigned_header).digest()
-    h2 = hash_func(h1).digest()
-    # Reverse byte order to match RPC hash display (big-endian hex)
+        sys.stderr.write(
+            'error: real Keccak-256 is required. Install pycryptodome:\n'
+            '           pip install pycryptodome\n',
+        )
+        sys.exit(1)
+
+    def k256(b: bytes) -> bytes:
+        h = keccak.new(digest_bits=256)
+        h.update(b)
+        return h.digest()
+
+    unsigned_header = raw_block[:92]
+    h2 = k256(k256(unsigned_header))
+    # Reverse byte order to match RPC hash display (big-endian hex).
     return h2[::-1].hex()
 
 

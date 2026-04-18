@@ -23,7 +23,8 @@ PrivateTmp=true
 ProtectSystem=full
 NoNewPrivileges=true
 ProtectHome=true
-MemoryDenyWriteExecute=true
+# NOTE: do NOT set MemoryDenyWriteExecute=true — RandomX uses a JIT
+# that requires RWX pages to compile the per-block VM program.
 
 [Install]
 WantedBy=multi-user.target

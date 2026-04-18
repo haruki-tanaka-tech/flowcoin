@@ -28,11 +28,12 @@ SCRIPT_EXTENSIONS = frozenset({
     '.py', '.sh',
 })
 
-# Directories to skip
+# Directories to skip (vendored code, build outputs, etc.)
 SKIP_DIRS = frozenset({
     'sqlite', 'libuv', 'json', 'zstd',
+    'randomx', 'xkcp', 'ed25519-donna',
     '.git', 'build', 'depends', '__pycache__',
-    'node_modules', '.cache',
+    'node_modules', '.cache', 'dist', '.astro',
 })
 
 # Files to skip (vendored code, generated files)

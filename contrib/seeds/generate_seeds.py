@@ -25,11 +25,36 @@ from datetime import datetime, timezone
 
 DEFAULT_PORT = 9333
 CONNECT_TIMEOUT = 5.0
-PROTOCOL_VERSION = 1
-# FlowCoin wire magic: ASCII "FLOW" = 0x464C4F57
-MAGIC_BYTES = b'\x46\x4C\x4F\x57'
+# Must match consensus::PROTOCOL_VERSION in src/consensus/params.h.
+PROTOCOL_VERSION = 70016
+# FlowCoin wire magic. Stored as a uint32 (0x464C4F57 = "FLOW"), written
+# little-endian on the wire — so the 4 bytes actually sent are
+# \x57\x4F\x4C\x46. Keep as a 4-byte literal so humans reading a pcap
+# see the same bytes this script sends.
+MAGIC_BYTES = struct.pack('<I', 0x464C4F57)
 HEADER_SIZE = 24
 VERSION_CMD = b'version\x00\x00\x00\x00\x00'
+
+
+def _keccak256(data: bytes) -> bytes:
+    """Real Keccak-256 (pad 0x01) — NOT the same as hashlib.sha3_256
+    (which is NIST SHA-3 with pad 0x06). FlowCoin's wire protocol uses
+    the original Keccak padding, so the stdlib's sha3_256 will produce
+    a different digest and every message will be rejected as invalid.
+    Requires `pycryptodome` (pip install pycryptodome).
+    """
+    try:
+        from Crypto.Hash import keccak
+    except ImportError:
+        sys.stderr.write(
+            'error: real Keccak-256 is required (pad 0x01), which the\n'
+            '       Python stdlib does not provide. Install pycryptodome:\n'
+            '           pip install pycryptodome\n',
+        )
+        sys.exit(1)
+    h = keccak.new(digest_bits=256)
+    h.update(data)
+    return h.digest()
 
 
 def resolve_dns(hostname: str) -> list[str]:
@@ -114,15 +139,8 @@ def build_version_payload() -> bytes:
 
 
 def compute_checksum(payload: bytes) -> bytes:
-    """Compute the FlowCoin message checksum: first 4 bytes of keccak256(payload).
-    Falls back to SHA-256 if keccak is not available.
-    """
-    try:
-        from hashlib import sha3_256 as keccak_func
-    except ImportError:
-        from hashlib import sha256 as keccak_func
-    h = keccak_func(payload).digest()
-    return h[:4]
+    """FlowCoin message checksum: first 4 bytes of keccak256d(payload)."""
+    return _keccak256(_keccak256(payload))[:4]
 
 
 def build_message(command: bytes, payload: bytes) -> bytes:
@@ -274,6 +292,7 @@ def generate_json_report(good_nodes: list[dict], failed_count: int, output_path:
 
 
 def main():
+    global CONNECT_TIMEOUT, DEFAULT_PORT
     parser = argparse.ArgumentParser(
         description='Generate hardcoded seed node list for FlowCoin',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -305,7 +324,6 @@ def main():
 
     args = parser.parse_args()
 
-    global CONNECT_TIMEOUT, DEFAULT_PORT
     CONNECT_TIMEOUT = args.timeout
     DEFAULT_PORT = args.port
 

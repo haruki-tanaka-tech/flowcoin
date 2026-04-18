@@ -1,10 +1,11 @@
 flowcoin (1.0.0-1) unstable; urgency=medium
 
   * Initial release.
-  * Full node daemon with Keccak-256d Proof-of-Work consensus.
-  * Ed25519 signatures with Keccak-256 hashing.
+  * Full node daemon with RandomX CPU-only Proof-of-Work consensus.
+  * Ed25519 signatures; keccak256d for block IDs, merkle roots and
+    address hashing.
   * SLIP-0010 HD key derivation.
-  * Bech32m address encoding (HRP: fl).
-  * Bitcoin-compatible UTXO model and script system.
+  * Bech32 v0 address encoding (HRP: fl).
+  * Bitcoin-compatible UTXO model, script system, and wire format.
 
- -- Haruki Tanaka <haruki@flowcoin.org>  Mon, 25 Mar 2026 00:00:00 +0000
+ -- Kristian Pilatovich <pilatovichkristian2@gmail.com>  Sat, 18 Apr 2026 00:00:00 +0000

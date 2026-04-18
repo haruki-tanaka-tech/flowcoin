@@ -20,7 +20,7 @@ git clone https://github.com/devrandom/gitian-builder.git
 
 ```bash
 cd gitian-builder
-./bin/gbuild --url flowcoin=https://github.com/flowcoin/flowcoin.git \
+./bin/gbuild --url flowcoin=https://github.com/KristianPilatovich/flowcoin.git \
     --commit flowcoin=v1.0.0 \
     ../flowcoin/contrib/gitian/gitian-linux.yml
 ```
@@ -33,7 +33,7 @@ Requires the macOS SDK. Extract it from Xcode and place the tarball
 in `gitian-builder/inputs/`:
 
 ```bash
-./bin/gbuild --url flowcoin=https://github.com/flowcoin/flowcoin.git \
+./bin/gbuild --url flowcoin=https://github.com/KristianPilatovich/flowcoin.git \
     --commit flowcoin=v1.0.0 \
     ../flowcoin/contrib/gitian/gitian-osx.yml
 ```

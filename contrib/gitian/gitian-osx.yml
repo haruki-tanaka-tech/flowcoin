@@ -3,7 +3,8 @@
 # Distributed under the MIT software license.
 #
 # Gitian descriptor for reproducible macOS cross-compilation.
-# Produces: flowcoind, flowcoin-cli, flowcoin-tx for macOS x86_64 and arm64.
+# Produces: flowcoind, flowcoin-cli, flowcoin-tx, flowcoin-miner for
+# macOS x86_64 and arm64.
 #
 # Requires the macOS SDK tarball (extracted from Xcode) to be placed
 # in the gitian inputs directory. See README.md for instructions.
@@ -35,7 +36,7 @@ packages:
   - p7zip-full
 reference_datetime: "2026-03-01 00:00:00"
 remotes:
-  - url: https://github.com/flowcoin/flowcoin.git
+  - url: https://github.com/KristianPilatovich/flowcoin.git
     dir: flowcoin
 files:
   - Xcode-14.3-14E222b-extracted-SDK-with-libcxx-headers.tar.gz
@@ -101,7 +102,7 @@ script: |
 
     DISTDIR=$OUTDIR/flowcoin-1.0.0-osx-$ARCH
     mkdir -p $DISTDIR/bin
-    cp flowcoind flowcoin-cli flowcoin-tx $DISTDIR/bin/ 2>/dev/null || true
+    cp flowcoind flowcoin-cli flowcoin-tx flowcoin-miner $DISTDIR/bin/ 2>/dev/null || true
 
     cp ../flowcoin.conf.example $DISTDIR/ 2>/dev/null || true
     cp ../COPYING $DISTDIR/ 2>/dev/null || true

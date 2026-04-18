@@ -1,7 +1,7 @@
 Source: flowcoin
 Section: net
 Priority: optional
-Maintainer: Haruki Tanaka <haruki@flowcoin.org>
+Maintainer: Kristian Pilatovich <pilatovichkristian2@gmail.com>
 Build-Depends: debhelper (>= 12),
                cmake (>= 3.20),
                g++ (>= 10),
@@ -9,16 +9,17 @@ Build-Depends: debhelper (>= 12),
                libc6-dev
 Standards-Version: 4.5.1
 Homepage: https://flowcoin.org
-Vcs-Git: https://github.com/flowcoin/flowcoin.git
+Vcs-Git: https://github.com/KristianPilatovich/flowcoin.git
 
 Package: flowcoind
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: FlowCoin daemon - Keccak-256d Proof-of-Work blockchain
- FlowCoin is a Keccak-256d Proof-of-Work cryptocurrency.
- This package contains the full node daemon (flowcoind),
- the CLI client (flowcoin-cli), and the offline transaction
- utility (flowcoin-tx).
+Description: FlowCoin daemon - RandomX CPU-only Proof-of-Work blockchain
+ FlowCoin is a CPU-only Proof-of-Work cryptocurrency secured by
+ RandomX, the memory-hard algorithm used by Monero. This package
+ contains the full node daemon (flowcoind), the CLI client
+ (flowcoin-cli), the offline transaction utility (flowcoin-tx),
+ and the standalone CPU miner (flowcoin-miner).
 
 Package: flowcoin-cli
 Architecture: any

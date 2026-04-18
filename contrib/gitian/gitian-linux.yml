@@ -3,7 +3,7 @@
 # Distributed under the MIT software license.
 #
 # Gitian descriptor for reproducible Linux builds.
-# Produces: flowcoind, flowcoin-cli, flowcoin-tx
+# Produces: flowcoind, flowcoin-cli, flowcoin-tx, flowcoin-miner
 
 name: flowcoin-linux-1.0
 enable_cache: true
@@ -21,7 +21,7 @@ packages:
   - git
 reference_datetime: "2026-03-01 00:00:00"
 remotes:
-  - url: https://github.com/flowcoin/flowcoin.git
+  - url: https://github.com/KristianPilatovich/flowcoin.git
     dir: flowcoin
 files: []
 script: |
@@ -58,11 +58,12 @@ script: |
   strip --strip-all flowcoind
   strip --strip-all flowcoin-cli
   strip --strip-all flowcoin-tx
+  strip --strip-all flowcoin-miner
 
   # Package
   DISTDIR=$OUTDIR/flowcoin-1.0.0-linux-amd64
   mkdir -p $DISTDIR/bin
-  cp flowcoind flowcoin-cli flowcoin-tx $DISTDIR/bin/
+  cp flowcoind flowcoin-cli flowcoin-tx flowcoin-miner $DISTDIR/bin/
 
   # Man pages
   mkdir -p $DISTDIR/share/man/man1

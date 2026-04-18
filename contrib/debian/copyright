@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: FlowCoin
-Upstream-Contact: Haruki Tanaka <haruki@flowcoin.org>
-Source: https://github.com/flowcoin/flowcoin
+Upstream-Contact: Kristian Pilatovich <pilatovichkristian2@gmail.com>
+Source: https://github.com/KristianPilatovich/flowcoin
 
 Files: *
 Copyright: 2026 The FlowCoin Developers
