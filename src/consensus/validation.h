@@ -10,13 +10,12 @@
 //  1     prev_hash          == parent_hash (from context)            bad-prevblk
 //  2     height             == parent_height + 1                     bad-height
 //  3     timestamp          > parent_timestamp                       time-too-old
-//  4     timestamp          >= parent_timestamp + MIN_BLOCK_INTERVAL bad-time-spacing
-//  5     timestamp          <= adjusted_time + MAX_FUTURE_TIME       time-too-new
-//  6     nbits              == get_next_work_required(...)            bad-diffbits
-//  7     PoW                RandomX(header[0..91], pow_seed) <= tgt  high-hash
-//  8     miner_sig          Ed25519Verify(pubkey, header[0..91])     bad-signature
+//  4     timestamp          <= adjusted_time + MAX_FUTURE_TIME       time-too-new
+//  5     nbits              == get_next_work_required(...)            bad-diffbits
+//  6     PoW                RandomX(header[0..91], pow_seed) <= tgt  high-hash
+//  7     miner_sig          Ed25519Verify(pubkey, header[0..91])     bad-signature
 //
-// check_header() validates checks 1-8 (no block body needed).
+// check_header() validates checks 1-7 (no block body needed).
 // check_block() validates header + coinbase, merkle root, transactions.
 
 #ifndef FLOWCOIN_CONSENSUS_VALIDATION_H

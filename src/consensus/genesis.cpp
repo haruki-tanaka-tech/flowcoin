@@ -27,7 +27,7 @@ CBlock create_genesis_block() {
     genesis.height      = 0;
     genesis.timestamp   = GENESIS_TIMESTAMP;
     genesis.nbits       = INITIAL_NBITS;
-    genesis.nonce        = 1;  // v2 network
+    genesis.nonce        = 0;
     genesis.version     = 1;
 
     genesis.miner_pubkey.fill(0);

@@ -58,9 +58,8 @@ void register_debug_rpcs(RpcServer& server, ChainState& chain,
 
         // Timing
         j["target_block_time"] = consensus::TARGET_BLOCK_TIME;
-        j["min_block_interval"] = consensus::MIN_BLOCK_INTERVAL;
         j["tip_timestamp"] = tip->timestamp;
-        j["min_next_timestamp"] = tip->timestamp + consensus::MIN_BLOCK_INTERVAL;
+        j["min_next_timestamp"] = tip->timestamp + 1;
 
         // Growth phase
         bool dims_growing = (next_height < 512);

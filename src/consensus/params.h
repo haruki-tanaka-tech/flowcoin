@@ -3,7 +3,7 @@
 //
 // Consensus parameters for the FlowCoin network.
 // Every constant is derived and documented. Modeled after Bitcoin Core's
-// consensus/params.h for Keccak-256d Proof-of-Work.
+// consensus/params.h with RandomX Proof-of-Work.
 
 #ifndef FLOWCOIN_CONSENSUS_PARAMS_H
 #define FLOWCOIN_CONSENSUS_PARAMS_H
@@ -50,7 +50,6 @@ constexpr int64_t  MIN_REWARD          = 1LL;
 // ---- Timing -----------------------------------------------------------------
 
 constexpr int64_t  TARGET_BLOCK_TIME   = 600;    // 10 minutes
-constexpr int64_t  MIN_BLOCK_INTERVAL  = 60;     // 1 minute minimum
 constexpr int64_t  MAX_FUTURE_TIME     = 7200;   // 2 hours
 
 // ---- Difficulty (Bitcoin's algorithm) ---------------------------------------
@@ -59,10 +58,23 @@ constexpr int      RETARGET_INTERVAL   = 2016;
 constexpr int64_t  RETARGET_TIMESPAN   = RETARGET_INTERVAL * TARGET_BLOCK_TIME;
 constexpr int      MAX_RETARGET_FACTOR = 4;
 
-// powLimit expressed as compact nBits.
-// Same as Bitcoin: 0x1d00ffff (difficulty=1, target ~ 2^224).
-// One GPU at 500 MH/s Keccak-256d: ~8 second blocks at difficulty=1.
-// Difficulty adjusts up quickly with multiple miners.
+// powLimit expressed as compact nBits — the easiest target the network
+// ever accepts (difficulty retargets up from here but never below).
+// Same value as Bitcoin's difficulty=1: target = 0xffff * 256^26 ≈ 2^224.
+//
+// The target is hash-function independent — a 256-bit PoW output is treated
+// as a uniform random integer regardless of whether it came from SHA-256d
+// or RandomX. What differs is the wall-clock time to reach the target:
+//
+//   RandomX @ 1500 H/s per CPU core
+//     → expected 2^32 hashes per block at difficulty 1
+//     → solo single-core: ~33 days per block (bootstrap is slow)
+//     → 100 CPU cores (150 kH/s): ~8 hours per block
+//     → ~4000 cores (6 MH/s) give the 10-minute target
+//
+// Blocks before the first retarget (2016 blocks, 14 days at target) will
+// be much slower until enough miners join. This is the intended behaviour:
+// the network floor catches up with hashrate rather than the other way.
 constexpr uint32_t INITIAL_NBITS       = 0x1d00ffff;
 
 // ---- Block Limits -----------------------------------------------------------

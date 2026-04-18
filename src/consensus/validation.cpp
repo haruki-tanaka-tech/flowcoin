@@ -53,19 +53,13 @@ bool check_header(const CBlockHeader& header, const BlockContext& ctx,
                 "timestamp not after parent");
         }
 
-        // Check 4: timestamp must be > parent (like Bitcoin, no MIN_BLOCK_INTERVAL)
-        if (header.timestamp <= ctx.prev_timestamp) {
-            return state.invalid(ValidationResult::HEADER_INVALID, "bad-time-spacing",
-                "timestamp must be greater than parent");
-        }
-
-        // Check 5: timestamp must not be too far in the future
+        // Check 4: timestamp must not be too far in the future
         if (header.timestamp > ctx.adjusted_time + MAX_FUTURE_TIME) {
             return state.invalid(ValidationResult::HEADER_INVALID, "time-too-new",
                 "timestamp too far in the future");
         }
 
-        // Check 6: nbits must match expected difficulty
+        // Check 5: nbits must match expected difficulty
         if (header.nbits != ctx.expected_nbits) {
             return state.invalid(ValidationResult::HEADER_INVALID, "bad-diffbits",
                 "nbits does not match expected difficulty");
@@ -74,7 +68,7 @@ bool check_header(const CBlockHeader& header, const BlockContext& ctx,
     } // end non-genesis checks
 
     // -----------------------------------------------------------------------
-    // Check 7: Proof-of-Work -- RandomX(header[0..91], ctx.pow_seed) <= target
+    // Check 6: Proof-of-Work -- RandomX(header[0..91], ctx.pow_seed) <= target
     // -----------------------------------------------------------------------
     if (!CheckProofOfWork(header, ctx.pow_seed)) {
         LogWarn("consensus", "PoW check FAILED at height %lu nbits=0x%08x",
@@ -84,7 +78,7 @@ bool check_header(const CBlockHeader& header, const BlockContext& ctx,
     }
 
     // -----------------------------------------------------------------------
-    // Check 8: miner signature must be valid
+    // Check 7: miner signature must be valid
     // -----------------------------------------------------------------------
     // Ed25519 signature over the unsigned header data (first 92 bytes).
     {
