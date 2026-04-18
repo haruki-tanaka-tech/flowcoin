@@ -144,7 +144,7 @@ void register_wallet_options(ArgsManager& args) {
                   "Wallet", false, "", false, false});
 
     args.add_arg({"-wallet", "Specify wallet file (within data directory)",
-                  "Wallet", true, "wallets/wallet.dat", false, false});
+                  "Wallet", true, "wallet.dat", false, false});
 
     args.add_arg({"-walletbroadcast",
                   "Make the wallet broadcast transactions",

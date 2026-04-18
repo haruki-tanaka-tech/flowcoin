@@ -609,28 +609,6 @@ bool step5_create_pid_file(NodeContext& node) {
 bool step6_initialize_chain(NodeContext& node, const AppArgs& args) {
     LogDebug("init", "Initializing chain state");
 
-    // Auto-migrate old layout: .flowcoin/*.db → .flowcoin/chainstate/ and indexes/
-    {
-        std::error_code ec;
-        auto migrate_db = [&](const std::string& name, const std::string& subdir) {
-            std::string old_path = node.datadir + "/" + name;
-            std::string new_path = node.datadir + "/" + subdir + "/" + name;
-            if (!std::filesystem::exists(new_path, ec) && std::filesystem::exists(old_path, ec)) {
-                LogInfo("init", "Migrating %s to %s/", name.c_str(), subdir.c_str());
-                std::filesystem::create_directories(node.datadir + "/" + subdir, ec);
-                std::filesystem::rename(old_path, new_path, ec);
-                for (const auto& suffix : {"-shm", "-wal"}) {
-                    std::string old_wal = old_path + suffix;
-                    if (std::filesystem::exists(old_wal, ec))
-                        std::filesystem::rename(old_wal, new_path + suffix, ec);
-                }
-            }
-        };
-        migrate_db("chaindb.db", "chainstate");
-        migrate_db("utxo.db", "chainstate");
-        migrate_db("txindex.db", "indexes");
-    }
-
     LogInfo("init", "init message: Loading block index…");
     try {
         node.chain = std::make_unique<ChainState>(node.datadir);
@@ -650,98 +628,6 @@ bool step6_initialize_chain(NodeContext& node, const AppArgs& args) {
     LogInfo("init", "Loaded best chain: height=%lu",
             static_cast<unsigned long>(node.chain->height()));
     LogInfo("init", "Block index and chainstate loaded");
-
-    // Auto-migrate old per-height undo files (blocks/undo/<height>.dat)
-    // to rev*.dat format alongside blk*.dat.
-    {
-        std::string undo_dir = node.datadir + "/blocks/undo";
-        std::error_code ec;
-        if (std::filesystem::is_directory(undo_dir, ec)) {
-            LogInfo("init", "Migrating per-height undo files to rev*.dat format...");
-            int migrated = 0;
-            int failed = 0;
-            auto& store = node.chain->block_store();
-            auto& tree  = node.chain->block_tree();
-
-            // Walk the chain from genesis to tip, migrating undo for each block
-            CBlockIndex* tip = tree.best_tip();
-            if (tip) {
-                // Build the chain path
-                std::vector<CBlockIndex*> chain;
-                for (CBlockIndex* p = tip; p; p = p->prev) {
-                    chain.push_back(p);
-                }
-                std::reverse(chain.begin(), chain.end());
-
-                for (CBlockIndex* idx : chain) {
-                    if (idx->height == 0) continue; // genesis has no undo
-                    if (idx->has_undo()) continue;   // already migrated
-
-                    // Try to read old per-height undo file
-                    char height_buf[64];
-                    std::snprintf(height_buf, sizeof(height_buf), "%lu.dat",
-                                  static_cast<unsigned long>(idx->height));
-                    std::string old_path = undo_dir + "/" + height_buf;
-
-                    FILE* f = std::fopen(old_path.c_str(), "rb");
-                    if (!f) continue;
-
-                    // Read the old format: [4-byte length LE] [data]
-                    uint8_t len_bytes[4];
-                    if (std::fread(len_bytes, 1, 4, f) != 4) {
-                        std::fclose(f);
-                        failed++;
-                        continue;
-                    }
-                    uint32_t len = static_cast<uint32_t>(len_bytes[0])
-                                 | (static_cast<uint32_t>(len_bytes[1]) << 8)
-                                 | (static_cast<uint32_t>(len_bytes[2]) << 16)
-                                 | (static_cast<uint32_t>(len_bytes[3]) << 24);
-                    if (len > 100'000'000) {
-                        std::fclose(f);
-                        failed++;
-                        continue;
-                    }
-                    std::vector<uint8_t> undo_data(len);
-                    if (std::fread(undo_data.data(), 1, len, f) != len) {
-                        std::fclose(f);
-                        failed++;
-                        continue;
-                    }
-                    std::fclose(f);
-
-                    // Write to rev<N>.dat where N matches the block's blk file
-                    uint32_t undo_offset = 0;
-                    if (store.write_undo(idx->pos.file_num, undo_data, undo_offset)) {
-                        idx->undo_file = idx->pos.file_num;
-                        idx->undo_pos  = undo_offset;
-                        migrated++;
-                    } else {
-                        failed++;
-                    }
-                }
-
-                // Persist all updated block index entries
-                if (migrated > 0) {
-                    for (CBlockIndex* idx : chain) {
-                        if (idx->has_undo()) {
-                            node.chain->persist_block_index(idx);
-                        }
-                    }
-                }
-            }
-
-            if (failed == 0) {
-                // Remove old undo files and directory
-                std::filesystem::remove_all(undo_dir, ec);
-                LogInfo("init", "Undo migration complete: %d entries migrated, "
-                        "old blocks/undo/ directory removed", migrated);
-            } else {
-                LogInfo("init", "Undo migration partial: %d migrated, %d failed. "
-                        "Old blocks/undo/ directory kept.", migrated, failed);
-            }
-        }
-    }
 
     // PoW: no eval engine needed
 
@@ -772,30 +658,6 @@ bool step7_initialize_wallet(NodeContext& node, const AppArgs& args) {
         wp = node.wallet_path();
     }
 
-    // Auto-migrate from old layout: .flowcoin/wallet.dat → .flowcoin/wallets/wallet.dat
-    {
-        std::string old_wallet = node.datadir + "/wallet.dat";
-        std::string old_miner_key = node.datadir + "/miner_key.dat";
-        std::error_code ec;
-        if (!std::filesystem::exists(wp, ec) && std::filesystem::exists(old_wallet, ec)) {
-            LogInfo("init", "Migrating wallet.dat to wallets/ directory");
-            std::filesystem::create_directories(node.datadir + "/wallets", ec);
-            std::filesystem::rename(old_wallet, wp, ec);
-            // Also migrate WAL files
-            for (const auto& suffix : {"-shm", "-wal"}) {
-                std::string old_wal = old_wallet + suffix;
-                if (std::filesystem::exists(old_wal, ec)) {
-                    std::filesystem::rename(old_wal, wp + suffix, ec);
-                }
-            }
-        }
-        // Migrate miner_key.dat
-        std::string new_miner_key = node.datadir + "/wallets/miner_key.dat";
-        if (!std::filesystem::exists(new_miner_key, ec) && std::filesystem::exists(old_miner_key, ec)) {
-            std::filesystem::rename(old_miner_key, new_miner_key, ec);
-        }
-    }
-
     try {
         node.wallet = std::make_unique<Wallet>(wp, node.chain->utxo_set());
         if (!node.wallet->init()) {
@@ -807,9 +669,9 @@ bool step7_initialize_wallet(NodeContext& node, const AppArgs& args) {
         return false;
     }
 
-    // Sync miner key between wallet.dat (primary) and miner_key.dat (export for GPU miner)
+    // Sync miner key between wallet.dat (primary) and miner_key.dat (export for the miner)
     {
-        std::string miner_key_file = node.datadir + "/wallets/miner_key.dat";
+        std::string miner_key_file = node.datadir + "/miner_key.dat";
         std::error_code ec;
         std::array<uint8_t, 32> wallet_miner_key{};
         bool wallet_has_key = node.wallet->get_miner_key(wallet_miner_key);
@@ -828,8 +690,7 @@ bool step7_initialize_wallet(NodeContext& node, const AppArgs& args) {
                 }
             }
         } else if (wallet_has_key && !file_exists) {
-            // Export miner key from wallet.dat to miner_key.dat for the GPU miner
-            std::filesystem::create_directories(node.datadir + "/wallets", ec);
+            // Export miner key from wallet.dat to miner_key.dat for the standalone miner.
             std::ofstream fout(miner_key_file, std::ios::binary);
             if (fout) {
                 fout.write(reinterpret_cast<const char*>(wallet_miner_key.data()), 32);
@@ -1234,7 +1095,6 @@ bool Node::ensure_datadir() {
         std::filesystem::create_directories(config_.datadir);
         std::filesystem::create_directories(config_.datadir + "/blocks");
         std::filesystem::create_directories(config_.datadir + "/chainstate");
-        std::filesystem::create_directories(config_.datadir + "/wallets");
         std::filesystem::create_directories(config_.datadir + "/indexes");
         return true;
     } catch (const std::filesystem::filesystem_error& e) {
@@ -1322,7 +1182,7 @@ bool Node::init() {
             (unsigned long)chain_->height());
 
     // 2. Initialize Wallet
-    std::string wallet_path = config_.datadir + "/wallets/wallet.dat";
+    std::string wallet_path = config_.datadir + "/wallet.dat";
     LogInfo("init", "Initializing wallet at %s", wallet_path.c_str());
     wallet_ = std::make_unique<Wallet>(wallet_path, chain_->utxo_set());
     if (!wallet_->init()) {

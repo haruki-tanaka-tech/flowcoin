@@ -14,7 +14,7 @@ class Wallet;
 namespace walletutil {
 
 /// Return the default wallet database path for a given data directory.
-/// The returned path is datadir + "/wallets/wallet.dat".
+/// The returned path is datadir + "/wallet.dat" (flat, Bitcoin-legacy layout).
 std::string get_wallet_path(const std::string& datadir);
 
 /// Check whether a wallet file exists at the given path.

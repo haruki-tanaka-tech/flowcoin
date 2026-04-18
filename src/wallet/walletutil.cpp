@@ -24,9 +24,9 @@ namespace walletutil {
 // ---------------------------------------------------------------------------
 
 std::string get_wallet_path(const std::string& datadir) {
-    if (datadir.empty()) return "wallets/wallet.dat";
-    if (datadir.back() == '/') return datadir + "wallets/wallet.dat";
-    return datadir + "/wallets/wallet.dat";
+    if (datadir.empty()) return "wallet.dat";
+    if (datadir.back() == '/') return datadir + "wallet.dat";
+    return datadir + "/wallet.dat";
 }
 
 // ---------------------------------------------------------------------------

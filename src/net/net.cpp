@@ -173,17 +173,11 @@ bool NetManager::start() {
     // Load previously known peers from peers.dat
     load_peers();
 
-    // Add hardcoded seed nodes to address manager
-    const auto& seeds = GetSeeds(magic_);
+    // Seeds are no longer injected into addrman at startup — that caused
+    // duplicate connections when the hardcoded IP and the DNS-resolved IP
+    // were the same host. DNS seeding runs first on the next tick, and
+    // hardcoded IPs are only added if DNS returns nothing.
     int64_t now = GetTime();
-    for (const auto& seed : seeds) {
-        addrman_.add(CNetAddr(seed.host, seed.port), now);
-    }
-
-    // Also add the legacy seed list
-    for (const auto& [ip, p] : SEED_NODES) {
-        addrman_.add(CNetAddr(ip, p), now);
-    }
 
     // Initialize timing
     last_feeler_time_ = now;
@@ -887,9 +881,11 @@ void NetManager::on_tick() {
         addrman_.cleanup();
     }
 
-    // Save peers.dat periodically (every 15 minutes)
-    if (now - last_peers_save_time_ >= 900) {
+    // Save peers.dat every 60 seconds. Cheap (small file, one fsync) and
+    // ensures state survives a kill -9 with at most a minute of drift.
+    if (now - last_peers_save_time_ >= 60) {
         last_peers_save_time_ = now;
+        addrman_.cleanup();
         save_peers();
     }
 }
@@ -1147,6 +1143,8 @@ void NetManager::resolve_dns_seeds() {
     static bool first_resolve = true;
     const auto& dns_seeds = GetDNSSeeds(magic_);
 
+    int addrs_added = 0;
+
     for (const auto& seed_host : dns_seeds) {
         if (first_resolve)
             LogInfo("net", "resolving DNS seed %s", seed_host.c_str());
@@ -1169,13 +1167,31 @@ void NetManager::resolve_dns_seeds() {
             addr.port = consensus::MAINNET_PORT;
 
             addrman_.add(addr, now);
-
-            // Immediately try connecting if we need outbound peers
-            if (outbound_count() < static_cast<size_t>(consensus::MAX_OUTBOUND_PEERS)) {
-                connect_to(addr);
-            }
+            ++addrs_added;
         }
     }
+
+    // Fallback: only when DNS produced nothing AND addrman is effectively
+    // empty do we fall back to the hardcoded IPs. This is the "DNS
+    // censored / firewalled" case. Otherwise we stay on DNS results to
+    // avoid the seed-IP appearing twice (once via DNS, once hardcoded).
+    if (addrs_added == 0 && addrman_.size() == 0) {
+        const auto& seeds = GetSeeds(magic_);
+        int64_t now = GetTime();
+        for (const auto& seed : seeds) {
+            CNetAddr addr(seed.host, seed.port);
+            // Skip entries that are themselves hostnames (DNS will handle them
+            // when it comes back online); only add literal IPs.
+            if (addr.ip[0] == 0 && addr.ip[1] == 0) continue;  // parse failed
+            addrman_.add(addr, now);
+            ++addrs_added;
+        }
+        if (addrs_added > 0) {
+            LogInfo("net", "DNS seeding returned nothing — falling back to %d hardcoded IPs",
+                    addrs_added);
+        }
+    }
+
     first_resolve = false;
 }
 

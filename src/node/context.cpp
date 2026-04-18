@@ -929,7 +929,6 @@ bool NodeContext::ensure_datadir() {
         std::filesystem::create_directories(datadir);
         std::filesystem::create_directories(blocks_dir());
         std::filesystem::create_directories(datadir + "/chainstate");
-        std::filesystem::create_directories(datadir + "/wallets");
         std::filesystem::create_directories(datadir + "/indexes");
         return true;
     } catch (const std::filesystem::filesystem_error& e) {
@@ -952,7 +951,7 @@ std::string NodeContext::blocks_dir() const {
 std::string NodeContext::wallet_path() const {
     std::string custom = config.get("walletfile");
     if (!custom.empty()) return custom;
-    return datadir_path("wallets/wallet.dat");
+    return datadir_path("wallet.dat");
 }
 
 std::string NodeContext::log_path() const {
@@ -1049,7 +1048,7 @@ static void log_datadir_inventory(const std::string& datadir) {
     };
 
     std::vector<FileEntry> files = {
-        {"wallets/wallet.dat",    datadir + "/wallets/wallet.dat"},
+        {"wallet.dat",    datadir + "/wallet.dat"},
         {"flowcoin.conf", datadir + "/flowcoin.conf"},
         {"debug.log",     datadir + "/debug.log"},
         {".cookie",       datadir + "/.cookie"},

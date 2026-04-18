@@ -51,7 +51,6 @@ bool Kernel::init() {
             return false;
         }
         std::filesystem::create_directories(config_.datadir + "/chainstate", ec);
-        std::filesystem::create_directories(config_.datadir + "/wallets", ec);
         std::filesystem::create_directories(config_.datadir + "/indexes", ec);
     }
 
