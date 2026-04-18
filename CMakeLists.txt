@@ -497,6 +497,99 @@ endif()
 
 
 # =============================================================================
+# Install rules — Bitcoin-Core-style release layout.
+#
+# Running `cmake --build build && cmake --install build --prefix /tmp/stage`
+# produces:
+#
+#   /tmp/stage/
+#   ├── bin/
+#   │   ├── flowcoind
+#   │   ├── flowcoin-cli
+#   │   ├── flowcoin-tx
+#   │   └── flowcoin-miner          (if BUILD_MINER=ON)
+#   ├── share/
+#   │   └── man/man1/flowcoind.1, flowcoin-cli.1, flowcoin-tx.1
+#   ├── flowcoin.conf               (sample config, commented)
+#   ├── README.md
+#   └── whitepaper.txt
+# =============================================================================
+
+include(GNUInstallDirs)
+
+# All FlowCoin-specific install rules go into the "flowcoin" component so we
+# can run `cmake --install build --component flowcoin` without also dragging
+# in libuv's or RandomX's own install rules.
+
+install(TARGETS flowcoind flowcoin-cli flowcoin-tx
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        COMPONENT flowcoin)
+
+if(BUILD_MINER)
+    install(TARGETS flowcoin-miner
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            COMPONENT flowcoin)
+endif()
+
+install(FILES
+        ${CMAKE_SOURCE_DIR}/share/flowcoind.1
+        ${CMAKE_SOURCE_DIR}/share/flowcoin-cli.1
+        ${CMAKE_SOURCE_DIR}/share/flowcoin-tx.1
+        DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
+        COMPONENT flowcoin)
+
+install(FILES
+        ${CMAKE_SOURCE_DIR}/share/examples/flowcoin.conf
+        ${CMAKE_SOURCE_DIR}/README.md
+        ${CMAKE_SOURCE_DIR}/whitepaper.txt
+        DESTINATION .
+        COMPONENT flowcoin)
+
+# =============================================================================
+# CPack — package generator.
+# `cmake --build build --target package` produces flowcoin-<ver>-linux-x86_64.tar.gz
+# with the layout above rooted inside the archive.
+# =============================================================================
+
+set(CPACK_PACKAGE_NAME "flowcoin")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_VENDOR "FlowCoin")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "FlowCoin — CPU-only RandomX Proof-of-Work cryptocurrency")
+set(CPACK_PACKAGE_HOMEPAGE_URL
+    "https://github.com/KristianPilatovich/flowcoin")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/COPYING")
+set(CPACK_RESOURCE_FILE_README  "${CMAKE_SOURCE_DIR}/README.md")
+
+# Name convention: flowcoin-<ver>-<os>-<arch>
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(CPACK_SYSTEM_NAME "linux-${CMAKE_SYSTEM_PROCESSOR}")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(CPACK_SYSTEM_NAME "macos-${CMAKE_SYSTEM_PROCESSOR}")
+else()
+    set(CPACK_SYSTEM_NAME "${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CPACK_SYSTEM_NAME}")
+
+if(WIN32)
+    set(CPACK_GENERATOR "ZIP")
+else()
+    set(CPACK_GENERATOR "TGZ")
+endif()
+
+# Only pack the "flowcoin" component (no libuv / RandomX install leakage).
+set(CPACK_COMPONENTS_ALL flowcoin)
+set(CPACK_COMPONENTS_GROUPING IGNORE)
+set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
+set(CPACK_ARCHIVE_FLOWCOIN_FILE_NAME "${CPACK_PACKAGE_FILE_NAME}")
+# Unpack into a versioned top-level directory (mirrors Bitcoin Core).
+set(CPACK_COMPONENT_INCLUDE_TOPLEVEL_DIRECTORY 1)
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "${CPACK_PACKAGE_FILE_NAME}")
+
+include(CPack)
+
+
+# =============================================================================
 # Tests (assert-based, no external framework required)
 # =============================================================================
 option(BUILD_TESTS "Build unit tests" ON)
