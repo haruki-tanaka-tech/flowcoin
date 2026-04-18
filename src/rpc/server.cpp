@@ -448,7 +448,7 @@ void RpcServer::on_read(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf)
             {"error", {{"code", -32600}, {"message", "Request too large"}}},
             {"id", nullptr}
         };
-        std::string response = ctx->server->http_response(413, err_resp.dump());
+        std::string response = ctx->server->http_response(413, err_resp.dump(2) + "\n");
         send_response(client, response);
         delete ctx;
         client->data = nullptr;
@@ -465,7 +465,7 @@ void RpcServer::on_read(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf)
             {"error", {{"code", -32600}, {"message", "Request timeout"}}},
             {"id", nullptr}
         };
-        std::string response = ctx->server->http_response(408, err_resp.dump());
+        std::string response = ctx->server->http_response(408, err_resp.dump(2) + "\n");
         send_response(client, response);
         delete ctx;
         client->data = nullptr;
@@ -528,7 +528,7 @@ void RpcServer::on_read(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf)
             {"error", {{"code", -32600}, {"message", "Only POST method is supported"}}},
             {"id", nullptr}
         };
-        std::string response = ctx->server->http_response(405, err_resp.dump());
+        std::string response = ctx->server->http_response(405, err_resp.dump(2) + "\n");
         send_response(client, response);
         delete ctx;
         client->data = nullptr;
@@ -605,7 +605,7 @@ std::string RpcServer::process_request(const std::string& request,
             {"id", nullptr}
         };
         failed_requests_++;
-        return http_response(429, err_resp.dump());
+        return http_response(429, err_resp.dump(2) + "\n");
     }
 
     // Check authentication
@@ -616,7 +616,7 @@ std::string RpcServer::process_request(const std::string& request,
             {"error", {{"code", -32600}, {"message", "Unauthorized"}}},
             {"id", nullptr}
         };
-        return http_response(401, err_resp.dump());
+        return http_response(401, err_resp.dump(2) + "\n");
     }
 
     // Extract body
@@ -650,7 +650,7 @@ std::string RpcServer::process_request(const std::string& request,
             {"error", {{"code", -32700}, {"message", "Parse error: empty body"}}},
             {"id", nullptr}
         };
-        return http_response(400, err_resp.dump());
+        return http_response(400, err_resp.dump(2) + "\n");
     }
 
     // Check body size
@@ -661,7 +661,7 @@ std::string RpcServer::process_request(const std::string& request,
             {"error", {{"code", -32600}, {"message", "Request body too large"}}},
             {"id", nullptr}
         };
-        return http_response(413, err_resp.dump());
+        return http_response(413, err_resp.dump(2) + "\n");
     }
 
     // Parse JSON
@@ -679,7 +679,7 @@ std::string RpcServer::process_request(const std::string& request,
             {"error", {{"code", -32700}, {"message", std::string("Parse error: ") + e.what()}}},
             {"id", nullptr}
         };
-        return http_response(200, err_resp.dump());
+        return http_response(200, err_resp.dump(2) + "\n");
     }
 
     // Handle batch requests (JSON array)
@@ -691,7 +691,7 @@ std::string RpcServer::process_request(const std::string& request,
                 {"error", {{"code", -32600}, {"message", "Empty batch request"}}},
                 {"id", nullptr}
             };
-            return http_response(200, err_resp.dump());
+            return http_response(200, err_resp.dump(2) + "\n");
         }
 
         json batch_response = json::array();
@@ -710,7 +710,7 @@ std::string RpcServer::process_request(const std::string& request,
         }
 
         successful_requests_++;
-        return http_response(200, batch_response.dump());
+        return http_response(200, batch_response.dump(2) + "\n");
     }
 
     // Single request
@@ -723,7 +723,7 @@ std::string RpcServer::process_request(const std::string& request,
         successful_requests_++;
     }
 
-    return http_response(200, result.dump());
+    return http_response(200, result.dump(2) + "\n");
 }
 
 json RpcServer::dispatch(const json& request) {
