@@ -7,7 +7,7 @@ proven economic model (21M supply, 10-minute blocks, halving schedule) with
 a memory-hard PoW and modern signatures.
 
 The protocol uses:
-- **RandomX v2** (from tevador, deployed on Monero since Nov 2019) for proof-of-work
+- **RandomX** (from tevador, the same PoW family used by Monero since Nov 2019) for proof-of-work
 - **keccak256d** (double Keccak-256, padding byte 0x01) for block IDs, merkle roots,
   transaction IDs, and address derivation
 - **Ed25519** signatures (RFC 8032) instead of secp256k1 ECDSA

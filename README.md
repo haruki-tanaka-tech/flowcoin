@@ -166,7 +166,7 @@ for prebuilt archives.
 
 | Parameter           | Value                                          |
 |---------------------|------------------------------------------------|
-| PoW                 | RandomX v2 (2 GiB dataset / 256 MiB light)     |
+| PoW                 | RandomX (2 GiB dataset / 256 MiB light)        |
 | Seed rotation       | Every 2048 blocks, 64-block lag                |
 | Block ID hash       | keccak256d (SHA-3 style, pad 0x01)             |
 | Block time          | 10 minutes                                     |

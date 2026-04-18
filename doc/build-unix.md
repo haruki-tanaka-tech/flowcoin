@@ -23,7 +23,7 @@ toolchain and a few system libraries are required.
 
 Vendored dependencies (already in `src/`):
 
-- **RandomX v2** (tevador) — CPU-only proof-of-work
+- **RandomX** (tevador) — CPU-only proof-of-work
 - **XKCP** — Keccak reference implementation (block-id hash only)
 - **Ed25519-donna** — signatures
 - **SQLite** — UTXO set, transaction index

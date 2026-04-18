@@ -357,7 +357,7 @@ is what FlowCoin is inheriting.
 
   Parameter                  Value
   ---------                  -----
-  PoW algorithm              RandomX v2 (2 GiB dataset, 256 MiB cache)
+  PoW algorithm              RandomX (2 GiB dataset, 256 MiB cache)
   PoW seed rotation          Every 2,048 blocks, 64-block lag
   Block ID hash              keccak256d (pad = 0x01)
   Block time target          600 seconds (10 minutes)

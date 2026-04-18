@@ -16,7 +16,7 @@ cmake --build build -j$(nproc)
 
 ## Overview
 
-FlowCoin uses [RandomX v2](https://github.com/tevador/RandomX) — the
+FlowCoin uses [RandomX](https://github.com/tevador/RandomX) — the
 same CPU-oriented memory-hard proof-of-work that has secured the Monero
 network since November 2019. Each hash executes a pseudo-randomly
 generated program of 256 instructions against a 2 GiB deterministic
@@ -145,7 +145,7 @@ Startup banner plus a live event stream:
 
 ```
  * ABOUT        flowcoin-miner/0.1.0 gcc/15.2
- * LIBS         RandomX/2.0 nlohmann-json/3.x
+ * LIBS         RandomX nlohmann-json/3.x
  * CPU          AMD Ryzen 9 7950X  64-bit AES
  *              threads:32
  * NODE         127.0.0.1:9334

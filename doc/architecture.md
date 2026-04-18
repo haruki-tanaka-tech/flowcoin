@@ -33,7 +33,7 @@ flowcoind (main binary)
   +-- flowcoin_script            (script evaluation, standard scripts)
   |
   +-- sqlite (vendored)          (UTXO set, wallet DB, chain DB)
-  +-- randomx (vendored)         (RandomX v2 PoW from tevador)
+  +-- randomx (vendored)         (RandomX PoW from tevador)
   +-- xkcp (vendored)            (Keccak reference implementation for block IDs)
   +-- libuv (vendored)           (async I/O, event loop)
   +-- nlohmann/json (vendored)   (JSON parsing)
@@ -305,7 +305,7 @@ Deterministic build support:
 - **Determinism**: All consensus-critical computation produces identical
   results across platforms.
 - **Cryptography**: Ed25519 for signatures, keccak256d for block IDs,
-  merkle roots, and address hashing, RandomX v2 for proof-of-work,
+  merkle roots, and address hashing, RandomX for proof-of-work,
   SLIP-0010 for HD key derivation.
 - **Network**: All peer messages are checksummed (keccak256d truncated
   to 4 bytes). Misbehaving peers are scored and banned at threshold.

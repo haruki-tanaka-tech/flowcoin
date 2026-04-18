@@ -555,7 +555,7 @@ static void print_banner(const CpuInfo& cpu, size_t threads, const RpcEndpoint& 
     aboutv += "unknown";
 #endif
     line("ABOUT", aboutv);
-    line("LIBS", std::string("RandomX/2.0 nlohmann-json/3.x"));
+    line("LIBS", std::string("RandomX nlohmann-json/3.x"));
 
     std::string cpuline = cpu.brand + "  " +
         (cpu.is_64bit ? GREEN_BOLD("64-bit") : RED_BOLD("32-bit")) + " " +

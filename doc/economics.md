@@ -48,8 +48,9 @@ By year 20, annual inflation drops below 0.5%.
 
 ## Mining Economics
 
-FlowCoin uses RandomX v2 Proof-of-Work — the same CPU-oriented,
-memory-hard algorithm that has secured Monero since November 2019.
+FlowCoin uses RandomX Proof-of-Work — the CPU-oriented, memory-hard
+algorithm from tevador, the same family that has secured Monero since
+November 2019.
 Each hash runs a 256-instruction VM program against a 2 GiB
 deterministic dataset. The bottleneck is DRAM bandwidth, not silicon
 gate count, so general-purpose CPUs outperform both GPUs and bespoke
