@@ -187,6 +187,14 @@ public:
     bool prefers_compact_blocks() const { return prefers_cmpct_; }
     void set_prefers_compact_blocks(bool v) { prefers_cmpct_ = v; }
 
+    // Peer sent "wtxidrelay" (BIP339) — use wtxids instead of txids in INV
+    bool wtxid_relay() const { return wtxid_relay_; }
+    void set_wtxid_relay(bool v) { wtxid_relay_ = v; }
+
+    // Peer sent "sendaddrv2" (BIP155) — peer accepts `addrv2` messages
+    bool sendaddrv2() const { return sendaddrv2_; }
+    void set_sendaddrv2(bool v) { sendaddrv2_ = v; }
+
     // -----------------------------------------------------------------------
     // Inventory tracking (deduplication)
     // -----------------------------------------------------------------------
@@ -469,6 +477,8 @@ private:
     // Announcement preferences
     bool prefers_headers_ = false;
     bool prefers_cmpct_ = false;
+    bool wtxid_relay_ = false;
+    bool sendaddrv2_ = false;
 
     // Inventory tracking
     std::set<uint256> announced_inv_;

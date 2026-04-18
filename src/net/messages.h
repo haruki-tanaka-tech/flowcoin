@@ -68,6 +68,12 @@ private:
     void handle_blocktxn(Peer& peer, const uint8_t* data, size_t len);
     void handle_feefilter(Peer& peer, const uint8_t* data, size_t len);
 
+    // BIP339 / BIP155 / BIP35 — handshake extensions and extras.
+    void handle_wtxidrelay(Peer& peer);
+    void handle_sendaddrv2(Peer& peer);
+    void handle_addrv2(Peer& peer, const uint8_t* data, size_t len);
+    void handle_mempool(Peer& peer);
+
     // Compact block reconstruction state per peer
     struct CompactBlockState {
         uint256 block_hash;

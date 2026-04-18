@@ -40,10 +40,14 @@ void MessageHandler::process_message(Peer& peer, const std::string& command,
     peer.set_last_recv_time(GetTime());
     peer.inc_messages_recv();
 
-    // Before handshake, only accept version and verack
+    // Before handshake, only accept messages that belong in the feature-
+    // negotiation window (VERSION, VERACK, WTXIDRELAY, SENDADDRV2). Other
+    // commands arriving pre-handshake are dropped.
     if (peer.state() != PeerState::HANDSHAKE_DONE) {
-        if (command != NetCmd::VERSION && command != NetCmd::VERACK) {
-            // Silently ignore pre-handshake messages
+        if (command != NetCmd::VERSION    &&
+            command != NetCmd::VERACK     &&
+            command != NetCmd::WTXIDRELAY &&
+            command != NetCmd::SENDADDRV2) {
             return;
         }
     }
@@ -90,6 +94,14 @@ void MessageHandler::process_message(Peer& peer, const std::string& command,
         handle_blocktxn(peer, payload, payload_len);
     } else if (command == NetCmd::FEEFILTER) {
         handle_feefilter(peer, payload, payload_len);
+    } else if (command == NetCmd::WTXIDRELAY) {
+        handle_wtxidrelay(peer);
+    } else if (command == NetCmd::SENDADDRV2) {
+        handle_sendaddrv2(peer);
+    } else if (command == NetCmd::ADDRV2) {
+        handle_addrv2(peer, payload, payload_len);
+    } else if (command == NetCmd::MEMPOOL) {
+        handle_mempool(peer);
     } else {
         // Unknown command -- ignore
         LogInfo("net", "unknown command '%s' from peer %lu",
@@ -183,9 +195,18 @@ void MessageHandler::handle_version(Peer& peer, const uint8_t* data, size_t len)
     peer.set_nonce(ver.nonce);
     peer.set_version_received(true);
 
-    LogInfo("net", "received version from peer %lu: %s height=%lu",
-            (unsigned long)peer.id(), ver.user_agent.c_str(),
-            (unsigned long)ver.start_height);
+    LogInfo("net", "received version from peer %lu: %s height=%d",
+            (unsigned long)peer.id(), ver.user_agent.c_str(), ver.start_height);
+
+    // Feature-negotiation window: BIP339 wtxidrelay and BIP155 sendaddrv2
+    // must be sent AFTER we've processed peer's VERSION and BEFORE we send
+    // VERACK. Matches Bitcoin Core's net_processing.cpp sequence.
+    const int32_t common_version = std::min<int32_t>(
+        static_cast<int32_t>(consensus::PROTOCOL_VERSION), ver.protocol_version);
+    if (common_version >= static_cast<int32_t>(WTXID_RELAY_VERSION)) {
+        send(peer, NetCmd::WTXIDRELAY);
+        send(peer, NetCmd::SENDADDRV2);
+    }
 
     // Send verack to acknowledge their version
     send(peer, NetCmd::VERACK);
@@ -1576,6 +1597,53 @@ void MessageHandler::handle_feefilter(Peer& peer, const uint8_t* data, size_t le
     peer.set_fee_filter(fee_rate);
     LogInfo("net", "peer %lu set fee filter to %ld sat/kB",
             (unsigned long)peer.id(), (long)fee_rate);
+}
+
+// ===========================================================================
+// BIP339 / BIP155 / BIP35 — handshake extras
+// ===========================================================================
+
+// wtxidrelay — peer opts in to wtxid-based inventory (BIP339). No payload.
+// Bitcoin Core disconnects if this arrives AFTER verack, so do the same.
+void MessageHandler::handle_wtxidrelay(Peer& peer) {
+    if (peer.state() == PeerState::HANDSHAKE_DONE) {
+        LogInfo("net", "peer %lu sent wtxidrelay after VERACK, disconnecting",
+                (unsigned long)peer.id());
+        netman_.disconnect(peer, "wtxidrelay-after-verack");
+        return;
+    }
+    peer.set_wtxid_relay(true);
+}
+
+// sendaddrv2 — peer opts in to receiving BIP155 addrv2 messages. No payload.
+void MessageHandler::handle_sendaddrv2(Peer& peer) {
+    if (peer.state() == PeerState::HANDSHAKE_DONE) {
+        LogInfo("net", "peer %lu sent sendaddrv2 after VERACK, disconnecting",
+                (unsigned long)peer.id());
+        netman_.disconnect(peer, "sendaddrv2-after-verack");
+        return;
+    }
+    peer.set_sendaddrv2(true);
+}
+
+// addrv2 — BIP155 extended address relay (supports Tor v3, I2P, CJDNS).
+// Not parsed in detail yet; we only accept from peers that negotiated it.
+void MessageHandler::handle_addrv2(Peer& peer, const uint8_t* /*data*/, size_t len) {
+    if (!peer.sendaddrv2()) {
+        LogInfo("net", "peer %lu sent addrv2 without negotiation, ignoring",
+                (unsigned long)peer.id());
+        peer.add_misbehavior(10);
+        return;
+    }
+    LogDebug("net", "peer %lu addrv2 (%zu bytes) — parsing not yet implemented",
+             (unsigned long)peer.id(), len);
+}
+
+// mempool — BIP35; peer wants our mempool inventory. We ignore until the
+// mempool module grows a dedicated inv dumper.
+void MessageHandler::handle_mempool(Peer& peer) {
+    LogDebug("net", "peer %lu requested mempool contents (not yet implemented)",
+             (unsigned long)peer.id());
 }
 
 // ===========================================================================
