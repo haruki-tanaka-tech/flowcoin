@@ -77,9 +77,7 @@ constexpr int      MAX_RETARGET_FACTOR = 4;
 // Blocks before the first retarget (2016 blocks, 14 days at target) will
 // be much slower until enough miners join. This is the intended behaviour:
 // the network floor catches up with hashrate rather than the other way.
-// TEST MODE: regtest-style maximum target (almost any hash wins).
-// TODO: revert to 0x1d00ffff before any public launch.
-constexpr uint32_t INITIAL_NBITS       = 0x207fffff;
+constexpr uint32_t INITIAL_NBITS       = 0x1d00ffff;
 
 // ---- Block Limits -----------------------------------------------------------
 

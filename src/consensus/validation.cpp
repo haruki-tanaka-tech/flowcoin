@@ -47,10 +47,14 @@ bool check_header(const CBlockHeader& header, const BlockContext& ctx,
                 "height is not parent_height + 1");
         }
 
-        // Check 3: timestamp must be strictly after parent
-        if (header.timestamp <= ctx.prev_timestamp) {
+        // Check 3: timestamp must be strictly after the Median Time Past
+        // of the last 11 blocks (Bitcoin Core's rule). Comparing against
+        // the immediate parent rejected siblings that landed in the same
+        // wall-clock second under rapid mining; MTP still prevents
+        // large-scale time reversals.
+        if (header.timestamp <= ctx.median_time_past) {
             return state.invalid(ValidationResult::HEADER_INVALID, "time-too-old",
-                "timestamp not after parent");
+                "timestamp at or before median-time-past");
         }
 
         // Check 4: timestamp must not be too far in the future

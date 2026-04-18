@@ -9,7 +9,7 @@
 // -----  -----------------  ---------------------------------------  ----------
 //  1     prev_hash          == parent_hash (from context)            bad-prevblk
 //  2     height             == parent_height + 1                     bad-height
-//  3     timestamp          > parent_timestamp                       time-too-old
+//  3     timestamp          > median-time-past of last 11 blocks     time-too-old
 //  4     timestamp          <= adjusted_time + MAX_FUTURE_TIME       time-too-new
 //  5     nbits              == get_next_work_required(...)            bad-diffbits
 //  6     PoW                RandomX(header[0..91], pow_seed) <= tgt  high-hash
@@ -107,6 +107,13 @@ struct BlockContext {
     uint64_t    prev_height    = 0;
     int64_t     prev_timestamp = 0;
     uint32_t    prev_nbits     = 0;
+
+    // Median Time Past of the last 11 blocks (including parent). The
+    // child's timestamp must be strictly greater than this. Matches
+    // Bitcoin Core's GetMedianTimePast rule and replaces the naive
+    // "timestamp > parent" check, which rejected sibling blocks that
+    // landed in the same wall-clock second under rapid mining.
+    int64_t     median_time_past = 0;
 
     // Current network-adjusted time
     int64_t     adjusted_time = 0;

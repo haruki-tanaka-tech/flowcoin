@@ -39,6 +39,21 @@ consensus::BlockContext CBlockIndex::make_child_context(int64_t adjusted_time) c
     ctx.prev_nbits       = nbits;
     ctx.adjusted_time    = adjusted_time;
 
+    // Median Time Past: collect up to 11 most-recent timestamps (parent first)
+    // and take the median. Matches Bitcoin Core's GetMedianTimePast().
+    {
+        constexpr int MEDIAN_SPAN = 11;
+        int64_t times[MEDIAN_SPAN];
+        int count = 0;
+        const CBlockIndex* walk = this;
+        while (walk && count < MEDIAN_SPAN) {
+            times[count++] = walk->timestamp;
+            walk = walk->prev;
+        }
+        std::sort(times, times + count);
+        ctx.median_time_past = count > 0 ? times[count / 2] : 0;
+    }
+
     // Compute expected nbits for the child block
     uint64_t child_height = height + 1;
     if (child_height > 0 && child_height % consensus::RETARGET_INTERVAL == 0) {
