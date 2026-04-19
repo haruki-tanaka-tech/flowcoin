@@ -53,7 +53,9 @@ ChainParams ChainParams::mainnet() {
     };
     // Static IP fallback
     p.seed_nodes = {
-        {"211.205.13.203", 9333},
+        {"211.205.13.203", 9333},                          // Home seed (IPv4)
+        {"188.137.182.41", 9333},                          // VPS seed (IPv4, NL)
+        {"2a13:4ac0:20:7:f816:3eff:fe6f:5f83", 9333},      // VPS seed (IPv6, NL)
     };
 
     // Feature flags
@@ -104,6 +106,7 @@ ChainParams ChainParams::testnet() {
     };
     p.seed_nodes = {
         {"211.205.13.203", 19333},
+        {"188.137.182.41", 19333},
     };
 
     // Feature flags: testnet allows min difficulty blocks after 20 minutes

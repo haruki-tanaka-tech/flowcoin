@@ -33,13 +33,14 @@ const std::vector<SeedNode> MAINNET_SEEDS = {
     // DNS is the primary discovery method. These hostnames resolve
     // to currently active nodes. As the network grows, more DNS
     // seeds will be added by community operators.
-    {"seed.flowcoin.org",        9333},   // Genesis seed node
+    {"seed.flowcoin.org",        9333},   // Multi-A/AAAA round-robin
 
     // ── Static IP fallback ───────────────────────────────────
     // Used when DNS resolution fails (firewall, censorship, etc.)
     // These are stable nodes operated by the core team.
-    {"211.205.13.203",                          9333},   // IPv4 fallback
-    // IPv6 removed — seed is on stable IPv4 only
+    {"211.205.13.203",                          9333},   // Home seed (IPv4)
+    {"188.137.182.41",                          9333},   // VPS seed (IPv4, NL)
+    {"2a13:4ac0:20:7:f816:3eff:fe6f:5f83",      9333},   // VPS seed (IPv6, NL)
 };
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,7 @@ const std::vector<SeedNode> MAINNET_SEEDS = {
 const std::vector<SeedNode> TESTNET_SEEDS = {
     {"seed.flowcoin.org",        19333},  // Testnet on same host, different port
     {"211.205.13.203",           19333},
+    {"188.137.182.41",           19333},
 };
 
 // ---------------------------------------------------------------------------
