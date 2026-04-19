@@ -1,5 +1,12 @@
 # FlowCoin
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-f2a03d)](COPYING)
+[![Language: C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](https://en.cppreference.com/w/cpp/20)
+[![PoW: RandomX](https://img.shields.io/badge/PoW-RandomX-f2a03d)](https://github.com/tevador/RandomX)
+[![Supply: 21M](https://img.shields.io/badge/supply-21M-f2a03d)](whitepaper.txt)
+[![Website](https://img.shields.io/badge/web-flowcoin.org-f2a03d)](https://flowcoin.org)
+[![Telegram](https://img.shields.io/badge/telegram-@flowcoin__main-26A5E4?logo=telegram)](https://t.me/flowcoin_main)
+
 **CPU-only RandomX Proof-of-Work cryptocurrency — Bitcoin architecture, no ASIC, no GPU premium.**
 
 Written from scratch in C++20. The node's wire protocol, log format, RPC
