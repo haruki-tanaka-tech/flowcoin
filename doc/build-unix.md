@@ -336,6 +336,8 @@ whitepaper.txt`) rooted in a versioned top-level directory.
 
 ## Cross-compilation
 
-The `depends/` tree is currently not maintained. Cross-builds are
-best done with a Docker image carrying the target toolchain; no
-ready-made scripts ship in the repo today.
+Cross-builds are best done with a Docker image carrying the target
+toolchain. The Gitian descriptors in [`contrib/gitian/`](../contrib/gitian/)
+cover Linux and macOS (via `osxcross`) reproducibly; for Windows,
+`mingw-w64` in a Docker container is the usual path. No ready-made
+scripts ship outside `contrib/gitian/`.
