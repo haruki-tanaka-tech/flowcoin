@@ -46,17 +46,7 @@ ChainParams ChainParams::mainnet() {
     p.pow_limit = pow_limit;
     p.coinbase_maturity = consensus::COINBASE_MATURITY;
 
-    // Network
-    // DNS seeds (primary discovery)
-    p.dns_seeds = {
-        "seed.flowcoin.org",
-    };
-    // Static IP fallback
-    p.seed_nodes = {
-        {"211.205.13.203", 9333},                          // Home seed (IPv4)
-        {"188.137.182.41", 9333},                          // VPS seed (IPv4, NL)
-        {"2a13:4ac0:20:7:f816:3eff:fe6f:5f83", 9333},      // VPS seed (IPv6, NL)
-    };
+    // Seed discovery: see src/net/seeds.h (single source of truth).
 
     // Feature flags
     p.allow_min_difficulty = false;
@@ -100,14 +90,7 @@ ChainParams ChainParams::testnet() {
     p.pow_limit = pow_limit;
     p.coinbase_maturity = consensus::COINBASE_MATURITY;
 
-    // Network
-    p.dns_seeds = {
-        "seed.flowcoin.org",
-    };
-    p.seed_nodes = {
-        {"211.205.13.203", 19333},
-        {"188.137.182.41", 19333},
-    };
+    // Seed discovery: see src/net/seeds.h.
 
     // Feature flags: testnet allows min difficulty blocks after 20 minutes
     p.allow_min_difficulty = true;
@@ -151,9 +134,7 @@ ChainParams ChainParams::regtest() {
     p.pow_limit = pow_limit;
     p.coinbase_maturity = consensus::COINBASE_MATURITY;
 
-    // Network: no seeds in regtest (fully manual)
-    p.dns_seeds = {};
-    p.seed_nodes = {};
+    // Seed discovery: regtest has no seeds (see src/net/seeds.h).
 
     // Feature flags: regtest allows everything
     p.allow_min_difficulty = true;

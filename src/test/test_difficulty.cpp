@@ -75,14 +75,14 @@ void test_difficulty() {
     // Should not exceed powLimit
     assert(slow_target <= target);
 
-    // check_proof_of_training: zero hash should always pass (easiest hash)
+    // check_proof_of_work: zero hash should always pass (easiest hash)
     flow::uint256 zero_hash;  // all zeros
-    assert(check_proof_of_training(zero_hash, INITIAL_NBITS));
+    assert(check_proof_of_work(zero_hash, INITIAL_NBITS));
 
-    // check_proof_of_training: max hash (all 0xFF) should fail against INITIAL_NBITS
+    // check_proof_of_work: max hash (all 0xFF) should fail against INITIAL_NBITS
     flow::uint256 max_hash;
     std::memset(max_hash.data(), 0xFF, 32);
-    assert(!check_proof_of_training(max_hash, INITIAL_NBITS));
+    assert(!check_proof_of_work(max_hash, INITIAL_NBITS));
 
     // Retarget at block 4032 (second retarget period)
     next = get_next_work_required(4032, INITIAL_NBITS, 0, target_timespan);

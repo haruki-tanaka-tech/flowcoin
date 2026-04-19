@@ -111,12 +111,9 @@ struct ChainParams {
     int max_block_sigops = consensus::MAX_BLOCK_SIGOPS;
 
     // ---- Network -----------------------------------------------------------
-
-    /// DNS seed hostnames for initial peer discovery.
-    std::vector<std::string> dns_seeds;
-
-    /// Fixed seed nodes (IP:port pairs) as fallback.
-    std::vector<std::pair<std::string, uint16_t>> seed_nodes;
+    // Seed nodes for P2P discovery live in src/net/seeds.h — this struct
+    // does not duplicate them. The networking layer reads them directly
+    // via flow::GetSeeds() / flow::GetDNSSeeds().
 
     /// Checkpoint blocks: (height, hash) pairs.
     /// During IBD, only chains that include these checkpoints are accepted.
