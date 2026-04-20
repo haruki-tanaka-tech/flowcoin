@@ -535,6 +535,7 @@ install(FILES
         ${CMAKE_SOURCE_DIR}/share/flowcoind.1
         ${CMAKE_SOURCE_DIR}/share/flowcoin-cli.1
         ${CMAKE_SOURCE_DIR}/share/flowcoin-tx.1
+        ${CMAKE_SOURCE_DIR}/share/flowcoin-miner.1
         DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
         COMPONENT flowcoin)
 

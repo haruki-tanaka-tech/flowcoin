@@ -57,7 +57,8 @@ Send an amount to a given address.
 Returns a new FlowCoin address for receiving payments.
 .TP
 .B getmininginfo
-Returns mining\-related information including model dimensions and loss.
+Returns mining state: network difficulty, estimated global hashrate,
+mempool size, and current block template parameters.
 .TP
 .B stop
 Stop FlowCoin server.
@@ -70,8 +71,9 @@ flowcoin\-cli getblock $(flowcoin\-cli getblockhash 100)
 .fi
 .SH SEE ALSO
 .BR flowcoind (1),
-.BR flowcoin\-tx (1)
+.BR flowcoin\-tx (1),
+.BR flowcoin\-miner (1)
 .SH BUGS
-Report bugs at https://github.com/flowcoin/flowcoin/issues
+Report bugs at https://github.com/KristianPilatovich/flowcoin/issues
 .SH AUTHOR
-Haruki Tanaka and The FlowCoin Developers.
+Kristian Pilatovich and The FlowCoin Developers.

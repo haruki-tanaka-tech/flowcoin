@@ -7,9 +7,9 @@ flowcoind \- FlowCoin full node daemon
 .B flowcoind
 [\fIOPTIONS\fR]
 .SH DESCRIPTION
-FlowCoin daemon. Runs a full node on the FlowCoin Proof\-of\-Training
-blockchain network. Validates blocks, relays transactions, serves the
-JSON\-RPC API, and optionally manages a wallet.
+FlowCoin daemon. Runs a full node on the FlowCoin RandomX
+Proof\-of\-Work blockchain. Validates blocks, relays transactions,
+serves the JSON\-RPC API, and optionally manages a wallet.
 .PP
 The daemon stores blockchain data, UTXO set, and wallet in the data
 directory (default: \fI~/.flowcoin\fR).
@@ -73,7 +73,7 @@ Allow JSON\-RPC connections from specified subnet (CIDR notation).
 Do not load the wallet and disable wallet RPC calls.
 .TP
 \fB\-wallet=\fR\fIfile\fR
-Specify wallet file (default: \fIwallets/wallet.dat\fR in datadir).
+Specify wallet file (default: \fIwallet.dat\fR in datadir).
 .TP
 \fB\-dbcache=\fR\fIN\fR
 Set database cache size in megabytes (default: 450).
@@ -86,7 +86,7 @@ Prune block files to a target size of \fIN\fR MB (0=disable).
 .TP
 \fB\-debug=\fR\fIcategory\fR
 Output debugging information for a category. Categories: net, validation,
-mining, rpc, wallet, mempool, model, sync.
+mining, rpc, wallet, mempool, sync.
 .TP
 \fB\-printtoconsole\fR
 Send log output to stdout instead of the debug log file.
@@ -101,8 +101,8 @@ Block data files (blk*.dat).
 \fI~/.flowcoin/chainstate/\fR
 Chain database and UTXO set (SQLite).
 .TP
-\fI~/.flowcoin/wallets/wallet.dat\fR
-Wallet database.
+\fI~/.flowcoin/wallet.dat\fR
+Wallet database (HD, SLIP-0010; currently unencrypted).
 .TP
 \fI~/.flowcoin/indexes/\fR
 Transaction index database (SQLite).
@@ -111,8 +111,9 @@ Transaction index database (SQLite).
 Debug log file.
 .SH SEE ALSO
 .BR flowcoin\-cli (1),
-.BR flowcoin\-tx (1)
+.BR flowcoin\-tx (1),
+.BR flowcoin\-miner (1)
 .SH BUGS
-Report bugs at https://github.com/flowcoin/flowcoin/issues
+Report bugs at https://github.com/KristianPilatovich/flowcoin/issues
 .SH AUTHOR
-Haruki Tanaka and The FlowCoin Developers.
+Kristian Pilatovich and The FlowCoin Developers.
