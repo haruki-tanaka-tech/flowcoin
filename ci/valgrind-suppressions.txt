@@ -1,7 +1,0 @@
-# Known false positives
-{
-   sqlite_init
-   Memcheck:Leak
-   ...
-   fun:sqlite3_initialize
-}

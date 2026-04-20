@@ -12,8 +12,8 @@ Why are these changes needed?
 
 ## Testing
 
-- [ ] Unit tests pass (`./flowcoin_tests`)
-- [ ] Valgrind clean (`ci/valgrind.sh`)
+- [ ] Unit tests pass (`./build/flowcoin_tests`)
+- [ ] Valgrind clean (Debug build, `valgrind --leak-check=full ./build/flowcoin_tests`)
 - [ ] New tests added for new functionality
 
 ## Checklist
