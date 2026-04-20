@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The FlowCoin Developers
+// Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 //
 // Keccak-256 and Keccak-512 hashing wrappers over XKCP.

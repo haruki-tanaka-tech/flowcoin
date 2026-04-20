@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The FlowCoin Developers
+// Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 //
 // Mempool tests using a real UTXOSet backed by an in-memory SQLite database.

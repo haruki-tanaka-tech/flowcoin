@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The FlowCoin Developers
+# Copyright (c) 2026 Kristian Pilatovich
 # Distributed under the MIT software license.
 #
 # Check for undefined symbols and ABI compatibility in built binaries.

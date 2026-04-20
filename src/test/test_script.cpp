@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The FlowCoin Developers
+// Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 //
 // "Script" verification in FlowCoin is Ed25519 signature verification

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The FlowCoin Developers
+// Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 //
 // CompactSize and VarInt encoding for FlowCoin wire protocol.

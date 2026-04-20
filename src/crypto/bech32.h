@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The FlowCoin Developers
+// Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 //
 // Bech32 (BIP-173) and Bech32m (BIP-350) encoding/decoding for FlowCoin.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The FlowCoin Developers
+# Copyright (c) 2026 Kristian Pilatovich
 # Distributed under the MIT software license.
 #
 # Check that all RPC methods registered in source code have corresponding

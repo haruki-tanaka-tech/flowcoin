@@ -1,5 +1,5 @@
 #!/usr/bin/make -f
-# Copyright (c) 2026 The FlowCoin Developers
+# Copyright (c) 2026 Kristian Pilatovich
 # Distributed under the MIT software license.
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all

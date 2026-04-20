@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The FlowCoin Developers
+# Copyright (c) 2026 Kristian Pilatovich
 # Distributed under the MIT software license.
 #
 # Verify all source files have the correct copyright header.
@@ -16,7 +16,7 @@ import re
 import sys
 from pathlib import Path
 
-EXPECTED_COPYRIGHT = 'Copyright (c) 2026 The FlowCoin Developers'
+EXPECTED_COPYRIGHT = 'Copyright (c) 2026 Kristian Pilatovich'
 EXPECTED_LICENSE = 'Distributed under the MIT software license'
 
 # File extensions to check
@@ -43,12 +43,12 @@ SKIP_FILES = frozenset({
 })
 
 CPP_HEADER_TEMPLATE = """\
-// Copyright (c) 2026 The FlowCoin Developers
+// Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 """
 
 PYTHON_HEADER_TEMPLATE = """\
-# Copyright (c) 2026 The FlowCoin Developers
+# Copyright (c) 2026 Kristian Pilatovich
 # Distributed under the MIT software license.
 """
 
