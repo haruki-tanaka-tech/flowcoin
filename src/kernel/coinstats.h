@@ -65,7 +65,7 @@ struct CoinStats {
     Amount median_value = 0;
 
     /// Distribution: count of UTXOs by value range.
-    /// Buckets (in FLOW, not atomic units):
+    /// Buckets (in FLC, not atomic units):
     ///   [0, 0.001), [0.001, 0.01), [0.01, 0.1), [0.1, 1),
     ///   [1, 10), [10, 100), [100, 1000), [1000, 10000), [10000, inf)
     std::vector<uint64_t> value_distribution;

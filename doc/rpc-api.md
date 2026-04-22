@@ -167,7 +167,7 @@ Returns details about an unspent transaction output.
 | 2 | vout | integer | Output index |
 
 **Returns:**
-- `value` -- output value in FLOW
+- `value` -- output value in FLC
 - `pubkey_hash` -- recipient hash
 - `height` -- block height where created
 - `coinbase` -- true if from coinbase
@@ -257,7 +257,7 @@ Returns the total confirmed wallet balance.
 
 **Parameters:** none
 
-**Returns:** `number` -- balance in FLOW
+**Returns:** `number` -- balance in FLC
 
 ### listunspent
 
@@ -268,7 +268,7 @@ Returns array of unspent transaction outputs owned by the wallet.
 **Returns:** array of UTXO objects:
 - `txid` -- transaction ID
 - `vout` -- output index
-- `amount` -- value in FLOW
+- `amount` -- value in FLC
 - `pubkey` -- owning public key
 - `height` -- creation height
 - `coinbase` -- true if from coinbase
@@ -277,13 +277,13 @@ Returns array of unspent transaction outputs owned by the wallet.
 
 ### sendtoaddress
 
-Send FLOW to a given address.
+Send FLC to a given address.
 
 **Parameters:**
 | # | Name | Type | Description |
 |---|---|---|---|
 | 1 | address | string | Recipient bech32m address |
-| 2 | amount | number | Amount in FLOW |
+| 2 | amount | number | Amount in FLC |
 
 **Returns:** `string` -- transaction ID of the sent transaction
 
@@ -479,7 +479,7 @@ Sets the transaction fee rate.
 **Parameters:**
 | # | Name | Type | Description |
 |---|---|---|---|
-| 1 | amount | number | Fee rate in FLOW per KB |
+| 1 | amount | number | Fee rate in FLC per KB |
 
 **Returns:** `boolean` -- true on success
 

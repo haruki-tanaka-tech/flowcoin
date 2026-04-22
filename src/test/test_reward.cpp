@@ -9,7 +9,7 @@
 void test_reward() {
     using namespace flow::consensus;
 
-    // Block 0: 50 FLOW = 5,000,000,000 atomic units
+    // Block 0: 50 FLC = 5,000,000,000 atomic units
     assert(compute_block_reward(0) == 50LL * COIN);
 
     // Block 1: still 50
@@ -18,19 +18,19 @@ void test_reward() {
     // Block 209999: last block of era 0, still 50
     assert(compute_block_reward(209999) == 50LL * COIN);
 
-    // Block 210000: first halving, 25 FLOW
+    // Block 210000: first halving, 25 FLC
     assert(compute_block_reward(210000) == 25LL * COIN);
 
     // Block 419999: last block of era 1, still 25
     assert(compute_block_reward(419999) == 25LL * COIN);
 
-    // Block 420000: second halving, 12.5 FLOW = 1,250,000,000 atomic units
+    // Block 420000: second halving, 12.5 FLC = 1,250,000,000 atomic units
     assert(compute_block_reward(420000) == 1250000000LL);
 
-    // Block 630000: third halving, 6.25 FLOW = 625,000,000 atomic units
+    // Block 630000: third halving, 6.25 FLC = 625,000,000 atomic units
     assert(compute_block_reward(630000) == 625000000LL);
 
-    // Block 840000: fourth halving, 3.125 FLOW = 312,500,000 atomic units
+    // Block 840000: fourth halving, 3.125 FLC = 312,500,000 atomic units
     assert(compute_block_reward(840000) == 312500000LL);
 
     // Halving schedule: reward = 50 >> halvings

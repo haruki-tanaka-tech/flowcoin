@@ -659,7 +659,7 @@ RestResponse RestServer::handle_mempool_info() {
                      static_cast<double>(COIN);
     j["maxmempool"] = 300 * 1024 * 1024;  // 300 MB default
     j["mempoolminfee"] = stats.min_fee_rate;
-    j["minrelaytxfee"] = 0.00001;  // 1 sat/byte in FLOW
+    j["minrelaytxfee"] = 0.00001;  // 1 sat/byte in FLC
     j["orphan_count"] = stats.orphan_count;
 
     std::string s = j.dump();

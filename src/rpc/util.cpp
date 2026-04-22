@@ -696,7 +696,7 @@ void register_util_rpcs(RpcServer& server, ChainState& chain,
     add_help("getmempoolinfo", "blockchain", "getmempoolinfo\nReturns mempool details.\n");
 
     add_help("getnewaddress", "wallet", "getnewaddress\nGenerate a new receiving address.\n");
-    add_help("getbalance", "wallet", "getbalance\nReturns wallet balance in FLOW.\n");
+    add_help("getbalance", "wallet", "getbalance\nReturns wallet balance in FLC.\n");
     add_help("listunspent", "wallet", "listunspent\nList wallet UTXOs.\n");
     add_help("sendtoaddress", "wallet", "sendtoaddress \"address\" amount\nSend coins.\n");
     add_help("listtransactions", "wallet", "listtransactions ( count skip )\nTransaction history.\n");

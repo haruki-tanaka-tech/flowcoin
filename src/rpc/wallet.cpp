@@ -32,7 +32,7 @@ void register_wallet_rpcs(RpcServer& server, Wallet& wallet,
         return addr;
     });
 
-    // getbalance: return wallet balance in FLOW
+    // getbalance: return wallet balance in FLC
     server.register_method("getbalance", [&wallet](const json& /*params*/) -> json {
         Amount balance = wallet.get_balance();
         return static_cast<double>(balance) / static_cast<double>(consensus::COIN);

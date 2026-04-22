@@ -16,7 +16,7 @@ namespace flow {
 // ============================================================================
 // Bucket boundaries (sat/kB, logarithmically spaced)
 // ============================================================================
-// Coverage: 1 sat/kB to ~50M sat/kB (0.5 FLOW/kB)
+// Coverage: 1 sat/kB to ~50M sat/kB (0.5 FLC/kB)
 // Uses a modified Fibonacci-like progression for even log-space coverage.
 
 const Amount CBlockPolicyEstimator::BUCKET_BOUNDS[NUM_BUCKETS + 1] = {

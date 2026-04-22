@@ -218,12 +218,12 @@ Matches Bitcoin exactly:
 
 | Era | Blocks | Reward / block |
 |---|---|---|
-| 0 | 0 – 209,999 | 50 FLOW |
-| 1 | 210,000 – 419,999 | 25 FLOW |
-| 2 | 420,000 – 629,999 | 12.5 FLOW |
+| 0 | 0 – 209,999 | 50 FLC |
+| 1 | 210,000 – 419,999 | 25 FLC |
+| 2 | 420,000 – 629,999 | 12.5 FLC |
 | … | … | halves every 210,000 blocks |
 
-Total supply converges to 21,000,000 FLOW. Coinbase outputs mature
+Total supply converges to 21,000,000 FLC. Coinbase outputs mature
 after `COINBASE_MATURITY = 100` confirmations.
 
 ## Difficulty
@@ -264,7 +264,7 @@ per several days; once more miners join, difficulty retargets upward.
 
 Not supported yet. Stratum is on the roadmap once the network is
 stable enough to justify pool infrastructure; until then every miner
-is solo. The reward is the full coinbase output (50 FLOW) plus the
+is solo. The reward is the full coinbase output (50 FLC) plus the
 transaction fees in the block.
 
 ## Security notes

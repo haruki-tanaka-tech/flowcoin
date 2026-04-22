@@ -29,7 +29,7 @@ std::string CoinStats::to_string() const {
     ss << "  UTXO count:     " << utxo_count << "\n";
     ss << "  TX count:       " << tx_count << "\n";
 
-    // Format amounts as FLOW (8 decimal places)
+    // Format amounts as FLC (8 decimal places)
     auto format_flow = [](Amount atomic) -> std::string {
         char buf[64];
         int64_t whole = atomic / 100'000'000LL;
@@ -41,15 +41,15 @@ std::string CoinStats::to_string() const {
         return buf;
     };
 
-    ss << "  Total amount:   " << format_flow(total_amount) << " FLOW\n";
-    ss << "  Avg value:      " << format_flow(static_cast<Amount>(avg_value)) << " FLOW\n";
+    ss << "  Total amount:   " << format_flow(total_amount) << " FLC\n";
+    ss << "  Avg value:      " << format_flow(static_cast<Amount>(avg_value)) << " FLC\n";
 
     if (median_value > 0) {
-        ss << "  Median value:   " << format_flow(median_value) << " FLOW\n";
+        ss << "  Median value:   " << format_flow(median_value) << " FLC\n";
     }
 
     ss << "  Coinbase UTXOs: " << coinbase_utxo_count << " ("
-       << format_flow(total_coinbase_amount) << " FLOW)\n";
+       << format_flow(total_coinbase_amount) << " FLC)\n";
 
     if (total_size > 0) {
         ss << "  Total size:     " << total_size << " bytes\n";
@@ -184,14 +184,14 @@ CoinStats compute_coin_stats(const UTXOSet& utxo,
     // [0, 100K), [100K, 1M), [1M, 10M), [10M, 100M),
     // [100M, 1B), [1B, 10B), [10B, 100B), [100B, 1T), [1T, inf)
     static const Amount bucket_boundaries[] = {
-        100'000LL,          // 0.001 FLOW
-        1'000'000LL,        // 0.01 FLOW
-        10'000'000LL,       // 0.1 FLOW
-        100'000'000LL,      // 1 FLOW
-        1'000'000'000LL,    // 10 FLOW
-        10'000'000'000LL,   // 100 FLOW
-        100'000'000'000LL,  // 1000 FLOW
-        1'000'000'000'000LL, // 10000 FLOW
+        100'000LL,          // 0.001 FLC
+        1'000'000LL,        // 0.01 FLC
+        10'000'000LL,       // 0.1 FLC
+        100'000'000LL,      // 1 FLC
+        1'000'000'000LL,    // 10 FLC
+        10'000'000'000LL,   // 100 FLC
+        100'000'000'000LL,  // 1000 FLC
+        1'000'000'000'000LL, // 10000 FLC
     };
     constexpr int num_buckets = 9;
     std::vector<uint64_t> distribution(num_buckets, 0);

@@ -225,13 +225,13 @@ a central authority.
 
 The block reward follows Bitcoin's halving schedule:
 
-  Blocks 0 - 209,999:           50 FLOW per block
-  Blocks 210,000 - 419,999:     25 FLOW per block
-  Blocks 420,000 - 629,999:     12.5 FLOW per block
+  Blocks 0 - 209,999:           50 FLC per block
+  Blocks 210,000 - 419,999:     25 FLC per block
+  Blocks 420,000 - 629,999:     12.5 FLC per block
   ...continuing to halve every 210,000 blocks.
 
-The maximum supply is 21,000,000 FLOW, with the smallest unit
-being 1 satoshi (1 / 100,000,000 FLOW). Target block time is
+The maximum supply is 21,000,000 FLC, with the smallest unit
+being 1 satoshi (1 / 100,000,000 FLC). Target block time is
 10 minutes. Difficulty retargets every 2,016 blocks using Bitcoin's
 algorithm, clamped to a 4× adjustment per period.
 
@@ -361,9 +361,9 @@ is what FlowCoin is inheriting.
   PoW seed rotation          Every 2,048 blocks, 64-block lag
   Block ID hash              keccak256d (pad = 0x01)
   Block time target          600 seconds (10 minutes)
-  Initial block reward       50 FLOW
+  Initial block reward       50 FLC
   Halving interval           210,000 blocks
-  Maximum supply             21,000,000 FLOW
+  Maximum supply             21,000,000 FLC
   Difficulty retarget        Every 2,016 blocks
   Retarget clamp             4× maximum adjustment
   Minimum target (diff 1)    nbits = 0x1d00ffff (Bitcoin-compatible)
@@ -374,7 +374,7 @@ is what FlowCoin is inheriting.
   RPC port                   9334
   Block header (unsigned)    92 bytes
   Block header (signed)      188 bytes
-  Smallest unit              1 satoshi = 10^-8 FLOW
+  Smallest unit              1 satoshi = 10^-8 FLC
   Coin type (BIP-44)         9555
 
 

@@ -86,9 +86,9 @@ tail -f ~/.flowcoin/debug.log
 
 ```bash
 ./flowcoin-cli getnewaddress                   # fresh receive address (bech32 fl1q...)
-./flowcoin-cli getbalance                      # spendable balance in FLOW
+./flowcoin-cli getbalance                      # spendable balance in FLC
 ./flowcoin-cli listunspent                     # UTXOs you control
-./flowcoin-cli sendtoaddress fl1q... 10.0      # send 10 FLOW
+./flowcoin-cli sendtoaddress fl1q... 10.0      # send 10 FLC
 ./flowcoin-cli listtransactions                # last 10 wallet transactions
 ```
 
@@ -177,8 +177,8 @@ for prebuilt archives.
 | Seed rotation       | Every 2048 blocks, 64-block lag                |
 | Block ID hash       | keccak256d (SHA-3 style, pad 0x01)             |
 | Block time          | 10 minutes                                     |
-| Block reward        | 50 FLOW, halving every 210,000 blocks          |
-| Max supply          | 21,000,000 FLOW                                |
+| Block reward        | 50 FLC, halving every 210,000 blocks          |
+| Max supply          | 21,000,000 FLC                                |
 | Difficulty retarget | Every 2,016 blocks, ±4× clamp                  |
 | Timestamp rule      | Strictly greater than MTP of last 11 blocks    |
 | Signatures          | Ed25519 (RFC 8032), deterministic              |

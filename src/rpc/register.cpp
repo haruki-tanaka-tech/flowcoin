@@ -320,13 +320,13 @@ static void register_core_help_entries() {
     register_help({"getbalance", "wallet",
         "Returns the total available balance.",
         "None",
-        "n.nnnnnnnn (numeric) The total balance in FLOW",
+        "n.nnnnnnnn (numeric) The total balance in FLC",
         "flowcoin-cli getbalance"});
 
     register_help({"sendtoaddress", "wallet",
         "Send an amount to a given address.",
         "  address (string, required) The FlowCoin address\n"
-        "  amount (numeric, required) The amount in FLOW",
+        "  amount (numeric, required) The amount in FLC",
         "\"txid\" (string) The transaction id",
         "flowcoin-cli sendtoaddress \"fl1q...\" 1.0"});
 

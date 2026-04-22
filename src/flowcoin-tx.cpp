@@ -11,7 +11,7 @@
 //
 // Commands:
 //   in=TXID:VOUT              Add an input spending TXID output VOUT
-//   outaddr=VALUE:ADDRESS     Add output of VALUE FLOW to ADDRESS
+//   outaddr=VALUE:ADDRESS     Add output of VALUE FLC to ADDRESS
 //   outdata=HEX               Add OP_RETURN data output
 //   sign=PRIVKEY[:INPUT]      Sign input with Ed25519 hex private key
 //                             If :INPUT is omitted, sign all inputs
@@ -68,7 +68,7 @@ static std::string trim_ws(const std::string& s) {
     return s.substr(start, end - start + 1);
 }
 
-/// Convert a FLOW amount string (e.g. "10.5") to atomic units.
+/// Convert a FLC amount string (e.g. "10.5") to atomic units.
 static int64_t parse_amount(const std::string& s) {
     // Find the decimal point
     auto dot = s.find('.');
@@ -121,7 +121,7 @@ static int64_t parse_amount(const std::string& s) {
     return result;
 }
 
-/// Format atomic units as a FLOW amount string (e.g. "10.50000000").
+/// Format atomic units as a FLC amount string (e.g. "10.50000000").
 static std::string format_amount(int64_t atomic) {
     bool negative = atomic < 0;
     if (negative) atomic = -atomic;
@@ -478,7 +478,7 @@ static void print_usage() {
     std::cout << "  flowcoin-tx <hex-tx> [commands...]\n\n";
     std::cout << "Commands:\n";
     std::cout << "  in=TXID:VOUT              Add input\n";
-    std::cout << "  outaddr=VALUE:ADDRESS      Add output (VALUE in FLOW)\n";
+    std::cout << "  outaddr=VALUE:ADDRESS      Add output (VALUE in FLC)\n";
     std::cout << "  outdata=HEX               Add data output (OP_RETURN)\n";
     std::cout << "  sign=PRIVKEY[:INPUT]       Sign with Ed25519 key (hex)\n";
     std::cout << "  set=version:N             Set transaction version\n";

@@ -357,13 +357,13 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net,
         CBlockIndex* tip = chain.tip();
         if (!tip || tip->height < 10) {
             json j;
-            j["feerate"] = 0.00001; // minimum fee rate in FLOW per KB
+            j["feerate"] = 0.00001; // minimum fee rate in FLC per KB
             j["blocks"] = target_blocks;
             j["errors"] = json::array({"Insufficient data for fee estimation"});
             return j;
         }
 
-        // Base fee rate: 1 atomic unit per byte = 0.00001 FLOW/KB
+        // Base fee rate: 1 atomic unit per byte = 0.00001 FLC/KB
         // Adjust based on target: lower target = higher fee
         double base_rate = 1000.0 / static_cast<double>(consensus::COIN);
         double multiplier = 1.0;

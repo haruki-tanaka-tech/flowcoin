@@ -134,12 +134,12 @@ using Timestamp = int64_t;    //!< Unix timestamp in seconds
 // ---------------------------------------------------------------------------
 
 /** Represents a monetary value in atomic units.
- *  1 FLOW = 100,000,000 atomic units (same precision as Bitcoin satoshis).
+ *  1 FLC = 100,000,000 atomic units (same precision as Bitcoin satoshis).
  *  Uses signed int64 to allow representing negative deltas in calculations.
  */
 using Amount = int64_t;
 
-/** Atomic units per FLOW coin. */
+/** Atomic units per FLC coin. */
 static constexpr int64_t COIN = 100'000'000LL;
 
 // ---------------------------------------------------------------------------

@@ -154,15 +154,15 @@ void register_wallet_options(ArgsManager& args) {
                   "Wallet", true, "1000", false, false});
 
     args.add_arg({"-paytxfee", "Fee rate per KB for wallet transactions "
-                  "(in FLOW)",
+                  "(in FLC)",
                   "Wallet", true, "0.0", false, false});
 
     args.add_arg({"-mintxfee", "Minimum fee rate per KB for wallet "
-                  "transactions (in FLOW)",
+                  "transactions (in FLC)",
                   "Wallet", true, "0.00001", false, false});
 
     args.add_arg({"-maxtxfee", "Maximum fee per transaction "
-                  "(in FLOW)",
+                  "(in FLC)",
                   "Wallet", true, "0.1", false, false});
 
     args.add_arg({"-spendzeroconfchange",

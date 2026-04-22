@@ -662,8 +662,8 @@ void register_mempool_rpcs(RpcServer& server, ChainState& /*chain*/,
         j["bytes"]  = mempool.total_bytes();
         j["loaded"] = true;
 
-        // Min relay fee rate in FLOW per KB
-        // 1 atomic unit/byte = 1000 atomic units/KB = 0.00001 FLOW/KB
+        // Min relay fee rate in FLC per KB
+        // 1 atomic unit/byte = 1000 atomic units/KB = 0.00001 FLC/KB
         double min_fee_per_kb = 1000.0 / static_cast<double>(consensus::COIN);
         j["mempoolminfee"]  = min_fee_per_kb;
         j["minrelaytxfee"]  = min_fee_per_kb;

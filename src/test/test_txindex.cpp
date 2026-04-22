@@ -175,7 +175,7 @@ void test_txindex() {
             entry.value = 20 * COIN;
             utxo.add(txid_b, 0, entry);
 
-            // Balance should be 50 FLOW
+            // Balance should be 50 FLC
             Amount balance = utxo.get_balance(pkh2);
             assert(balance == 50 * COIN);
 

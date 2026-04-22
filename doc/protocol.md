@@ -130,14 +130,14 @@ reward = INITIAL_REWARD >> (height / HALVING_INTERVAL)
 ```
 
 Where:
-- `INITIAL_REWARD = 50 * 10^8` (50 FLOW in atomic units)
+- `INITIAL_REWARD = 50 * 10^8` (50 FLC in atomic units)
 - `HALVING_INTERVAL = 210,000 blocks` (~4 years at 10-minute blocks)
-- `MAX_SUPPLY = 21,000,000 FLOW`
+- `MAX_SUPPLY = 21,000,000 FLC`
 - Minimum reward: 1 atomic unit. Below this, subsidy is zero.
 
 Halving schedule:
 
-| Era | Block Range       | Reward (FLOW) | Cumulative Supply |
+| Era | Block Range       | Reward (FLC) | Cumulative Supply |
 |-----|-------------------|---------------|-------------------|
 | 1   | 0 - 209,999       | 50.0          | 10,500,000        |
 | 2   | 210,000 - 419,999 | 25.0          | 15,750,000        |
@@ -278,7 +278,7 @@ encodes the block height in its first 8 bytes (BIP34 style).
 
 **CTxOut** (40 bytes per output):
 ```
-[8 bytes]  amount:      int64_le (in atomic units, 1 FLOW = 10^8)
+[8 bytes]  amount:      int64_le (in atomic units, 1 FLC = 10^8)
 [32 bytes] pubkey_hash: Keccak256(recipient_pubkey)
 ```
 
@@ -438,7 +438,7 @@ nonce:         [computed at launch]
 
 Coinbase message: `"FlowCoin Genesis"` (encoded in the coinbase input pubkey field)
 
-The genesis block reward of 50 FLOW is unspendable (no valid private key for
+The genesis block reward of 50 FLC is unspendable (no valid private key for
 the genesis coinbase address).
 
 The genesis block hash and merkle root are hardcoded in the consensus parameters

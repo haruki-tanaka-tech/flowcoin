@@ -9,13 +9,13 @@ a halving schedule every 210,000 blocks (~4 years).
 
 | Era | Blocks | Reward/Block | Era Total | Cumulative | % of Supply |
 |-----|--------|-------------|-----------|------------|-------------|
-| 0 | 0 - 209,999 | 50.0 FLOW | 10,500,000 | 10,500,000 | 50.00% |
-| 1 | 210,000 - 419,999 | 25.0 FLOW | 5,250,000 | 15,750,000 | 75.00% |
-| 2 | 420,000 - 629,999 | 12.5 FLOW | 2,625,000 | 18,375,000 | 87.50% |
-| 3 | 630,000 - 839,999 | 6.25 FLOW | 1,312,500 | 19,687,500 | 93.75% |
-| 4 | 840,000 - 1,049,999 | 3.125 FLOW | 656,250 | 20,343,750 | 96.88% |
-| 5 | 1,050,000 - 1,259,999 | 1.5625 FLOW | 328,125 | 20,671,875 | 98.44% |
-| 6 | 1,260,000 - 1,469,999 | 0.78125 FLOW | 164,062.5 | 20,835,937.5 | 99.22% |
+| 0 | 0 - 209,999 | 50.0 FLC | 10,500,000 | 10,500,000 | 50.00% |
+| 1 | 210,000 - 419,999 | 25.0 FLC | 5,250,000 | 15,750,000 | 75.00% |
+| 2 | 420,000 - 629,999 | 12.5 FLC | 2,625,000 | 18,375,000 | 87.50% |
+| 3 | 630,000 - 839,999 | 6.25 FLC | 1,312,500 | 19,687,500 | 93.75% |
+| 4 | 840,000 - 1,049,999 | 3.125 FLC | 656,250 | 20,343,750 | 96.88% |
+| 5 | 1,050,000 - 1,259,999 | 1.5625 FLC | 328,125 | 20,671,875 | 98.44% |
+| 6 | 1,260,000 - 1,469,999 | 0.78125 FLC | 164,062.5 | 20,835,937.5 | 99.22% |
 | ... | ... | halves | ... | approaches 21M | 100% |
 
 The supply is a geometric series:
@@ -73,7 +73,7 @@ Daily revenue = blocks_per_day * block_reward * (local_hashrate / network_hashra
              = 144 * reward * share
 ```
 
-At genesis: 144 * 50 = 7,200 FLOW/day for the entire network.
+At genesis: 144 * 50 = 7,200 FLC/day for the entire network.
 
 ## CPU Requirements Over Time
 
@@ -107,23 +107,23 @@ At genesis: 144 * 50 = 7,200 FLOW/day for the entire network.
 
 ### Phase 1: Subsidy-Dominated (Era 0-2)
 
-Block reward is 12.5-50 FLOW. Fees are negligible relative to reward.
+Block reward is 12.5-50 FLC. Fees are negligible relative to reward.
 Transaction demand is low during network bootstrap.
 
 Fee policy mirrors Bitcoin:
-- Minimum relay fee: 1000 atomic units per KB (0.00001 FLOW/KB).
+- Minimum relay fee: 1000 atomic units per KB (0.00001 FLC/KB).
 - Mempool limit: 300 MB.
 - Replace-by-fee (RBF) supported.
 
 ### Phase 2: Fee Emergence (Era 3-5)
 
-Block reward drops to 1.5-6.25 FLOW. As the network grows,
+Block reward drops to 1.5-6.25 FLC. As the network grows,
 transaction demand rises. Fees become a meaningful portion of
 miner revenue.
 
 ### Phase 3: Fee-Dominated (Era 6+)
 
-Block reward is below 1 FLOW. The network relies on transaction fees
+Block reward is below 1 FLC. The network relies on transaction fees
 for security, similar to Bitcoin's long-term model.
 
 ### Fee Estimation
@@ -140,7 +140,7 @@ FlowCoin uses a bucketed fee estimator similar to Bitcoin Core:
 | Max supply | 21M | Unlimited | 21M |
 | Consensus | PoW (SHA-256d) | PoS | PoW (RandomX) |
 | Block time | 10 min | 12 sec | 10 min |
-| Block reward | 6.25 BTC (2024) | ~2 ETH | 50 FLOW (genesis) |
+| Block reward | 6.25 BTC (2024) | ~2 ETH | 50 FLC (genesis) |
 | Halving | Every 210K blocks | N/A | Every 210K blocks |
 | Hardware | ASICs | Validators | Commodity CPUs |
 | Barrier to entry | Very high (ASICs) | 32 ETH stake | Any laptop/desktop |
@@ -165,7 +165,7 @@ FlowCoin uses a bucketed fee estimator similar to Bitcoin Core:
 
 ### Value Accrual Mechanisms
 
-1. **Token demand**: Using the network requires holding FLOW for fees.
+1. **Token demand**: Using the network requires holding FLC for fees.
 
 2. **Mining economics**: Mining requires CPU compute and electricity
    investment, creating natural demand for the token.
@@ -187,12 +187,12 @@ FlowCoin uses a bucketed fee estimator similar to Bitcoin Core:
 
 ## Token Utility
 
-FLOW tokens serve multiple functions in the network:
+FLC tokens serve multiple functions in the network:
 
 ### 1. Transaction Fees
 
-Every transaction requires a fee paid in FLOW. Fees serve two purposes:
-- **Spam prevention**: Minimum relay fee (0.00001 FLOW/KB) prevents
+Every transaction requires a fee paid in FLC. Fees serve two purposes:
+- **Spam prevention**: Minimum relay fee (0.00001 FLC/KB) prevents
   denial-of-service through transaction flooding.
 - **Miner compensation**: After block rewards diminish, fees become
   the primary incentive for miners to secure the network.
@@ -200,7 +200,7 @@ Every transaction requires a fee paid in FLOW. Fees serve two purposes:
 ### 2. Mining Collateral
 
 Miners must invest compute resources (CPU time, electricity, RAM) to
-find valid proof-of-work. The expected FLOW reward must exceed these
+find valid proof-of-work. The expected FLC reward must exceed these
 costs for mining to be profitable. This creates an implicit collateral
 requirement: miners stake their compute costs against the probability
 of earning block rewards.
@@ -248,7 +248,7 @@ Nodes benefit from the network without mining. This is by design:
 
 ### Price Discovery
 
-FLOW price is determined by supply and demand:
+FLC price is determined by supply and demand:
 
 **Supply side**:
 - Fixed, predictable emission schedule.
@@ -268,13 +268,13 @@ Mining reaches equilibrium when:
 marginal_cost_of_mining = expected_revenue_per_block * P(winning)
 ```
 
-If FLOW price rises:
+If FLC price rises:
 1. Mining becomes more profitable.
 2. More miners join (difficulty increases).
 3. Each miner's share decreases.
 4. Equilibrium restores at higher total compute.
 
-If FLOW price falls:
+If FLC price falls:
 1. Mining becomes less profitable.
 2. Marginal miners exit (difficulty decreases).
 3. Remaining miners' shares increase.
@@ -307,7 +307,7 @@ access to block rewards.
 
 ### Mining Cost Breakdown (Era 0, Year 1)
 
-Assumptions: 1 FLOW = $1.00 USD (illustrative). Operation: four
+Assumptions: 1 FLC = $1.00 USD (illustrative). Operation: four
 mid-range desktop boxes, each a 16-thread CPU with 16 GiB DRAM,
 colocated at modest power density.
 
@@ -323,24 +323,24 @@ colocated at modest power density.
 | **Total** | **$1,150** | **100%** |
 
 Expected revenue (1% of network hashrate):
-- 144 blocks/day * 50 FLOW * 1% = 72 FLOW/day
-- 72 * 30 = 2,160 FLOW/month = $2,160/month
+- 144 blocks/day * 50 FLC * 1% = 72 FLC/day
+- 72 * 30 = 2,160 FLC/month = $2,160/month
 
 Profit margin: ~47% at this price point. Margins compress as
 difficulty rises and more operators join the network.
 
 ### Break-Even Analysis
 
-The break-even FLOW price for a mining operation depends on:
+The break-even FLC price for a mining operation depends on:
 
 ```
 break_even_price = monthly_cost / (blocks_per_month * reward * share)
                  = $1,150 / (4,320 * 50 * 0.01)
                  = $1,150 / 2,160
-                 = $0.53 per FLOW
+                 = $0.53 per FLC
 ```
 
-If FLOW trades above $0.53, the operation is profitable.
+If FLC trades above $0.53, the operation is profitable.
 If below, rational miners exit, difficulty drops, and remaining
 miners' shares increase until equilibrium is restored.
 
@@ -349,7 +349,7 @@ miners' shares increase until equilibrium is restored.
 Throughput figures below are full-mode RandomX (2 GiB dataset, JIT,
 AES-NI).
 
-| CPU class | Street price | Throughput | Payback (at illustrative $1/FLOW) |
+| CPU class | Street price | Throughput | Payback (at illustrative $1/FLC) |
 |---|---|---|---|
 | Ryzen 7 7700 (8c/16t) | $300 | ~10 kH/s | ~4–8 months |
 | Ryzen 9 7950X (16c/32t) | $550 | ~20 kH/s | ~3–6 months |
@@ -383,7 +383,7 @@ FlowCoin's monetary properties support store-of-value characteristics:
 2. **Durability**: Digital, no physical degradation.
 3. **Divisibility**: 8 decimal places (satoshi-level granularity).
 4. **Portability**: Transferable globally via the internet.
-5. **Fungibility**: Each FLOW is interchangeable.
+5. **Fungibility**: Each FLC is interchangeable.
 6. **Verifiability**: Open-source validation of all properties.
 
 ### Medium of Exchange
@@ -395,16 +395,16 @@ Transaction characteristics:
 | Confirmation time | ~10 minutes (1 block) |
 | Final settlement | ~60 minutes (6 blocks) |
 | Max throughput | ~7 tx/s (similar to Bitcoin) |
-| Transaction cost | ~0.00001-0.001 FLOW |
+| Transaction cost | ~0.00001-0.001 FLC |
 | Privacy | Pseudonymous (public addresses) |
 
 ### Unit of Account
 
-FLOW denomination units:
+FLC denomination units:
 
-| Unit | Atomic Units | FLOW |
+| Unit | Atomic Units | FLC |
 |------|-------------|------|
-| 1 FLOW | 100,000,000 | 1.00000000 |
+| 1 FLC | 100,000,000 | 1.00000000 |
 | 1 mFLOW | 100,000 | 0.00100000 |
 | 1 uFLOW | 100 | 0.00000100 |
 | 1 sat | 1 | 0.00000001 |
@@ -416,12 +416,12 @@ This determines the cost of attacking the network:
 
 | Year | Block Reward | Est. Fees | Security Budget/Year |
 |------|-------------|-----------|---------------------|
-| 1 | 50 FLOW | ~0 | ~2.6M FLOW |
-| 5 | 25 FLOW | ~1 FLOW | ~1.4M FLOW |
-| 9 | 12.5 FLOW | ~5 FLOW | ~920K FLOW |
-| 13 | 6.25 FLOW | ~10 FLOW | ~850K FLOW |
-| 17 | 3.125 FLOW | ~20 FLOW | ~1.2M FLOW |
-| 21 | 1.5625 FLOW | ~40 FLOW | ~2.2M FLOW |
+| 1 | 50 FLC | ~0 | ~2.6M FLC |
+| 5 | 25 FLC | ~1 FLC | ~1.4M FLC |
+| 9 | 12.5 FLC | ~5 FLC | ~920K FLC |
+| 13 | 6.25 FLC | ~10 FLC | ~850K FLC |
+| 17 | 3.125 FLC | ~20 FLC | ~1.2M FLC |
+| 21 | 1.5625 FLC | ~40 FLC | ~2.2M FLC |
 
 In the long term (era 6+), the security budget depends entirely
 on fee revenue. A healthy fee market is essential for long-term

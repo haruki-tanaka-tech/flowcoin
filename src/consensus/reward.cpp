@@ -12,8 +12,8 @@ namespace flow::consensus {
 
 Amount compute_block_reward(uint64_t height) {
     // Determine which halving era we are in.
-    // Era 0: blocks 0..209999      -> reward = 50 FLOW
-    // Era 1: blocks 210000..419999 -> reward = 25 FLOW
+    // Era 0: blocks 0..209999      -> reward = 50 FLC
+    // Era 1: blocks 210000..419999 -> reward = 25 FLC
     // Era N: reward = INITIAL_REWARD >> N
     //
     // After 64 halvings, the right-shift produces zero for any 64-bit value

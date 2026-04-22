@@ -82,7 +82,7 @@ void test_mempool() {
         auto pkh_alice = compute_pkh(kp_alice.pubkey);
         auto pkh_bob = compute_pkh(kp_bob.pubkey);
 
-        // Create a coinbase that pays Alice 50 FLOW
+        // Create a coinbase that pays Alice 50 FLC
         auto coinbase = make_coinbase(50 * flow::COIN, pkh_alice);
         auto coinbase_txid = coinbase.get_txid();
 
@@ -97,7 +97,7 @@ void test_mempool() {
         // Verify UTXO was added
         assert(utxo.exists(coinbase_txid, 0));
 
-        // Create a transaction: Alice sends 10 FLOW to Bob
+        // Create a transaction: Alice sends 10 FLC to Bob
         auto tx1 = make_signed_tx(coinbase_txid, 0,
                                    10 * flow::COIN, pkh_bob, kp_alice);
         // Add change output back to Alice
