@@ -20,12 +20,20 @@ extern "C" {
 
 #include "../json/json.hpp"
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+typedef int socklen_t;
+#define close closesocket
+#else
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -692,6 +700,10 @@ static bool parse_url(const std::string& url, RpcEndpoint& ep) {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2,2), &wsa);
+#endif
     Args a;
 
     for (int i = 1; i < argc; ++i) {

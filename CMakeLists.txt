@@ -488,11 +488,19 @@ if(BUILD_MINER)
     target_link_libraries(flowcoin-miner PRIVATE
         flowcoin_randomx
         ed25519
-        xkcp         # ed25519 uses Keccak via ED25519_CUSTOMHASH for its hash
+        xkcp
         json
-        pthread
-        m
     )
+    if(APPLE)
+        target_link_libraries(flowcoin-miner PRIVATE
+            "-framework Security"
+            "-framework CoreFoundation"
+        )
+    elseif(WIN32)
+        target_link_libraries(flowcoin-miner PRIVATE ws2_32 bcrypt)
+    else()
+        target_link_libraries(flowcoin-miner PRIVATE pthread m)
+    endif()
 endif()
 
 
