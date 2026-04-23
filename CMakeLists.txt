@@ -692,9 +692,13 @@ if(BUILD_TESTS)
         zstd
         uv_a
         json
-        pthread
-        dl
-        m
+        $<$<NOT:$<PLATFORM_ID:Windows>>:pthread>
+        $<$<NOT:$<PLATFORM_ID:Windows>>:dl>
+        $<$<NOT:$<PLATFORM_ID:Windows>>:m>
+        $<$<PLATFORM_ID:Windows>:ws2_32>
+        $<$<PLATFORM_ID:Windows>:bcrypt>
+        $<$<PLATFORM_ID:Windows>:iphlpapi>
+        $<$<PLATFORM_ID:Windows>:psapi>
     )
     add_test(NAME flowcoin_tests COMMAND flowcoin_tests)
 endif()
@@ -740,8 +744,12 @@ if(BUILD_BENCH)
         zstd
         uv_a
         json
-        pthread
-        dl
-        m
+        $<$<NOT:$<PLATFORM_ID:Windows>>:pthread>
+        $<$<NOT:$<PLATFORM_ID:Windows>>:dl>
+        $<$<NOT:$<PLATFORM_ID:Windows>>:m>
+        $<$<PLATFORM_ID:Windows>:ws2_32>
+        $<$<PLATFORM_ID:Windows>:bcrypt>
+        $<$<PLATFORM_ID:Windows>:iphlpapi>
+        $<$<PLATFORM_ID:Windows>:psapi>
     )
 endif()
