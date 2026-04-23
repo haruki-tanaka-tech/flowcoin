@@ -112,7 +112,7 @@ void test_sync() {
         peer.set_version_received(true);
         peer.set_version(PROTOCOL_VERSION);
         peer.set_start_height(50);
-        peer.set_user_agent("/FlowCoin:1.0.0/");
+        peer.set_user_agent("/FlowCoin:0.1.0/");
         assert(peer.version_received());
         assert(peer.protocol_version() == PROTOCOL_VERSION);
         assert(peer.start_height() == 50);

@@ -11,22 +11,22 @@
 namespace flow {
 namespace version {
 
-    constexpr int MAJOR = 1;
-    constexpr int MINOR = 0;
+    constexpr int MAJOR = 0;
+    constexpr int MINOR = 1;
     constexpr int PATCH = 0;
 
     /// Numeric version: 10000 * major + 100 * minor + patch
     constexpr int CLIENT_VERSION = 10000 * MAJOR + 100 * MINOR + PATCH;
 
     constexpr const char* CLIENT_NAME           = "FlowCoin Core";
-    constexpr const char* CLIENT_VERSION_STRING  = "1.0.0";
-    constexpr const char* USER_AGENT             = "/FlowCoin:1.0.0/";
+    constexpr const char* CLIENT_VERSION_STRING  = "0.1.0";
+    constexpr const char* USER_AGENT             = "/FlowCoin:0.1.0/";
     constexpr const char* COPYRIGHT              = "Copyright (c) 2026 Kristian Pilatovich";
     constexpr const char* LICENSE                = "MIT License";
     constexpr const char* URL                    = "https://github.com/KristianPilatovich/flowcoin";
 
     /// Minimum supported peer protocol version.
-    constexpr uint32_t MIN_PEER_VERSION = 10000;
+    constexpr uint32_t MIN_PEER_VERSION = 100;
 
 } // namespace version
 } // namespace flow

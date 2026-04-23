@@ -87,7 +87,7 @@ BENCH(Net_VersionMsg_Serialize) {
     vmsg.services = 1;
     vmsg.timestamp = 1700000000;
     vmsg.nonce = 123456789;
-    vmsg.user_agent = "/FlowCoin:1.0.0/";
+    vmsg.user_agent = "/FlowCoin:0.1.0/";
     vmsg.start_height = 100000;
 
     for (int i = 0; i < _iterations; i++) {
@@ -103,7 +103,7 @@ BENCH(Net_VersionMsg_Deserialize) {
     vmsg.services = 1;
     vmsg.timestamp = 1700000000;
     vmsg.nonce = 123456789;
-    vmsg.user_agent = "/FlowCoin:1.0.0/";
+    vmsg.user_agent = "/FlowCoin:0.1.0/";
     vmsg.start_height = 100000;
     auto data = vmsg.serialize();
 

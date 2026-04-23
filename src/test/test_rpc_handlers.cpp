@@ -202,7 +202,7 @@ void test_rpc_handlers() {
             peer["id"] = 1;
             peer["addr"] = "192.168.1.1:9333";
             peer["version"] = 1;
-            peer["subver"] = "/FlowCoin:1.0.0/";
+            peer["subver"] = "/FlowCoin:0.1.0/";
             peer["inbound"] = false;
             peer["startingheight"] = 100;
             peers.push_back(peer);
@@ -318,7 +318,7 @@ void test_rpc_handlers() {
     {
         auto handler = [](const json& /*params*/) -> json {
             json info;
-            info["version"] = "1.0.0";
+            info["version"] = "0.1.0";
             info["protocolversion"] = 1;
             info["blocks"] = 12345;
             info["connections"] = 8;
@@ -328,7 +328,7 @@ void test_rpc_handlers() {
             return info;
         };
         json result = handler(json::array());
-        assert(result["version"] == "1.0.0");
+        assert(result["version"] == "0.1.0");
         assert(result["blocks"] == 12345);
         assert(result["testnet"] == false);
     }

@@ -330,7 +330,7 @@ void test_peer_scoring() {
     {
         auto prefs = PeerPreferences::from_handshake(
             PEER_NODE_NETWORK | PEER_NODE_BLOOM,
-            "/FlowCoin:1.0.0/",
+            "/FlowCoin:0.1.0/",
             true,   // sendcmpct
             true,   // sendheaders
             1000    // feefilter
@@ -340,7 +340,7 @@ void test_peer_scoring() {
         assert(prefs.supports_compact_blocks);
         assert(prefs.wants_headers_announcements);
         assert(prefs.fee_filter == 1000);
-        assert(prefs.user_agent == "/FlowCoin:1.0.0/");
+        assert(prefs.user_agent == "/FlowCoin:0.1.0/");
         assert((prefs.services & PEER_NODE_BLOOM) != 0);
     }
 
@@ -438,7 +438,7 @@ void test_peer_scoring() {
     {
         auto prefs = PeerPreferences::from_handshake(
             PEER_NODE_NETWORK_LIMITED,
-            "/FlowCoin:1.0.0/",
+            "/FlowCoin:0.1.0/",
             false, false, 0
         );
 

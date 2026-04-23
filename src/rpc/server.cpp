@@ -1421,7 +1421,7 @@ json RpcServer::get_server_info() const {
     auto stats = get_stats();
 
     json info = {
-        {"version", "1.0.0"},
+        {"version", "0.1.0"},
         {"port", port_},
         {"running", running_.load()},
         {"uptime_seconds", stats.uptime_seconds},

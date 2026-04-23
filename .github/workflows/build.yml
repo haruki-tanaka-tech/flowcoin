@@ -2,9 +2,9 @@ name: Build
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 jobs:
   build-linux:
@@ -17,11 +17,11 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=OFF
-          cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=ON
+          cmake --build build -j$(nproc)
 
       - name: Verify binaries
-        run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx
+        run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx build/flowcoin-miner
 
   build-macos:
     runs-on: macos-14
@@ -30,11 +30,11 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=OFF
-          cmake --build build -j$(sysctl -n hw.ncpu) --target flowcoind flowcoin-cli flowcoin-tx
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=ON
+          cmake --build build -j$(sysctl -n hw.ncpu)
 
       - name: Verify binaries
-        run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx
+        run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx build/flowcoin-miner
 
   build-windows:
     runs-on: windows-2022
@@ -55,9 +55,9 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" -DBUILD_MINER=OFF \
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" -DBUILD_MINER=ON \
                 -DCMAKE_EXE_LINKER_FLAGS="-static" -DCMAKE_C_FLAGS="-static" -DCMAKE_CXX_FLAGS="-static"
-          cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
+          cmake --build build -j$(nproc)
 
       - name: Verify binaries
-        run: ls -lh build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe
+        run: ls -lh build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe build/flowcoin-miner.exe

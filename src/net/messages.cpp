@@ -140,7 +140,7 @@ void MessageHandler::send_version(Peer& peer) {
     ver.addr_from_services  = NODE_NETWORK;     // our own services (duplicated, Bitcoin-legacy)
     ver.addr_from           = CNetAddr("0.0.0.0", netman_.port());
     ver.nonce               = netman_.local_nonce();
-    ver.user_agent          = "/FlowCoin:1.0.0/";
+    ver.user_agent          = "/FlowCoin:0.1.0/";
     ver.start_height        = static_cast<int32_t>(chain_.height());
     ver.relay               = true;
 

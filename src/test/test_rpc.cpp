@@ -90,7 +90,7 @@ void test_rpc() {
     });
 
     server.register_method("getversion", [](const json& /*params*/) -> json {
-        return "1.0.0";
+        return "0.1.0";
     });
 
     // We need to access the private process_request method.

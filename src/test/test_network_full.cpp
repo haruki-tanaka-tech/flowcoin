@@ -145,7 +145,7 @@ void test_network_full() {
         ver.addr_recv = CNetAddr("192.168.1.1", 9333);
         ver.addr_from = CNetAddr("10.0.0.1", 9333);
         ver.nonce = 0x1234567890ABCDEFULL;
-        ver.user_agent = "/FlowCoin:1.0.0/";
+        ver.user_agent = "/FlowCoin:0.1.0/";
         ver.start_height = 12345;
 
         auto serialized = ver.serialize();
@@ -158,7 +158,7 @@ void test_network_full() {
         assert(restored.services == NODE_NETWORK);
         assert(restored.timestamp == 1700000000);
         assert(restored.nonce == 0x1234567890ABCDEFULL);
-        assert(restored.user_agent == "/FlowCoin:1.0.0/");
+        assert(restored.user_agent == "/FlowCoin:0.1.0/");
         assert(restored.start_height == 12345);
     }
 
@@ -533,7 +533,7 @@ void test_network_full() {
         v1.services = NODE_NETWORK;
         v1.timestamp = 1700000000;
         v1.nonce = 42;
-        v1.user_agent = "/FlowCoin:1.0.0/";
+        v1.user_agent = "/FlowCoin:0.1.0/";
         v1.start_height = 0;
 
         auto s1 = v1.serialize();
@@ -555,7 +555,7 @@ void test_network_full() {
         VersionMessage r1, r2;
         assert(VersionMessage::deserialize(s1.data(), s1.size(), r1));
         assert(VersionMessage::deserialize(s2.data(), s2.size(), r2));
-        assert(r1.user_agent == "/FlowCoin:1.0.0/");
+        assert(r1.user_agent == "/FlowCoin:0.1.0/");
         assert(r2.user_agent == "/FlowCoin:2.0.0-beta/");
     }
 

@@ -18,15 +18,16 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=OFF
-          cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=ON
+          cmake --build build -j$(nproc)
 
       - name: Package
         run: |
           mkdir -p flowcoin-${{ github.ref_name }}-linux-x86_64
-          cp build/flowcoind build/flowcoin-cli build/flowcoin-tx \
+          cp build/flowcoind build/flowcoin-cli build/flowcoin-tx build/flowcoin-miner \
              flowcoin-${{ github.ref_name }}-linux-x86_64/
-          cp whitepaper.txt flowcoin-${{ github.ref_name }}-linux-x86_64/ 2>/dev/null || true
+          cp whitepaper.txt COPYING README.md \
+             flowcoin-${{ github.ref_name }}-linux-x86_64/ 2>/dev/null || true
           tar czf flowcoin-${{ github.ref_name }}-linux-x86_64.tar.gz \
              flowcoin-${{ github.ref_name }}-linux-x86_64/
 
@@ -43,15 +44,16 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=OFF
-          cmake --build build -j$(sysctl -n hw.ncpu) --target flowcoind flowcoin-cli flowcoin-tx
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=ON
+          cmake --build build -j$(sysctl -n hw.ncpu)
 
       - name: Package
         run: |
           mkdir -p flowcoin-${{ github.ref_name }}-macos-arm64
-          cp build/flowcoind build/flowcoin-cli build/flowcoin-tx \
+          cp build/flowcoind build/flowcoin-cli build/flowcoin-tx build/flowcoin-miner \
              flowcoin-${{ github.ref_name }}-macos-arm64/
-          cp whitepaper.txt flowcoin-${{ github.ref_name }}-macos-arm64/ 2>/dev/null || true
+          cp whitepaper.txt COPYING README.md \
+             flowcoin-${{ github.ref_name }}-macos-arm64/ 2>/dev/null || true
           tar czf flowcoin-${{ github.ref_name }}-macos-arm64.tar.gz \
              flowcoin-${{ github.ref_name }}-macos-arm64/
 
@@ -80,16 +82,17 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" -DBUILD_MINER=OFF \
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" -DBUILD_MINER=ON \
                 -DCMAKE_EXE_LINKER_FLAGS="-static" -DCMAKE_C_FLAGS="-static" -DCMAKE_CXX_FLAGS="-static"
-          cmake --build build -j$(nproc) --target flowcoind flowcoin-cli flowcoin-tx
+          cmake --build build -j$(nproc)
 
       - name: Package
         run: |
           mkdir -p flowcoin-${{ github.ref_name }}-windows-x64
-          cp build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe \
+          cp build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe build/flowcoin-miner.exe \
              flowcoin-${{ github.ref_name }}-windows-x64/
-          cp whitepaper.txt flowcoin-${{ github.ref_name }}-windows-x64/ 2>/dev/null || true
+          cp whitepaper.txt COPYING README.md \
+             flowcoin-${{ github.ref_name }}-windows-x64/ 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -120,15 +123,19 @@ jobs:
             flowcoin-windows-x64.zip
           generate_release_notes: true
           body: |
-            ## FlowCoin v0.1.0
+            ## FlowCoin ${{ github.ref_name }}
 
-            Keccak-256d Proof-of-Work cryptocurrency.
+            CPU-only RandomX Proof-of-Work cryptocurrency with Keccak-256d and Ed25519.
 
-            ### Included binaries
-            - `flowcoind` — Full node daemon
-            - `flowcoin-cli` — RPC command-line client
-            - `flowcoin-tx` — Transaction utility
+            ### Binaries included
+            - `flowcoind` — Full node daemon (P2P + RPC + wallet)
+            - `flowcoin-cli` — JSON-RPC command-line client
+            - `flowcoin-tx` — Offline transaction utility
+            - `flowcoin-miner` — Standalone CPU miner (RandomX)
 
-            ### GPU Miner
-            The miner (`flowcoin-miner`) with ncurses TUI and OpenCL GPU support
-            must be built from source: `cd src/miner && make USE_OPENCL=1`
+            ### Quick start
+            ```bash
+            ./flowcoind &
+            ./flowcoin-miner --threads $(nproc)
+            ./flowcoin-cli getbalance
+            ```
