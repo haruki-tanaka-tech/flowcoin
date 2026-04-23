@@ -429,14 +429,14 @@ The genesis block has the following fields:
 
 ```
 height:        0
-timestamp:     [TBD at launch]
+timestamp:     1776902400 (23/Apr/2026)
 prev_hash:     0x0000000000000000000000000000000000000000000000000000000000000000
 nbits:         0x1f00ffff
 version:       1
 nonce:         [computed at launch]
 ```
 
-Coinbase message: `"FlowCoin Genesis"` (encoded in the coinbase input pubkey field)
+Coinbase message: `"Strait of Hormuz closed, oil hits $144 as energy crisis crushes miners 23/Apr/2026 - FlowCoin: CPU-only proof-of-work"` (encoded in the coinbase input pubkey field)
 
 The genesis block reward of 50 FLC is unspendable (no valid private key for
 the genesis coinbase address).

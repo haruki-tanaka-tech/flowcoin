@@ -298,8 +298,8 @@ curl -s -u "$USERPASS" -H "Content-Type: application/json" \
 ## Genesis Block
 
 ```
-"White House calls for federal AI law to preempt states
- 21/Mar/2026 - FlowCoin: decentralized proof-of-work"
+"Strait of Hormuz closed, oil hits $144 as energy crisis
+ crushes miners 23/Apr/2026 - FlowCoin: CPU-only proof-of-work"
 ```
 
 ## Whitepaper
