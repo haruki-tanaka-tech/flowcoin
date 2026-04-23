@@ -171,7 +171,7 @@ namespace tag {
     inline const char* net()     { return BLUE_BG_S         WHITE_BOLD_S " net     " CLEAR " "; }
     inline const char* cpu()     { return CYAN_BG_BOLD_S    WHITE_BOLD_S " cpu     " CLEAR; }
     inline const char* miner()   { return MAGENTA_BG_BOLD_S WHITE_BOLD_S " miner   " CLEAR; }
-    inline const char* randomx() { return BLUE_BG_S         WHITE_BOLD_S " randomx " CLEAR " "; }
+    inline const char* keccak()  { return BLUE_BG_S         WHITE_BOLD_S " keccak  " CLEAR " "; }
     inline const char* bench()   { return GREEN_BG_BOLD_S   WHITE_BOLD_S " bench   " CLEAR; }
     inline const char* signals() { return YELLOW_BG_BOLD_S  WHITE_BOLD_S " signal  " CLEAR; }
 }

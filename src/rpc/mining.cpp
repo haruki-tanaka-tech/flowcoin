@@ -8,7 +8,6 @@
 #include "mining/blocktemplate.h"
 #include "mining/submitblock.h"
 #include "consensus/difficulty.h"
-#include "consensus/pow.h"
 #include "util/arith_uint256.h"
 #include "consensus/params.h"
 #include "consensus/reward.h"
@@ -64,20 +63,6 @@ void register_mining_rpcs(RpcServer& server, ChainState& chain, NetManager& net,
 
         // Merkle root (pre-computed by the node so the miner doesn't have to)
         j["merkle_root"] = hex_encode(tmpl.header.merkle_root.data(), 32);
-
-        // RandomX seed: the block hash at rx_seed_height(child_height). Miners
-        // need this to initialise their RandomX cache. Walk back from the tip
-        // to find the ancestor at the seed height; return the zero hash if the
-        // seed height is 0 (pre-epoch, genesis bootstrap).
-        {
-            uint64_t seed_h = consensus::rx_seed_height(tmpl.header.height);
-            const CBlockIndex* node = chain.tip();
-            while (node && node->height > seed_h) node = node->prev;
-            uint256 seed{};
-            if (node && node->height == seed_h) seed = node->hash;
-            j["seed_hash"]   = hex_encode(seed.data(), 32);
-            j["seed_height"] = static_cast<uint64_t>(seed_h);
-        }
 
         // Coinbase transaction as nested object (cgminer expects coinbasetxn.data)
         auto cb_data = tmpl.coinbase_tx.serialize();

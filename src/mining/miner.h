@@ -1,20 +1,18 @@
 // Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 //
-// In-process RandomX miner for FlowCoin.
+// In-process Keccak-256d miner for FlowCoin.
 //
-// The Miner runs a pool of CPU worker threads; each thread owns a RandomX VM
-// (obtained via thread_local state in consensus::ComputePowHash) and scans a
-// disjoint stripe of the nonce space. When any worker finds a nonce whose
-// RandomX(header, seed) is <= target, the block is signed with the miner's
-// Ed25519 key and submitted via BlockSubmitter.
+// The Miner runs a pool of CPU worker threads that scan a disjoint stripe of
+// the nonce space. When any worker finds a nonce whose keccak256d(header) is
+// <= target, the block is signed with the miner's Ed25519 key and submitted
+// via BlockSubmitter.
 //
 // Mining flow:
 //   1. Fetch a block template (BlockAssembler) for the current chain tip.
-//   2. Resolve the RandomX seed (block hash at rx_seed_height(child_height)).
-//   3. Distribute the nonce space across N worker threads; each one hashes
-//      RandomX(header_bytes, seed) and compares against target.
-//   4. On success, sign the header with Ed25519 and submit the block.
+//   2. Distribute the nonce space across N worker threads; each one hashes
+//      keccak256d(header_bytes) and compares against target.
+//   3. On success, sign the header with Ed25519 and submit the block.
 
 #ifndef FLOWCOIN_MINING_MINER_H
 #define FLOWCOIN_MINING_MINER_H
@@ -93,7 +91,7 @@ struct MiningStats {
 struct NonceSearchResult {
     bool     found         = false;
     uint32_t nonce         = 0;
-    uint256  pow_hash;              //!< RandomX hash at the winning nonce
+    uint256  pow_hash;              //!< keccak256d hash at the winning nonce
     uint64_t nonces_tried  = 0;
     double   search_time_s = 0.0;
 };
@@ -128,20 +126,14 @@ public:
     void update_config(const MinerConfig& config);
 
     /// Scan `[start_nonce, start_nonce + max_tries)` (mod 2^32) for a nonce
-    /// such that RandomX(header[0..91], seed) <= target. Multi-threaded per
+    /// such that keccak256d(header[0..91]) <= target. Multi-threaded per
     /// `num_threads`.
     NonceSearchResult search_nonce(CBlockHeader& header, const uint256& target,
-                                    const uint256& seed,
                                     uint32_t start_nonce = 0,
                                     uint32_t max_tries = 0xFFFFFFFF);
 
     /// Sign an unsigned header with the miner's Ed25519 key; fills miner_sig.
     bool sign_block(CBlockHeader& header);
-
-    /// Resolve the RandomX seed for a block at the given child height, using
-    /// the current chain state. Returns the zero hash if the seed ancestor
-    /// is not yet in the index (pre-bootstrap, genesis, ...).
-    uint256 get_seed_for_height(uint64_t child_height) const;
 
 private:
     ChainState&     chain_;
@@ -168,8 +160,8 @@ private:
 // Free functions
 // ---------------------------------------------------------------------------
 
-/// Measure RandomX hashrate for `duration_ms` using a single thread
-/// and a zero seed. Returns H/s.
+/// Measure Keccak-256d hashrate for `duration_ms` using a single thread.
+/// Returns H/s.
 double benchmark_hashrate(int duration_ms = 1000);
 
 /// Format a hashrate in H/s as a human-readable string ("1.23 MH/s").

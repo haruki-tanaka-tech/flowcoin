@@ -10,7 +10,7 @@
 
 // Forward declarations of all test functions
 void test_keccak();
-void test_randomx();
+void test_pow();
 void test_arith_uint256();
 void test_ed25519();
 void test_slip0010();
@@ -74,7 +74,7 @@ struct TestCase {
 int main() {
     std::vector<TestCase> tests = {
         {"keccak256", test_keccak},
-        {"randomx", test_randomx},
+        {"pow", test_pow},
         {"arith_uint256", test_arith_uint256},
         {"ed25519", test_ed25519},
         {"slip0010", test_slip0010},

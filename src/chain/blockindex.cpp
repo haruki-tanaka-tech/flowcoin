@@ -6,7 +6,6 @@
 #include "consensus/validation.h"
 #include "consensus/params.h"
 #include "consensus/difficulty.h"
-#include "consensus/pow.h"
 #include <algorithm>
 
 namespace flow {
@@ -66,20 +65,6 @@ consensus::BlockContext CBlockIndex::make_child_context(int64_t adjusted_time) c
             child_height, nbits, first->timestamp, timestamp);
     } else {
         ctx.expected_nbits = nbits;
-    }
-
-    // RandomX seed: block hash at rx_seed_height(child_height). Walk back
-    // along `prev` pointers from this (the parent). For early blocks the
-    // seed height is 0, so we land on genesis. If the walk falls off the
-    // chain (partial index), pow_seed stays zero and the PoW check will
-    // fail — which is correct, we cannot validate without the seed.
-    uint64_t seed_h = consensus::rx_seed_height(child_height);
-    const CBlockIndex* seed_block = this;
-    while (seed_block && seed_block->height > seed_h) {
-        seed_block = seed_block->prev;
-    }
-    if (seed_block && seed_block->height == seed_h) {
-        ctx.pow_seed = seed_block->hash;
     }
 
     return ctx;

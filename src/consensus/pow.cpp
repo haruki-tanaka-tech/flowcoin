@@ -1,247 +1,32 @@
 // Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 //
-// RandomX Proof-of-Work implementation.
+// Keccak-256d Proof-of-Work implementation.
 
 #include "pow.h"
 #include "difficulty.h"
 #include "params.h"
 #include "../util/arith_uint256.h"
 
-#include <randomx.h>
-
-#include <array>
 #include <cmath>
 #include <cstring>
 #include <limits>
-#include <memory>
-#include <mutex>
-#include <shared_mutex>
-#include <stdexcept>
 #include <string>
 
 namespace flow::consensus {
 
 // ===========================================================================
-// Seed rotation
-// ===========================================================================
-
-uint64_t rx_seed_height(uint64_t height) {
-    if (height <= SEEDHASH_EPOCH_BLOCKS + SEEDHASH_EPOCH_LAG) return 0;
-    return (height - SEEDHASH_EPOCH_LAG - 1) & ~(SEEDHASH_EPOCH_BLOCKS - 1);
-}
-
-// ===========================================================================
-// RandomX runtime
-//
-// Caches and the optional dataset are reference-counted via shared_ptr so that
-// thread-local VMs keep their cache alive across an epoch rotation. The global
-// state holds an LRU of up to 2 caches (current + previous epoch) to absorb
-// reorgs that cross an epoch boundary without re-initialising.
-// ===========================================================================
-
-namespace {
-
-struct CacheHolder {
-    randomx_cache* cache = nullptr;
-    ~CacheHolder() { if (cache) randomx_release_cache(cache); }
-};
-
-struct DatasetHolder {
-    randomx_dataset* dataset = nullptr;
-    ~DatasetHolder() { if (dataset) randomx_release_dataset(dataset); }
-};
-
-using CachePtr = std::shared_ptr<CacheHolder>;
-using DatasetPtr = std::shared_ptr<DatasetHolder>;
-
-struct CacheSlot {
-    uint256 seed;
-    CachePtr holder;  // null when slot is empty
-};
-
-struct Runtime {
-    std::shared_mutex mutex;
-    bool configured = false;
-    bool full_mem = false;
-    randomx_flags flags = RANDOMX_FLAG_DEFAULT;
-    DatasetPtr dataset;                   // only populated in full_mem mode
-    std::array<CacheSlot, 2> slots = {};  // LRU of size 2
-    size_t next_slot = 0;
-};
-
-Runtime& runtime() {
-    static Runtime rt;
-    return rt;
-}
-
-// Per-thread VM. Each thread creates its VM on first hash and reuses it.
-// The held CachePtr keeps the cache alive if the global LRU evicts it while
-// this thread is still using the VM.
-struct ThreadVM {
-    randomx_vm* vm = nullptr;
-    CachePtr cache_ref;  // keeps the current cache alive
-    uint256 seed{};
-    bool has_seed = false;
-
-    ~ThreadVM() {
-        if (vm) randomx_destroy_vm(vm);
-    }
-};
-
-thread_local ThreadVM tls_vm;
-
-// Caller must NOT hold the runtime mutex. Acquires unique_lock internally.
-CachePtr get_or_make_cache(const uint256& seed) {
-    Runtime& rt = runtime();
-
-    // Fast path: shared lock, check if cache already exists.
-    {
-        std::shared_lock rlock(rt.mutex);
-        for (const auto& slot : rt.slots) {
-            if (slot.holder && slot.seed == seed) {
-                return slot.holder;
-            }
-        }
-    }
-
-    // Slow path: create under unique lock.
-    std::unique_lock wlock(rt.mutex);
-
-    // Re-check after upgrading — another thread may have created it.
-    for (const auto& slot : rt.slots) {
-        if (slot.holder && slot.seed == seed) {
-            return slot.holder;
-        }
-    }
-
-    auto holder = std::make_shared<CacheHolder>();
-    holder->cache = randomx_alloc_cache(rt.flags);
-    if (!holder->cache) {
-        throw std::runtime_error("randomx_alloc_cache failed");
-    }
-    randomx_init_cache(holder->cache, seed.data(), seed.size());
-
-    // In full-mem mode, also rebuild the dataset for the new cache.
-    if (rt.full_mem) {
-        auto ds = std::make_shared<DatasetHolder>();
-        ds->dataset = randomx_alloc_dataset(rt.flags);
-        if (!ds->dataset) {
-            throw std::runtime_error("randomx_alloc_dataset failed");
-        }
-        unsigned long total = randomx_dataset_item_count();
-        randomx_init_dataset(ds->dataset, holder->cache, 0, total);
-        rt.dataset = ds;
-    }
-
-    // Evict the oldest slot.
-    CacheSlot& slot = rt.slots[rt.next_slot];
-    slot.seed = seed;
-    slot.holder = holder;
-    rt.next_slot = (rt.next_slot + 1) % rt.slots.size();
-
-    return holder;
-}
-
-} // anonymous namespace
-
-void ConfigureRandomX(bool full_mem, bool large_pages) {
-    Runtime& rt = runtime();
-    std::unique_lock wlock(rt.mutex);
-    if (rt.configured) return;
-
-    rt.full_mem = full_mem;
-    rt.flags = randomx_get_flags();
-    if (large_pages) rt.flags |= RANDOMX_FLAG_LARGE_PAGES;
-    if (full_mem)    rt.flags |= RANDOMX_FLAG_FULL_MEM;
-
-    rt.configured = true;
-}
-
-void WarmUpRandomX(const uint256& seed) {
-    // Ensure configured with defaults (light mode, no large pages).
-    {
-        Runtime& rt = runtime();
-        std::shared_lock rlock(rt.mutex);
-        bool ok = rt.configured;
-        rlock.unlock();
-        if (!ok) ConfigureRandomX(false, false);
-    }
-    (void)get_or_make_cache(seed);
-}
-
-void ShutdownRandomX() {
-    Runtime& rt = runtime();
-    std::unique_lock wlock(rt.mutex);
-    for (auto& slot : rt.slots) {
-        slot.holder.reset();
-        slot.seed = uint256{};
-    }
-    rt.dataset.reset();
-    rt.configured = false;
-    rt.next_slot = 0;
-}
-
-uint256 ComputePowHash(const uint8_t* data, size_t len, const uint256& seed) {
-    Runtime& rt = runtime();
-
-    // Lazy default configuration for verifier-only paths.
-    {
-        std::shared_lock rlock(rt.mutex);
-        bool ok = rt.configured;
-        rlock.unlock();
-        if (!ok) ConfigureRandomX(false, false);
-    }
-
-    CachePtr cache = get_or_make_cache(seed);
-
-    // Snapshot dataset pointer under shared lock (may be null in light mode).
-    DatasetPtr ds;
-    randomx_flags flags;
-    {
-        std::shared_lock rlock(rt.mutex);
-        ds = rt.dataset;
-        flags = rt.flags;
-    }
-
-    // Create or update this thread's VM.
-    if (!tls_vm.vm) {
-        tls_vm.vm = randomx_create_vm(flags, cache->cache,
-                                       ds ? ds->dataset : nullptr);
-        if (!tls_vm.vm) {
-            throw std::runtime_error("randomx_create_vm failed");
-        }
-        tls_vm.cache_ref = cache;
-        tls_vm.seed = seed;
-        tls_vm.has_seed = true;
-    } else if (!tls_vm.has_seed || tls_vm.seed != seed) {
-        randomx_vm_set_cache(tls_vm.vm, cache->cache);
-        if (ds && ds->dataset) {
-            randomx_vm_set_dataset(tls_vm.vm, ds->dataset);
-        }
-        tls_vm.cache_ref = cache;
-        tls_vm.seed = seed;
-        tls_vm.has_seed = true;
-    }
-
-    uint256 result;
-    randomx_calculate_hash(tls_vm.vm, data, len, result.data());
-    return result;
-}
-
-// ===========================================================================
 // PoW verification
 // ===========================================================================
 
-bool CheckProofOfWork(const CBlockHeader& header, const uint256& seed) {
+bool CheckProofOfWork(const CBlockHeader& header) {
     arith_uint256 target;
     if (!derive_target(header.nbits, target)) {
         return false;
     }
 
-    auto header_bytes = header.get_unsigned_data();
-    uint256 pow_hash = ComputePowHash(header_bytes.data(), header_bytes.size(),
-                                       seed);
+    // block_id = keccak256d(header[0..91]) — same hash used for indexing.
+    uint256 block_id = header.get_hash();
 
     // derive_target gives us a little-endian arith_uint256; the hash is raw
     // bytes in the same little-endian layout used for chain arithmetic, so
@@ -251,12 +36,12 @@ bool CheckProofOfWork(const CBlockHeader& header, const uint256& seed) {
     for (int i = 0; i < 32; ++i) {
         target_be[i] = target_le[31 - i];
     }
-    return pow_hash <= target_be;
+    return block_id <= target_be;
 }
 
 // ===========================================================================
-// Difficulty math (unchanged from Keccak era — target/nbits encoding is
-// independent of the hash function used)
+// Difficulty math (target/nbits encoding is independent of the hash
+// function used)
 // ===========================================================================
 
 arith_uint256 GetPowLimit() {

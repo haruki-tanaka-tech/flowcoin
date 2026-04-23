@@ -1,15 +1,10 @@
 // Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 //
-// RandomX Proof-of-Work: verification, runtime management, difficulty math.
+// Keccak-256d Proof-of-Work: verification and difficulty math.
 //
-// PoW hash is RandomX(header_bytes, seed), where seed is the block hash at
-// `rx_seed_height(current_height)`. The block ID hash (keccak256d of the
-// unsigned header) is unchanged — only the target comparison uses RandomX.
-//
-// Seed rotation follows the Monero pattern: rotates every SEEDHASH_EPOCH_BLOCKS
-// blocks with a SEEDHASH_EPOCH_LAG-block delay so nodes agree on the seed
-// before it takes effect and reorgs near the boundary do not thrash caches.
+// PoW hash is keccak256d(header[0..91]) — the same as the block ID hash.
+// CheckProofOfWork simply verifies that block_id <= target(nbits).
 
 #ifndef FLOWCOIN_CONSENSUS_POW_H
 #define FLOWCOIN_CONSENSUS_POW_H
@@ -26,47 +21,11 @@
 namespace flow::consensus {
 
 // ---------------------------------------------------------------------------
-// RandomX seed rotation
-// ---------------------------------------------------------------------------
-
-/// Seed rotates every 2048 blocks (~14 days at a 10-minute target).
-constexpr uint64_t SEEDHASH_EPOCH_BLOCKS = 2048;
-
-/// 64-block lag so the new cache is warm before rotation kicks in.
-constexpr uint64_t SEEDHASH_EPOCH_LAG = 64;
-
-/// Height of the block whose hash is the RandomX seed for `height`.
-/// Matches Monero's `rx_seedheight`.
-uint64_t rx_seed_height(uint64_t height);
-
-// ---------------------------------------------------------------------------
-// RandomX runtime
-// ---------------------------------------------------------------------------
-
-/// Configure RandomX runtime. Must be called before the first hash
-/// computation; subsequent calls are no-ops.
-///
-/// @param full_mem     Allocate the 2 GB dataset for fast mining. Otherwise
-///                     only the 256 MB cache is used (verifier mode).
-/// @param large_pages  Request huge pages. Falls back silently if denied.
-void ConfigureRandomX(bool full_mem, bool large_pages);
-
-/// Pre-initialise the cache for `seed` so the first PoW verification does
-/// not pay the cache init cost (~40 ms).
-void WarmUpRandomX(const uint256& seed);
-
-/// Release all caches, dataset, and thread-local VMs. Call on shutdown.
-void ShutdownRandomX();
-
-/// Compute RandomX PoW hash of `data` using `seed` as the cache key.
-uint256 ComputePowHash(const uint8_t* data, size_t len, const uint256& seed);
-
-// ---------------------------------------------------------------------------
 // PoW verification
 // ---------------------------------------------------------------------------
 
-/// Verify the Proof-of-Work: RandomX(header[0..91], seed) <= target(nbits).
-bool CheckProofOfWork(const CBlockHeader& header, const uint256& seed);
+/// Verify the Proof-of-Work: keccak256d(header[0..91]) <= target(nbits).
+bool CheckProofOfWork(const CBlockHeader& header);
 
 // ---------------------------------------------------------------------------
 // Difficulty math

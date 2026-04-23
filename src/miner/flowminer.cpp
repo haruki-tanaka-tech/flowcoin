@@ -1,21 +1,21 @@
 // Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 //
-// flowcoin-miner — standalone CPU-only RandomX miner.
+// flowcoin-miner — standalone CPU-only Keccak-256d miner.
 //
 // Talks to a flowcoind node over HTTP JSON-RPC (`getblocktemplate`,
-// `submitblock`). Each worker thread owns a RandomX VM and scans a disjoint
-// stripe of the nonce space. Output style follows XMRig conventions: a banner
-// of ` * LABEL      value` lines at start-up, then timestamped tagged events
+// `submitblock`). Each worker thread scans a disjoint stripe of the nonce
+// space, computing keccak256d(header) and comparing against the target.
+// Output style follows XMRig conventions: a banner of ` * LABEL      value`
+// lines at start-up, then timestamped tagged events
 // (`[YYYY-MM-DD HH:MM:SS.mmm]  TAG    message`), and a periodic
 // `speed 10s/60s/15m` line.
 
 #include "log.hpp"
 
-#include <randomx.h>
-
 extern "C" {
 #include "../crypto/ed25519.h"
+#include "KeccakHash.h"
 }
 
 #include "../json/json.hpp"
@@ -107,6 +107,23 @@ static std::string hex_encode(const uint8_t* p, size_t n) {
         out[i * 2 + 1] = k[p[i] & 0xf];
     }
     return out;
+}
+
+// ===========================================================================
+// Keccak-256d — double Keccak-256 hash (same as flow::keccak256d).
+// ===========================================================================
+
+static void keccak256_raw(const uint8_t* data, size_t len, uint8_t* out32) {
+    Keccak_HashInstance ctx;
+    Keccak_HashInitialize(&ctx, 1088, 512, 256, 0x01);
+    Keccak_HashUpdate(&ctx, data, len * 8);
+    Keccak_HashFinal(&ctx, out32);
+}
+
+static void keccak256d_raw(const uint8_t* data, size_t len, uint8_t* out32) {
+    uint8_t inner[32];
+    keccak256_raw(data, len, inner);
+    keccak256_raw(inner, 32, out32);
 }
 
 // ===========================================================================
@@ -396,7 +413,6 @@ struct Job {
     uint32_t                        nbits = 0;
     std::array<uint8_t, HEADER_UNSIGNED> header{};  // nonce bytes at [84..87]
     std::array<uint8_t, 32>         target_be{};    // big-endian target
-    std::array<uint8_t, 32>         seed{};         // RandomX cache key
     std::vector<uint8_t>            coinbase_tx;    // for block assembly
     double                          difficulty = 0.0;
 };
@@ -426,10 +442,6 @@ struct SharedState {
     std::atomic<uint64_t>         job_id{0};
     std::atomic<bool>             stop_flag{false};
 
-    // Set by main thread to force all workers to exit (e.g. before a cache
-    // swap). Workers observe both stop_flag and respawn_flag.
-    std::atomic<bool>             respawn_flag{false};
-
     // When a worker finds a nonce, it sets these and signals the main thread.
     std::atomic<bool>             found_flag{false};
     uint32_t                      found_nonce = 0;
@@ -444,19 +456,12 @@ struct SharedState {
 };
 
 // ===========================================================================
-// Worker thread — owns a RandomX VM and scans its nonce stripe.
+// Worker thread — scans its nonce stripe with keccak256d.
 // ===========================================================================
 
 static void worker_main(size_t thread_id, size_t num_threads,
-                         randomx_cache* cache, randomx_dataset* dataset,
-                         randomx_flags flags, SharedState& state,
+                         SharedState& state,
                          Hashrate* hr10, Hashrate* hr60, Hashrate* hr900) {
-    randomx_vm* vm = randomx_create_vm(flags, cache, dataset);
-    if (!vm) {
-        Log::error(tag::randomx(), "create_vm failed in thread %zu", thread_id);
-        return;
-    }
-
     std::shared_ptr<const Job> last_job;
     std::array<uint8_t, HEADER_UNSIGNED> local{};
     std::array<uint8_t, 32> target{};
@@ -464,8 +469,7 @@ static void worker_main(size_t thread_id, size_t num_threads,
     uint64_t hashes_since_report = 0;
     auto last_report = std::chrono::steady_clock::now();
 
-    while (!state.stop_flag.load(std::memory_order_relaxed) &&
-           !state.respawn_flag.load(std::memory_order_relaxed)) {
+    while (!state.stop_flag.load(std::memory_order_relaxed)) {
         // Pick up the current job if it has advanced.
         uint64_t jid = state.job_id.load(std::memory_order_acquire);
         if (jid != local_job_id) {
@@ -487,7 +491,6 @@ static void worker_main(size_t thread_id, size_t num_threads,
         // Stripe: this thread visits nonces congruent to thread_id (mod num_threads).
         uint32_t nonce = static_cast<uint32_t>(thread_id);
         while (!state.stop_flag.load(std::memory_order_relaxed) &&
-               !state.respawn_flag.load(std::memory_order_relaxed) &&
                state.job_id.load(std::memory_order_relaxed) == local_job_id) {
             local[84] = static_cast<uint8_t>(nonce);
             local[85] = static_cast<uint8_t>(nonce >> 8);
@@ -495,7 +498,7 @@ static void worker_main(size_t thread_id, size_t num_threads,
             local[87] = static_cast<uint8_t>(nonce >> 24);
 
             uint8_t h[32];
-            randomx_calculate_hash(vm, local.data(), local.size(), h);
+            keccak256d_raw(local.data(), local.size(), h);
             ++hashes_since_report;
             state.total_hashes.fetch_add(1, std::memory_order_relaxed);
 
@@ -509,8 +512,9 @@ static void worker_main(size_t thread_id, size_t num_threads,
                 break;
             }
 
-            // Periodic hashrate report (every ~512 hashes per thread).
-            if ((hashes_since_report & 0x1FF) == 0) {
+            // Periodic hashrate report (every ~65536 hashes per thread).
+            // Keccak is fast (~millions H/s), so we batch more before reporting.
+            if ((hashes_since_report & 0xFFFF) == 0) {
                 auto now = std::chrono::steady_clock::now();
                 auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_report).count();
                 if (dt > 0) {
@@ -527,7 +531,12 @@ static void worker_main(size_t thread_id, size_t num_threads,
         }
     }
 
-    randomx_destroy_vm(vm);
+    // Flush remaining hashes to the counters.
+    if (hashes_since_report > 0) {
+        hr10->add(hashes_since_report);
+        hr60->add(hashes_since_report);
+        hr900->add(hashes_since_report);
+    }
 }
 
 // ===========================================================================
@@ -587,7 +596,7 @@ static void print_banner(const CpuInfo& cpu, size_t threads, const RpcEndpoint& 
     aboutv += "unknown";
 #endif
     line("ABOUT", aboutv);
-    line("LIBS", std::string("RandomX nlohmann-json/3.x"));
+    line("LIBS", std::string("XKCP/Keccak nlohmann-json/3.x"));
 
     std::string cpuline = cpu.brand + "  " +
         (cpu.is_64bit ? GREEN_BOLD("64-bit") : RED_BOLD("32-bit")) + " " +
@@ -599,37 +608,16 @@ static void print_banner(const CpuInfo& cpu, size_t threads, const RpcEndpoint& 
     line("NODE", CYAN_BOLD_S + ep_str + CLEAR);
     line("ADDRESS", address.empty() ? (BLACK_BOLD("inherited from node wallet"))
                                     : (CYAN_BOLD_S + address + CLEAR));
-    line("ALGO", MAGENTA_BOLD("randomx"));
+    line("ALGO", MAGENTA_BOLD("keccak-256d"));
     line("THREADS", std::string(CYAN_BOLD_S) + std::to_string(threads) + CLEAR);
     Log::banner("");
 }
 
 // ===========================================================================
-// Benchmark mode — run RandomX for N seconds on all threads.
+// Benchmark mode — run Keccak-256d for N seconds on all threads.
 // ===========================================================================
 
-static int run_benchmark(size_t threads, int seconds, bool full_mem) {
-    randomx_flags flags = randomx_get_flags() | RANDOMX_FLAG_JIT;
-    if (full_mem) flags |= RANDOMX_FLAG_FULL_MEM;
-
-    randomx_cache* cache = randomx_alloc_cache(flags);
-    if (!cache) { Log::error(tag::bench(), "alloc_cache failed"); return 1; }
-    const char* key = "flowcoin-miner benchmark";
-    randomx_init_cache(cache, key, std::strlen(key));
-
-    randomx_dataset* ds = nullptr;
-    if (full_mem) {
-        ds = randomx_alloc_dataset(flags);
-        if (!ds) { Log::error(tag::bench(), "alloc_dataset failed"); randomx_release_cache(cache); return 1; }
-        unsigned long total = randomx_dataset_item_count();
-        auto t0 = std::chrono::steady_clock::now();
-        randomx_init_dataset(ds, cache, 0, total);
-        auto t1 = std::chrono::steady_clock::now();
-        Log::info(tag::bench(), "dataset ready (%.0f MB) (%" PRId64 " ms)",
-                  (total * 64.0) / (1024.0 * 1024.0),
-                  static_cast<int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()));
-    }
-
+static int run_benchmark(size_t threads, int seconds) {
     std::atomic<bool>     stop{false};
     std::atomic<uint64_t> total{0};
     std::vector<std::thread> ts;
@@ -637,23 +625,20 @@ static int run_benchmark(size_t threads, int seconds, bool full_mem) {
 
     for (size_t i = 0; i < threads; ++i) {
         ts.emplace_back([&, i]() {
-            randomx_vm* vm = randomx_create_vm(flags, cache, ds);
-            if (!vm) return;
-            uint8_t buf[76];
+            uint8_t buf[HEADER_UNSIGNED];
             std::memset(buf, 0, sizeof(buf));
             buf[0] = static_cast<uint8_t>(i);  // differentiate threads
             uint8_t h[32];
             uint64_t local = 0;
             while (!stop.load(std::memory_order_relaxed)) {
                 ++local;
-                buf[4] = static_cast<uint8_t>(local);
-                buf[5] = static_cast<uint8_t>(local >> 8);
-                buf[6] = static_cast<uint8_t>(local >> 16);
-                buf[7] = static_cast<uint8_t>(local >> 24);
-                randomx_calculate_hash(vm, buf, sizeof(buf), h);
+                buf[84] = static_cast<uint8_t>(local);
+                buf[85] = static_cast<uint8_t>(local >> 8);
+                buf[86] = static_cast<uint8_t>(local >> 16);
+                buf[87] = static_cast<uint8_t>(local >> 24);
+                keccak256d_raw(buf, sizeof(buf), h);
             }
             total.fetch_add(local, std::memory_order_relaxed);
-            randomx_destroy_vm(vm);
         });
     }
 
@@ -666,12 +651,10 @@ static int run_benchmark(size_t threads, int seconds, bool full_mem) {
     double rate = elapsed > 0.0 ? total.load() / elapsed : 0.0;
 
     Log::info(tag::bench(), "speed " CYAN_BOLD_S "%s" CLEAR "  threads=" CYAN_BOLD_S "%zu" CLEAR
-              "  mode=%s  elapsed=%.2fs  hashes=%" PRIu64,
+              "  algo=keccak-256d  elapsed=%.2fs  hashes=%" PRIu64,
               format_hashrate(rate).c_str(), threads,
-              full_mem ? "fast" : "light", elapsed, total.load());
+              elapsed, total.load());
 
-    if (ds)    randomx_release_dataset(ds);
-    randomx_release_cache(cache);
     return 0;
 }
 
@@ -688,7 +671,6 @@ struct Args {
     std::string key_path = default_key_path();
     size_t      threads  = 0;   // auto
     int         bench    = 0;   // 0 = mine, >0 = benchmark seconds
-    bool        full_mem = true;
     bool        colors   = true;
 };
 
@@ -704,8 +686,7 @@ static void print_usage() {
         "  -t, --threads N         worker threads (default: all logical cores)\n"
         "  -a, --address ADDR      coinbase bech32m address (default: node's wallet)\n"
         "      --key PATH          miner signing key (default: ~/.flowcoin/miner_key)\n"
-        "  -b, --benchmark SECS    run RandomX benchmark for SECS seconds and exit\n"
-        "      --light             use 256 MB light mode instead of 2 GB fast mode\n"
+        "  -b, --benchmark SECS    run Keccak-256d benchmark for SECS seconds and exit\n"
         "      --no-color          disable ANSI colours\n"
         "  -h, --help              this message\n");
 }
@@ -744,7 +725,6 @@ int main(int argc, char** argv) {
         else if (k == "-a" || k == "--address")   take(a.address);
         else if (k == "--key")                    take(a.key_path);
         else if (k == "-b" || k == "--benchmark") { std::string s; take(s); a.bench = std::stoi(s); }
-        else if (k == "--light")                  a.full_mem = false;
         else if (k == "--no-color")               a.colors = false;
         else { std::fprintf(stderr, "unknown option: %s\n", k.c_str()); return 2; }
     }
@@ -774,7 +754,7 @@ int main(int argc, char** argv) {
     print_banner(cpu, threads, ep, a.address);
 
     if (a.bench > 0) {
-        return run_benchmark(threads, a.bench, a.full_mem);
+        return run_benchmark(threads, a.bench);
     }
 
     // Load signing key.
@@ -798,17 +778,6 @@ int main(int argc, char** argv) {
                   ep.host.c_str(), ep.port, r->dump().c_str());
     }
 
-    // Allocate RandomX cache + optional dataset.
-    randomx_flags flags = randomx_get_flags() | RANDOMX_FLAG_JIT;
-    if (a.full_mem) flags |= RANDOMX_FLAG_FULL_MEM;
-    randomx_cache* cache = randomx_alloc_cache(flags);
-    if (!cache) { Log::error(tag::randomx(), "alloc_cache failed"); return 5; }
-    randomx_dataset* dataset = nullptr;
-    if (a.full_mem) {
-        dataset = randomx_alloc_dataset(flags);
-        if (!dataset) { Log::error(tag::randomx(), "alloc_dataset failed"); return 5; }
-    }
-
     // Signal handling for clean shutdown.
     static SharedState state;
     std::signal(SIGINT,  [](int){ state.stop_flag.store(true); state.cv.notify_all(); });
@@ -819,15 +788,11 @@ int main(int argc, char** argv) {
     Hashrate hr10(std::chrono::seconds(10));
     Hashrate hr60(std::chrono::seconds(60));
     Hashrate hr900(std::chrono::seconds(900));
-    std::array<uint8_t, 32> current_seed{};
 
-    auto spawn_workers = [&]() {
-        workers.clear();
-        for (size_t i = 0; i < threads; ++i) {
-            workers.emplace_back(worker_main, i, threads, cache, dataset, flags,
-                                  std::ref(state), &hr10, &hr60, &hr900);
-        }
-    };
+    for (size_t i = 0; i < threads; ++i) {
+        workers.emplace_back(worker_main, i, threads,
+                              std::ref(state), &hr10, &hr60, &hr900);
+    }
 
     // Background speed-line printer.
     std::thread speed_thread([&]() {
@@ -910,11 +875,9 @@ int main(int argc, char** argv) {
             auto prev    = hex_decode(t.value("previousblockhash", std::string()));
             auto merkle  = hex_decode(t.value("merkle_root",       std::string()));
             auto target  = hex_decode(t.value("target",            std::string()));
-            auto seedhex = hex_decode(t.value("seed_hash",         std::string()));
             auto cbhex   = hex_decode(t.value("coinbase_tx",       std::string()));
 
-            if (prev.size() != 32 || merkle.size() != 32 || target.size() != 32 ||
-                seedhex.size() != 32) {
+            if (prev.size() != 32 || merkle.size() != 32 || target.size() != 32) {
                 Log::warn(tag::net(), "malformed template");
                 continue;
             }
@@ -935,46 +898,7 @@ int main(int argc, char** argv) {
             // Target in the RPC response is little-endian display; flip to big-endian
             // so the byte-wise memcmp against the hash is correct.
             for (size_t i = 0; i < 32; ++i) j->target_be[i] = target[31 - i];
-            std::memcpy(j->seed.data(), seedhex.data(), 32);
             j->coinbase_tx = cbhex;
-
-            // If the seed changed, re-initialise the RandomX cache + dataset.
-            if (j->seed != current_seed) {
-                // Ask workers to exit so we can swap the cache safely.
-                state.respawn_flag.store(true);
-                for (auto& t : workers) if (t.joinable()) t.join();
-                state.respawn_flag.store(false);
-
-                auto t0 = std::chrono::steady_clock::now();
-                randomx_init_cache(cache, j->seed.data(), j->seed.size());
-                auto t1 = std::chrono::steady_clock::now();
-                Log::info(tag::randomx(), "cache seed=" CYAN_BOLD_S "%s" CLEAR
-                          "  (%" PRId64 " ms)",
-                          hex_encode(j->seed.data(), 32).substr(0, 16).c_str(),
-                          static_cast<int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()));
-
-                if (dataset) {
-                    auto d0 = std::chrono::steady_clock::now();
-                    unsigned long total_items = randomx_dataset_item_count();
-                    // Parallelise dataset init across `threads`.
-                    std::vector<std::thread> init_threads;
-                    for (size_t ti = 0; ti < threads; ++ti) {
-                        unsigned long start = total_items * ti / threads;
-                        unsigned long end   = total_items * (ti + 1) / threads;
-                        init_threads.emplace_back([cache, dataset, start, end]() {
-                            randomx_init_dataset(dataset, cache, start, end - start);
-                        });
-                    }
-                    for (auto& th : init_threads) th.join();
-                    auto d1 = std::chrono::steady_clock::now();
-                    Log::info(tag::randomx(), "dataset ready (%.0f MB)  (%" PRId64 " ms)",
-                              (total_items * 64.0) / (1024.0 * 1024.0),
-                              static_cast<int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(d1 - d0).count()));
-                }
-
-                current_seed = j->seed;
-                spawn_workers();
-            }
 
             {
                 std::lock_guard<std::mutex> lock(state.mx);
@@ -988,7 +912,7 @@ int main(int argc, char** argv) {
                 MAGENTA_BOLD("new job") " from " WHITE_BOLD_S "%s:%u" CLEAR
                 "  height " CYAN_BOLD_S "%" PRIu64 CLEAR
                 "  diff "   CYAN_BOLD_S "%s" CLEAR
-                "  algo " WHITE_BOLD("randomx"),
+                "  algo " WHITE_BOLD("keccak-256d"),
                 ep.host.c_str(), ep.port, j->height, diff_buf);
         }
 
@@ -1001,9 +925,6 @@ int main(int argc, char** argv) {
     state.cv.notify_all();
     for (auto& t : workers) if (t.joinable()) t.join();
     if (speed_thread.joinable()) speed_thread.join();
-
-    if (dataset) randomx_release_dataset(dataset);
-    randomx_release_cache(cache);
 
     Log::info(tag::miner(), "stopped. total=%" PRIu64 "  accepted=%" PRIu64 "  rejected=%" PRIu64,
               state.submits.load(), state.accepted.load(), state.rejected.load());

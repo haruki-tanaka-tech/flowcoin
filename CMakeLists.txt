@@ -98,20 +98,6 @@ set(LIBUV_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LIBUV_BUILD_BENCH OFF CACHE BOOL "" FORCE)
 add_subdirectory(src/libuv)
 
-# --- RandomX (CPU-only Proof-of-Work from Monero project) ---
-# Vendored in src/randomx at v2.0 (BSD-3-Clause).
-# Provides the `randomx` static library target.
-add_subdirectory(src/randomx EXCLUDE_FROM_ALL)
-# RandomX is vendor code — same treatment as sqlite/zstd/libuv: suppress our
-# strict warning flags (-Wall -Wextra -Wpedantic propagate from the root
-# add_compile_options into subdirs). Their warnings are upstream's concern.
-target_compile_options(randomx PRIVATE -w)
-# RandomX exports include path via its own target; we re-expose it through the
-# alias "flowcoin_randomx" so downstream targets get both the lib and headers.
-add_library(flowcoin_randomx INTERFACE)
-target_link_libraries(flowcoin_randomx INTERFACE randomx)
-target_include_directories(flowcoin_randomx INTERFACE "${CMAKE_SOURCE_DIR}/src/randomx/src")
-
 # --- json (header-only nlohmann/json) ---
 add_library(json INTERFACE)
 target_include_directories(json INTERFACE src/json)
@@ -198,7 +184,7 @@ add_library(flowcoin_consensus STATIC
     src/consensus/pow.cpp
 )
 target_include_directories(flowcoin_consensus PUBLIC src)
-target_link_libraries(flowcoin_consensus PUBLIC flowcoin_hash flowcoin_util zstd flowcoin_randomx)
+target_link_libraries(flowcoin_consensus PUBLIC flowcoin_hash flowcoin_util zstd)
 
 # --- flowcoin_primitives ---
 add_library(flowcoin_primitives STATIC
@@ -280,7 +266,7 @@ add_library(flowcoin_mining STATIC
     src/mining/stratum.cpp
 )
 target_include_directories(flowcoin_mining PUBLIC src)
-target_link_libraries(flowcoin_mining PUBLIC flowcoin_consensus flowcoin_chain flowcoin_crypto flowcoin_randomx)
+target_link_libraries(flowcoin_mining PUBLIC flowcoin_consensus flowcoin_chain flowcoin_crypto)
 
 # --- flowcoin_script ---
 add_library(flowcoin_script STATIC
@@ -471,7 +457,7 @@ if(WIN32)
 endif()
 
 # =============================================================================
-# FlowCoin Miner — standalone CPU-only RandomX miner (XMRig-style CLI).
+# FlowCoin Miner — standalone CPU-only Keccak-256d miner (CLI).
 # =============================================================================
 option(BUILD_MINER "Build flowcoin-miner" ON)
 
@@ -481,12 +467,10 @@ if(BUILD_MINER)
     )
     target_include_directories(flowcoin-miner PRIVATE
         src
-        src/randomx/src
     )
     target_compile_definitions(flowcoin-miner PRIVATE
         ED25519_CUSTOMHASH ED25519_CUSTOMRNG)
     target_link_libraries(flowcoin-miner PRIVATE
-        flowcoin_randomx
         ed25519
         xkcp
         json
@@ -527,7 +511,7 @@ include(GNUInstallDirs)
 
 # All FlowCoin-specific install rules go into the "flowcoin" component so we
 # can run `cmake --install build --component flowcoin` without also dragging
-# in libuv's or RandomX's own install rules.
+# in libuv's own install rules.
 
 install(TARGETS flowcoind flowcoin-cli flowcoin-tx
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -564,7 +548,7 @@ set(CPACK_PACKAGE_NAME "flowcoin")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_VENDOR "FlowCoin")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
-    "FlowCoin — CPU-only RandomX Proof-of-Work cryptocurrency")
+    "FlowCoin — CPU-only Keccak-256d Proof-of-Work cryptocurrency")
 set(CPACK_PACKAGE_HOMEPAGE_URL
     "https://github.com/KristianPilatovich/flowcoin")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/COPYING")
@@ -586,7 +570,7 @@ else()
     set(CPACK_GENERATOR "TGZ")
 endif()
 
-# Only pack the "flowcoin" component (no libuv / RandomX install leakage).
+# Only pack the "flowcoin" component (no libuv install leakage).
 set(CPACK_COMPONENTS_ALL flowcoin)
 set(CPACK_COMPONENTS_GROUPING IGNORE)
 set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
@@ -606,8 +590,8 @@ if(BUILD_TESTS)
     enable_testing()
     add_executable(flowcoin_tests
         src/test/test_main.cpp
+        src/test/test_pow.cpp
         src/test/test_keccak.cpp
-        src/test/test_randomx.cpp
         src/test/test_arith_uint256.cpp
         src/test/test_ed25519.cpp
         src/test/test_slip0010.cpp

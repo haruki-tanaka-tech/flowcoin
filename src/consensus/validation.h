@@ -3,7 +3,7 @@
 //
 // Consensus validation for FlowCoin blocks and headers.
 //
-// Implements RandomX Proof-of-Work consensus checks:
+// Implements Keccak-256d Proof-of-Work consensus checks:
 //
 // CHECK  FIELD              RULE                                     ERROR CODE
 // -----  -----------------  ---------------------------------------  ----------
@@ -12,7 +12,7 @@
 //  3     timestamp          > median-time-past of last 11 blocks     time-too-old
 //  4     timestamp          <= adjusted_time + MAX_FUTURE_TIME       time-too-new
 //  5     nbits              == get_next_work_required(...)            bad-diffbits
-//  6     PoW                RandomX(header[0..91], pow_seed) <= tgt  high-hash
+//  6     PoW                keccak256d(header[0..91]) <= target      high-hash
 //  7     miner_sig          Ed25519Verify(pubkey, header[0..91])     bad-signature
 //
 // check_header() validates checks 1-7 (no block body needed).
@@ -123,10 +123,6 @@ struct BlockContext {
 
     // Timestamp of block at start of current retarget period
     int64_t     retarget_first_time = 0;
-
-    // RandomX PoW seed: block hash at rx_seed_height(header.height).
-    // Caller looks this up from the block index before validation.
-    uint256     pow_seed;
 
     // True if we are validating the genesis block (no parent exists).
     bool        is_genesis = false;

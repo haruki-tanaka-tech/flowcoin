@@ -2,7 +2,7 @@
 // Distributed under the MIT software license.
 //
 // Complete consensus validation for FlowCoin blocks.
-// RandomX Proof-of-Work consensus.
+// Keccak-256d Proof-of-Work consensus.
 
 #include "validation.h"
 #include "difficulty.h"
@@ -72,13 +72,13 @@ bool check_header(const CBlockHeader& header, const BlockContext& ctx,
     } // end non-genesis checks
 
     // -----------------------------------------------------------------------
-    // Check 6: Proof-of-Work -- RandomX(header[0..91], ctx.pow_seed) <= target
+    // Check 6: Proof-of-Work -- keccak256d(header[0..91]) <= target
     // -----------------------------------------------------------------------
-    if (!CheckProofOfWork(header, ctx.pow_seed)) {
+    if (!CheckProofOfWork(header)) {
         LogWarn("consensus", "PoW check FAILED at height %lu nbits=0x%08x",
                 (unsigned long)header.height, header.nbits);
         return state.invalid(ValidationResult::HEADER_INVALID, "high-hash",
-            "RandomX hash exceeds difficulty target");
+            "hash exceeds difficulty target");
     }
 
     // -----------------------------------------------------------------------

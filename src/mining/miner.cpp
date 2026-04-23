@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Kristian Pilatovich
 // Distributed under the MIT software license.
 //
-// In-process RandomX miner — CPU thread pool, one VM per thread (thread_local
-// inside consensus::ComputePowHash), nonce space partitioned by thread id.
+// In-process Keccak-256d miner — CPU thread pool, nonce space partitioned by
+// thread id.
 
 #include "mining/miner.h"
 #include "mining/submitblock.h"
@@ -10,8 +10,8 @@
 #include "chain/blockindex.h"
 #include "consensus/difficulty.h"
 #include "consensus/params.h"
-#include "consensus/pow.h"
 #include "crypto/sign.h"
+#include "hash/keccak.h"
 #include "logging.h"
 #include "util/arith_uint256.h"
 #include "util/random.h"
@@ -32,7 +32,7 @@ namespace flow {
 
 // ===========================================================================
 // Target decoding -- produce a big-endian uint256 suitable for direct
-// lexicographic comparison against the raw RandomX hash output.
+// lexicographic comparison against the raw keccak256d hash output.
 // ===========================================================================
 
 namespace {
@@ -141,9 +141,7 @@ SubmitResult Miner::mine_cycle() {
     std::memcpy(block.miner_pubkey.data(), cfg.miner_pubkey.data(), 32);
     block.merkle_root = block.compute_merkle_root();
 
-    // 3. Resolve RandomX seed and decoded target
-    uint256 seed = get_seed_for_height(block.height);
-
+    // 3. Decode target
     uint256 target_be;
     if (!decode_target_be(block.nbits, target_be)) {
         result.reject_reason = "bad-nbits";
@@ -152,7 +150,7 @@ SubmitResult Miner::mine_cycle() {
     }
 
     // 4. Scan nonce space
-    NonceSearchResult ns = search_nonce(block, target_be, seed);
+    NonceSearchResult ns = search_nonce(block, target_be);
     if (!ns.found) {
         result.reject_reason = "nonce-exhausted";
         result.height = block.height;
@@ -199,12 +197,11 @@ void Miner::update_config(const MinerConfig& config) {
 }
 
 // ===========================================================================
-// search_nonce -- multi-threaded scan with thread-local RandomX VMs
+// search_nonce -- multi-threaded scan with keccak256d
 // ===========================================================================
 
 NonceSearchResult Miner::search_nonce(CBlockHeader& header,
                                        const uint256& target_be,
-                                       const uint256& seed,
                                        uint32_t start_nonce,
                                        uint32_t max_tries) {
     MinerConfig cfg_snap;
@@ -236,8 +233,7 @@ NonceSearchResult Miner::search_nonce(CBlockHeader& header,
             buf[86] = static_cast<uint8_t>(nonce >> 16);
             buf[87] = static_cast<uint8_t>(nonce >> 24);
 
-            uint256 pow_hash = consensus::ComputePowHash(
-                buf.data(), buf.size(), seed);
+            uint256 pow_hash = keccak256d(buf.data(), buf.size());
             ++local_tried;
 
             if (pow_hash <= target_be) {
@@ -291,18 +287,6 @@ bool Miner::sign_block(CBlockHeader& header) {
 }
 
 // ===========================================================================
-// get_seed_for_height
-// ===========================================================================
-
-uint256 Miner::get_seed_for_height(uint64_t child_height) const {
-    uint64_t seed_h = consensus::rx_seed_height(child_height);
-    const CBlockIndex* node = chain_.tip();
-    while (node && node->height > seed_h) node = node->prev;
-    if (node && node->height == seed_h) return node->hash;
-    return uint256{};
-}
-
-// ===========================================================================
 // Internal bookkeeping
 // ===========================================================================
 
@@ -333,12 +317,10 @@ void Miner::emit_status(const std::string& message) {
 // ===========================================================================
 
 double benchmark_hashrate(int duration_ms) {
-    // Use a fresh 92-byte buffer and a zero seed. ComputePowHash will create
-    // a cache + thread-local VM on first call; include cache init time in
-    // the measurement window for an honest end-to-end number.
+    // Use a fresh 92-byte buffer. Keccak-256d is fast so this gives an
+    // accurate end-to-end number.
     std::vector<uint8_t> buf(BLOCK_HEADER_UNSIGNED_SIZE);
     GetRandBytes(buf.data(), buf.size());
-    uint256 seed{};
 
     auto start = std::chrono::steady_clock::now();
     auto deadline = start + std::chrono::milliseconds(duration_ms);
@@ -347,7 +329,7 @@ double benchmark_hashrate(int duration_ms) {
     while (std::chrono::steady_clock::now() < deadline) {
         uint32_t nonce = static_cast<uint32_t>(count);
         std::memcpy(buf.data() + 84, &nonce, 4);
-        (void)consensus::ComputePowHash(buf.data(), buf.size(), seed);
+        (void)keccak256d(buf.data(), buf.size());
         ++count;
     }
 

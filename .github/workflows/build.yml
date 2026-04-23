@@ -15,7 +15,7 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake g++
 
-      - name: Build
+      - name: Build all (with miner)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=ON
           cmake --build build -j$(nproc)
@@ -28,13 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build
+      - name: Build (without miner)
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=ON
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_MINER=OFF
           cmake --build build -j$(sysctl -n hw.ncpu)
 
       - name: Verify binaries
-        run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx build/flowcoin-miner
+        run: ls -lh build/flowcoind build/flowcoin-cli build/flowcoin-tx
 
   build-windows:
     runs-on: windows-2022
@@ -53,11 +53,11 @@ jobs:
             mingw-w64-x86_64-cmake
             make
 
-      - name: Build
+      - name: Build (without miner)
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" -DBUILD_MINER=ON \
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" -DBUILD_MINER=OFF \
                 -DCMAKE_EXE_LINKER_FLAGS="-static" -DCMAKE_C_FLAGS="-static" -DCMAKE_CXX_FLAGS="-static"
           cmake --build build -j$(nproc)
 
       - name: Verify binaries
-        run: ls -lh build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe build/flowcoin-miner.exe
+        run: ls -lh build/flowcoind.exe build/flowcoin-cli.exe build/flowcoin-tx.exe

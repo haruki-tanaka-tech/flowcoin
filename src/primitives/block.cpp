@@ -9,7 +9,6 @@
 #include "../util/arith_uint256.h"
 #include "../consensus/params.h"
 #include "../consensus/difficulty.h"
-#include "../consensus/pow.h"
 #include "../chain/blockindex.h"
 
 #include <algorithm>
@@ -98,15 +97,6 @@ std::vector<uint8_t> CBlockHeader::get_unsigned_data() const {
 uint256 CBlockHeader::get_hash() const {
     auto data = get_unsigned_data();
     return keccak256d(data.data(), data.size());
-}
-
-// ---------------------------------------------------------------------------
-// get_pow_hash -- RandomX(unsigned header, seed)
-// ---------------------------------------------------------------------------
-
-uint256 CBlockHeader::get_pow_hash(const uint256& seed) const {
-    auto data = get_unsigned_data();
-    return consensus::ComputePowHash(data.data(), data.size(), seed);
 }
 
 // ---------------------------------------------------------------------------

@@ -3,16 +3,10 @@
 //
 // Block header and block primitives for FlowCoin.
 //
-// FlowCoin uses two distinct hashes per block:
+// FlowCoin uses keccak256d(header[0..91]) as both block_id and PoW hash.
+// The PoW check simply verifies that block_id <= target(nbits).
 //
-//   block_id  = keccak256d(header[0..91])      -- cheap, used for chain refs,
-//                                                 P2P, merkle, RPC, indexing.
-//   pow_hash  = RandomX(header[0..91], seed)   -- CPU-only memory-hard PoW,
-//                                                 compared against target.
-//
-// `get_hash()` returns the block_id. `get_pow_hash(seed)` returns the PoW hash;
-// the caller provides the seed, which is the block hash at the seed height
-// computed by `flow::consensus::rx_seed_height(height)`.
+// `get_hash()` returns the block_id / PoW hash.
 //
 // Header layout (fixed 188 bytes):
 //   Bytes   0- 31: prev_hash        (32 bytes)
@@ -81,17 +75,12 @@ struct CBlockHeader {
     CBlockHeader() = default;
 
     /** Serialize the unsigned portion of the header (bytes 0-91, 92 bytes).
-     *  This is the data that gets signed, hashed, and fed to RandomX. */
+     *  This is the data that gets signed and hashed (keccak256d). */
     std::vector<uint8_t> get_unsigned_data() const;
 
-    /** Block ID: keccak256d of the unsigned header data. Cheap, used for
-     *  chain references, P2P relay, merkle proofs, and indexing. */
+    /** Block ID / PoW hash: keccak256d of the unsigned header data. Used for
+     *  chain references, P2P relay, merkle proofs, indexing, and PoW check. */
     uint256 get_hash() const;
-
-    /** PoW hash: RandomX(unsigned_data, seed). Expensive (single hash ~1 ms in
-     *  light mode). `seed` must be the block hash at the RandomX seed height
-     *  for this block (see flow::consensus::rx_seed_height). */
-    uint256 get_pow_hash(const uint256& seed) const;
 
     /** Serialize the full 188-byte header (unsigned portion + pubkey + signature). */
     std::vector<uint8_t> serialize() const;

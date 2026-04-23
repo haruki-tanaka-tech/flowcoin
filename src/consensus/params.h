@@ -3,7 +3,7 @@
 //
 // Consensus parameters for the FlowCoin network.
 // Every constant is derived and documented. Modeled after Bitcoin Core's
-// consensus/params.h with RandomX Proof-of-Work.
+// consensus/params.h with Keccak-256d Proof-of-Work.
 
 #ifndef FLOWCOIN_CONSENSUS_PARAMS_H
 #define FLOWCOIN_CONSENSUS_PARAMS_H
@@ -62,22 +62,16 @@ constexpr int      MAX_RETARGET_FACTOR = 4;
 
 // powLimit expressed as compact nBits — the easiest target the network
 // ever accepts (difficulty retargets up from here but never below).
-// Same value as Bitcoin's difficulty=1: target = 0xffff * 256^26 ≈ 2^224.
+// Same value as Bitcoin's difficulty=1: target = 0x00ffff * 256^(0x1d-3) ≈ 2^224.
 //
-// The target is hash-function independent — a 256-bit PoW output is treated
-// as a uniform random integer regardless of whether it came from SHA-256d
-// or RandomX. What differs is the wall-clock time to reach the target:
+// Keccak-256d is a fast hash (~10-50 MH/s per CPU core), so difficulty 1
+// gives a practical bootstrap time:
 //
-//   RandomX @ 1500 H/s per CPU core
+//   Keccak-256d @ 30 MH/s per core
 //     → expected 2^32 hashes per block at difficulty 1
-//     → solo single-core: ~33 days per block (bootstrap is slow)
-//     → 100 CPU cores (150 kH/s): ~8 hours per block
-//     → ~4000 cores (6 MH/s) give the 10-minute target
-//
-// Blocks before the first retarget (2016 blocks, 14 days at target) will
-// be much slower until enough miners join. This is the intended behaviour:
-// the network floor catches up with hashrate rather than the other way.
-constexpr uint32_t INITIAL_NBITS       = 0x1e07ffff;
+//     → solo single-core: ~143 seconds per block
+//     → difficulty will retarget up to match the 10-minute target
+constexpr uint32_t INITIAL_NBITS       = 0x1d00ffff;
 
 // ---- Block Limits -----------------------------------------------------------
 
