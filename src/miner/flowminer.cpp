@@ -337,10 +337,22 @@ struct MinerKey {
     uint8_t pk[32]{};
 };
 
-static std::string default_key_path() {
+static std::string default_datadir() {
+#ifdef _WIN32
+    const char* appdata = std::getenv("APPDATA");
+    if (appdata) return std::string(appdata) + "\\FlowCoin";
+#endif
     const char* home = std::getenv("HOME");
     if (!home) home = "/tmp";
-    return std::string(home) + "/.flowcoin/miner_key";
+    return std::string(home) + "/.flowcoin";
+}
+
+static std::string default_key_path() {
+    return default_datadir() + "/miner_key";
+}
+
+static std::string default_cookie_path() {
+    return default_datadir() + "/.cookie";
 }
 
 static bool read_file(const std::string& path, std::vector<uint8_t>& out, size_t expect) {
@@ -746,9 +758,14 @@ int main(int argc, char** argv) {
             Log::error(tag::config(), "cannot read cookie file %s", a.cookie.c_str());
             return 3;
         }
-    } else {
+    } else if (!a.user.empty() || !a.pass.empty()) {
         ep.auth.user = a.user;
         ep.auth.pass = a.pass;
+    } else {
+        std::string auto_cookie = default_cookie_path();
+        if (load_cookie(auto_cookie, ep.auth)) {
+            Log::info(tag::config(), "using cookie auth from %s", auto_cookie.c_str());
+        }
     }
 
     CpuInfo cpu = detect_cpu();
