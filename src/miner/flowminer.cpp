@@ -29,6 +29,7 @@ typedef int socklen_t;
 #define close closesocket
 #define isatty _isatty
 #define fileno _fileno
+typedef long long ssize_t;
 #else
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -246,11 +247,19 @@ static std::optional<std::string> http_post(const RpcEndpoint& ep, const std::st
         return std::nullopt;
     }
 
+#ifdef _WIN32
+    SOCKET sock = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    if (sock == INVALID_SOCKET) { ::freeaddrinfo(ai); return std::nullopt; }
+    if (::connect(sock, ai->ai_addr, (int)ai->ai_addrlen) == SOCKET_ERROR) {
+        ::closesocket(sock); ::freeaddrinfo(ai); return std::nullopt;
+    }
+#else
     int sock = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
     if (sock < 0) { ::freeaddrinfo(ai); return std::nullopt; }
     if (::connect(sock, ai->ai_addr, ai->ai_addrlen) < 0) {
         ::close(sock); ::freeaddrinfo(ai); return std::nullopt;
     }
+#endif
     ::freeaddrinfo(ai);
 
     std::string req;
@@ -268,7 +277,7 @@ static std::optional<std::string> http_post(const RpcEndpoint& ep, const std::st
 
     size_t sent = 0;
     while (sent < req.size()) {
-        ssize_t n = ::send(sock, req.data() + sent, req.size() - sent, 0);
+        int n = ::send(sock, req.data() + sent, (int)(req.size() - sent), 0);
         if (n <= 0) { ::close(sock); return std::nullopt; }
         sent += static_cast<size_t>(n);
     }
@@ -276,7 +285,7 @@ static std::optional<std::string> http_post(const RpcEndpoint& ep, const std::st
     std::string resp;
     char buf[4096];
     for (;;) {
-        ssize_t n = ::recv(sock, buf, sizeof(buf), 0);
+        int n = ::recv(sock, buf, sizeof(buf), 0);
         if (n <= 0) break;
         resp.append(buf, static_cast<size_t>(n));
     }
