@@ -9,11 +9,11 @@
 //
 // Build:
 //   Linux:
-//     g++ -O3 -std=c++20 flowminer-opencl.cpp -o flowminer-opencl -lOpenCL
+//     g++ -O3 -std=c++17 flowminer-opencl.cpp ../crypto/ed25519.c ../hash/KeccakSponge.c ../hash/KeccakP-1600-reference.c ../hash/KeccakHash.c -I../crypto -I../hash -DED25519_CUSTOMHASH -DED25519_CUSTOMRNG -o flowminer-opencl -lOpenCL
 //   Windows (MSVC):
-//     cl /O2 /std:c++20 flowminer-opencl.cpp /link OpenCL.lib
+//     cl /O2 /std:c++17 flowminer-opencl.cpp ../crypto/ed25519.c ../hash/KeccakSponge.c ../hash/KeccakP-1600-reference.c ../hash/KeccakHash.c /I../crypto /I../hash /DED25519_CUSTOMHASH /DED25519_CUSTOMRNG /link OpenCL.lib
 //   Windows (MinGW):
-//     g++ -O3 -std=c++20 flowminer-opencl.cpp -o flowminer-opencl.exe -lOpenCL
+//     g++ -O3 -std=c++17 flowminer-opencl.cpp ../crypto/ed25519.c ../hash/KeccakSponge.c ../hash/KeccakP-1600-reference.c ../hash/KeccakHash.c -I../crypto -I../hash -DED25519_CUSTOMHASH -DED25519_CUSTOMRNG -o flowminer-opencl.exe -lOpenCL
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -39,6 +39,10 @@ typedef long long ssize_t;
 #define close_socket close
 #endif
 
+extern "C" {
+#include "../crypto/ed25519.h"
+}
+
 #ifdef __APPLE__
 #include <OpenCL/opencl.h>
 #else
@@ -50,6 +54,7 @@ typedef long long ssize_t;
 #include <chrono>
 #include <cinttypes>
 #include <csignal>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -57,6 +62,7 @@ typedef long long ssize_t;
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -69,6 +75,68 @@ typedef long long ssize_t;
 #define FLOWCOIN_GPU_MINER_VERSION "0.1.0"
 
 static constexpr size_t HEADER_UNSIGNED = 92;
+static constexpr size_t HEADER_SIGNED   = 188;
+
+// =========================================================================
+// ANSI color codes
+// =========================================================================
+
+static bool g_colors = false;
+
+#define CSI              "\x1B["
+#define CLEAR            CSI "0m"
+
+#define BLACK_BOLD_S     CSI "1;30m"
+#define RED_S            CSI "0;31m"
+#define RED_BOLD_S       CSI "1;31m"
+#define GREEN_S          CSI "0;32m"
+#define GREEN_BOLD_S     CSI "1;32m"
+#define YELLOW_S         CSI "0;33m"
+#define YELLOW_BOLD_S    CSI "1;33m"
+#define BLUE_S           CSI "0;34m"
+#define BLUE_BOLD_S      CSI "1;34m"
+#define MAGENTA_S        CSI "0;35m"
+#define MAGENTA_BOLD_S   CSI "1;35m"
+#define CYAN_S           CSI "0;36m"
+#define CYAN_BOLD_S      CSI "1;36m"
+#define WHITE_S          CSI "0;37m"
+#define WHITE_BOLD_S     CSI "1;37m"
+
+#define BLUE_BG_S        CSI "44m"
+#define CYAN_BG_BOLD_S   CSI "46;1m"
+#define GREEN_BG_BOLD_S  CSI "42;1m"
+#define MAGENTA_BG_BOLD_S CSI "45;1m"
+#define YELLOW_BG_BOLD_S CSI "43;1m"
+#define RED_BG_BOLD_S    CSI "41;1m"
+
+// ---------------------------------------------------------------------------
+// ANSI stripping utility
+// ---------------------------------------------------------------------------
+
+static std::string strip_ansi(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ) {
+        if (s[i] == '\x1B' && i + 1 < s.size() && s[i + 1] == '[') {
+            i += 2;
+            while (i < s.size() && s[i] != 'm') ++i;
+            if (i < s.size()) ++i;
+        } else {
+            out += s[i++];
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Tag strings (badge-style, like XMRig / CPU miner)
+// ---------------------------------------------------------------------------
+
+static const char* tag_config()  { return CYAN_BG_BOLD_S    WHITE_BOLD_S " config  " CLEAR; }
+static const char* tag_net()     { return BLUE_BG_S         WHITE_BOLD_S " net     " CLEAR " "; }
+static const char* tag_opencl()  { return GREEN_BG_BOLD_S   WHITE_BOLD_S " opencl  " CLEAR; }
+static const char* tag_miner()   { return MAGENTA_BG_BOLD_S WHITE_BOLD_S " miner   " CLEAR; }
+static const char* tag_signal()  { return YELLOW_BG_BOLD_S  WHITE_BOLD_S " signal  " CLEAR; }
 
 // =========================================================================
 // Embedded OpenCL kernel source
@@ -590,6 +658,50 @@ static std::string default_cookie_path() {
     return default_datadir() + "/.cookie";
 }
 
+static std::string default_key_path() {
+    return default_datadir() + "/miner_key";
+}
+
+// =========================================================================
+// Miner key (Ed25519)
+// =========================================================================
+
+struct MinerKey {
+    uint8_t sk[32]{};
+    uint8_t pk[32]{};
+};
+
+static bool read_file(const std::string& path, std::vector<uint8_t>& out, size_t expect) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) return false;
+    out.resize(expect);
+    f.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(expect));
+    return f.gcount() == static_cast<std::streamsize>(expect);
+}
+
+static bool write_file(const std::string& path, const uint8_t* data, size_t n) {
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) return false;
+    f.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(n));
+    return f.good();
+}
+
+static bool load_or_generate_key(const std::string& path, MinerKey& out) {
+    std::vector<uint8_t> raw;
+    if (read_file(path, raw, 32)) {
+        std::memcpy(out.sk, raw.data(), 32);
+        ed25519_publickey(out.sk, out.pk);
+        return true;
+    }
+    // Generate a fresh keypair.
+    std::random_device rd;
+    for (int i = 0; i < 32; ++i) out.sk[i] = static_cast<uint8_t>(rd());
+    ed25519_publickey(out.sk, out.pk);
+    if (!write_file(path, out.sk, 32)) return false;
+    return true;
+}
+
 // =========================================================================
 // Hashrate formatting
 // =========================================================================
@@ -619,12 +731,54 @@ static std::string timestamp() {
 #else
     localtime_r(&tt, &tm_buf);
 #endif
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
-                  tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
-                  tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
-                  static_cast<int>(ms.count()));
+    char buf[128];
+    if (g_colors) {
+        std::snprintf(buf, sizeof(buf),
+                      "%04d-%02d-%02d %02d:%02d:%02d" BLACK_BOLD_S ".%03d" CLEAR,
+                      tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
+                      tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
+                      static_cast<int>(ms.count()));
+    } else {
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
+                      tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
+                      tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
+                      static_cast<int>(ms.count()));
+    }
     return buf;
+}
+
+// Helper: format a string, stripping ANSI if colors are disabled
+static std::string cfmt(const char* fmt, ...) {
+    char buf[2048];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    return g_colors ? std::string(buf) : strip_ansi(buf);
+}
+
+static void clog(const char* tag, const char* fmt, ...) {
+    char body[2048];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(body, sizeof(body), fmt, ap);
+    va_end(ap);
+    std::string tstr = g_colors ? std::string(tag) : strip_ansi(tag);
+    std::string bstr = g_colors ? std::string(body) : strip_ansi(body);
+    std::printf("[%s] %s %s\n", timestamp().c_str(), tstr.c_str(), bstr.c_str());
+    std::fflush(stdout);
+}
+
+static void clog_err(const char* tag, const char* fmt, ...) {
+    char body[2048];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(body, sizeof(body), fmt, ap);
+    va_end(ap);
+    std::string tstr = g_colors ? std::string(tag) : strip_ansi(tag);
+    std::string bstr = g_colors ? std::string(body) : strip_ansi(body);
+    std::fprintf(stderr, "[%s] %s %s\n", timestamp().c_str(), tstr.c_str(), bstr.c_str());
+    std::fflush(stderr);
 }
 
 // =========================================================================
@@ -727,28 +881,12 @@ static bool parse_template(const std::string& result_json, BlockTemplate& bt) {
 }
 
 // =========================================================================
-// Block submission (unsigned header only -- node signs it)
-//
-// NOTE: The GPU miner does NOT have access to the Ed25519 miner key.
-// It submits the raw hex of the unsigned block (header + coinbase).
-// The flowcoind node's submitblock RPC accepts this form and signs
-// the block using its own miner key, just like the CPU miner does
-// on the host side.  If your node requires a pre-signed block,
-// you will need to link against ed25519 and add key management.
-// For now, we submit: 92-byte header + CompactSize(1) + coinbase_tx.
+// Block submission (Ed25519-signed on host side)
 // =========================================================================
 
-static std::string serialize_unsigned_block(const BlockTemplate& bt,
-                                             uint32_t winning_nonce) {
-    // We need to produce the full signed block.
-    // Since the GPU miner is standalone and does not have the Ed25519 key,
-    // we submit the block as a "raw" hex.  The node's submitblock will
-    // handle it.  But for a fully working submission we actually need the
-    // signed block.  We set pubkey to zeros and sig to zeros -- if the
-    // node accepts unsigned blocks (regtest, or if the node is configured
-    // to auto-sign).
-    //
-    // For production use, embed the miner key and sign here.
+static std::string serialize_signed_block(const BlockTemplate& bt,
+                                           uint32_t winning_nonce,
+                                           const MinerKey& key) {
     uint8_t hdr[HEADER_UNSIGNED];
     std::memcpy(hdr, bt.header, HEADER_UNSIGNED);
     hdr[84] = static_cast<uint8_t>(winning_nonce);
@@ -756,17 +894,21 @@ static std::string serialize_unsigned_block(const BlockTemplate& bt,
     hdr[86] = static_cast<uint8_t>(winning_nonce >> 16);
     hdr[87] = static_cast<uint8_t>(winning_nonce >> 24);
 
+    // Sign the 92-byte unsigned header with Ed25519.
+    ed25519_signature sig;
+    ed25519_sign(hdr, HEADER_UNSIGNED, key.sk, key.pk, sig);
+
     std::vector<uint8_t> out;
-    out.reserve(HEADER_UNSIGNED + 32 + 64 + 1 + bt.coinbase_tx.size());
+    out.reserve(HEADER_SIGNED + 1 + bt.coinbase_tx.size());
 
     // 92-byte header
     out.insert(out.end(), hdr, hdr + HEADER_UNSIGNED);
 
-    // 32-byte public key (zeros for unsigned submission)
-    out.insert(out.end(), 32, 0);
+    // 32-byte public key
+    out.insert(out.end(), key.pk, key.pk + 32);
 
-    // 64-byte signature (zeros for unsigned submission)
-    out.insert(out.end(), 64, 0);
+    // 64-byte signature
+    out.insert(out.end(), sig, sig + 64);
 
     // CompactSize(1) + coinbase transaction
     encode_compact_size(out, 1);
@@ -805,9 +947,8 @@ static const char* cl_error_string(cl_int err) {
 #define CL_CHECK(call) do { \
     cl_int _err = (call); \
     if (_err != CL_SUCCESS) { \
-        std::fprintf(stderr, "[%s] ERROR  OpenCL error: %s (%d) at %s:%d\n", \
-                     timestamp().c_str(), cl_error_string(_err), _err, \
-                     __FILE__, __LINE__); \
+        clog_err(tag_opencl(), RED_BOLD_S "OpenCL error: %s (%d) at %s:%d" CLEAR, \
+                 cl_error_string(_err), _err, __FILE__, __LINE__); \
         return 1; \
     } \
 } while (0)
@@ -832,10 +973,12 @@ struct Args {
     std::string pass;
     std::string cookie;
     std::string address;
+    std::string key_path = default_key_path();
     int         device   = 0;
     int         platform = 0;
     size_t      global_work_size = 1 << 20;  // ~1M work items per dispatch
     size_t      local_work_size  = 256;       // work group size
+    bool        colors   = true;
 };
 
 static void print_usage() {
@@ -848,11 +991,13 @@ static void print_usage() {
         "  -p, --pass PASS         HTTP Basic password\n"
         "      --cookie PATH       read auth from cookie file\n"
         "  -a, --address ADDR      coinbase address (default: node's wallet)\n"
+        "      --key PATH          miner signing key (default: ~/.flowcoin/miner_key)\n"
         "  -d, --device N          OpenCL device index (default: 0)\n"
         "      --platform N        OpenCL platform index (default: 0)\n"
         "  -g, --global N          global work size (default: 1048576)\n"
         "  -t, --threads N         local work group size (default: 256)\n"
         "      --list-devices      list available OpenCL devices and exit\n"
+        "      --no-color          disable ANSI colours\n"
         "  -h, --help              this message\n");
 }
 
@@ -936,11 +1081,16 @@ int main(int argc, char** argv) {
         else if (k == "--platform")                 { std::string s; take(s); a.platform = std::stoi(s); }
         else if (k == "-g" || k == "--global")      { std::string s; take(s); a.global_work_size = std::stoul(s); }
         else if (k == "-t" || k == "--threads")     { std::string s; take(s); a.local_work_size = std::stoul(s); }
+        else if (k == "--key")                         take(a.key_path);
         else if (k == "--list-devices")              do_list = true;
+        else if (k == "--no-color")                  a.colors = false;
         else { std::fprintf(stderr, "unknown option: %s\n", k.c_str()); return 2; }
     }
 
     if (do_list) return list_devices();
+
+    // ---- Color support ----
+    g_colors = a.colors && isatty(fileno(stdout));
 
     // ---- Signal handlers ----
     std::signal(SIGINT,  signal_handler);
@@ -951,8 +1101,8 @@ int main(int argc, char** argv) {
     parse_url(a.url, ep);
     if (!a.cookie.empty()) {
         if (!load_cookie(a.cookie, ep.auth)) {
-            std::fprintf(stderr, "[%s] ERROR  cannot read cookie file %s\n",
-                         timestamp().c_str(), a.cookie.c_str());
+            clog_err(tag_config(), RED_BOLD_S "cannot read cookie file %s" CLEAR,
+                     a.cookie.c_str());
             return 3;
         }
     } else if (!a.user.empty() || !a.pass.empty()) {
@@ -961,42 +1111,58 @@ int main(int argc, char** argv) {
     } else {
         std::string auto_cookie = default_cookie_path();
         if (load_cookie(auto_cookie, ep.auth)) {
-            std::printf("[%s] CONFIG  using cookie auth from %s\n",
-                        timestamp().c_str(), auto_cookie.c_str());
+            clog(tag_config(), "using cookie auth from %s", auto_cookie.c_str());
         }
     }
 
+    // ---- Load signing key ----
+    MinerKey miner_key;
+    if (!load_or_generate_key(a.key_path, miner_key)) {
+        clog_err(tag_config(), RED_BOLD_S "cannot load or create miner key at %s" CLEAR,
+                 a.key_path.c_str());
+        return 3;
+    }
+
     // ---- Banner ----
+    auto banner = [](const char* label, const std::string& value) {
+        std::string line = cfmt(GREEN_BOLD_S " * " CLEAR WHITE_BOLD_S "%-13s" CLEAR "%s",
+                                label, value.c_str());
+        std::printf("%s\n", line.c_str());
+    };
     std::printf("\n");
-    std::printf(" * ABOUT         flowminer-opencl/" FLOWCOIN_GPU_MINER_VERSION "\n");
-    std::printf(" * ALGO          keccak-256d\n");
-    std::printf(" * NODE          %s:%u\n", ep.host.c_str(), ep.port);
+    banner("ABOUT",       "flowminer-opencl/" FLOWCOIN_GPU_MINER_VERSION);
+    banner("ALGO",        cfmt(MAGENTA_BOLD_S "keccak-256d" CLEAR));
+    banner("NODE",        cfmt(CYAN_BOLD_S "%s:%u" CLEAR, ep.host.c_str(), ep.port));
     if (!a.address.empty())
-        std::printf(" * ADDRESS       %s\n", a.address.c_str());
-    std::printf(" * PLATFORM      %d\n", a.platform);
-    std::printf(" * DEVICE        %d\n", a.device);
-    std::printf(" * GLOBAL SIZE   %zu\n", a.global_work_size);
-    std::printf(" * LOCAL SIZE    %zu\n", a.local_work_size);
+        banner("ADDRESS", cfmt(CYAN_BOLD_S "%s" CLEAR, a.address.c_str()));
+    banner("PUBKEY",      cfmt(CYAN_BOLD_S "%s" CLEAR,
+                               hex_encode(miner_key.pk, 32).substr(0, 16).c_str()));
+    banner("PLATFORM",    std::to_string(a.platform));
+    banner("DEVICE",      std::to_string(a.device));
+    banner("GLOBAL SIZE", cfmt(CYAN_BOLD_S "%zu" CLEAR, a.global_work_size));
+    banner("LOCAL SIZE",  cfmt(CYAN_BOLD_S "%zu" CLEAR, a.local_work_size));
     std::printf("\n");
+    std::fflush(stdout);
 
     // ---- Initial connectivity check ----
     {
         auto r = rpc_call(ep, "getblockcount", "[]");
         if (!r) {
-            std::fprintf(stderr, "[%s] ERROR  cannot reach node at %s:%u\n",
-                         timestamp().c_str(), ep.host.c_str(), ep.port);
+            clog_err(tag_net(), RED_BOLD_S "cannot reach node at %s:%u" CLEAR,
+                     ep.host.c_str(), ep.port);
             return 4;
         }
-        std::printf("[%s] NET     connected to %s:%u  height=%s\n",
-                    timestamp().c_str(), ep.host.c_str(), ep.port, r->c_str());
+        clog(tag_net(), "connected to " CYAN_BOLD_S "%s:%u" CLEAR
+             "  height=" CYAN_BOLD_S "%s" CLEAR,
+             ep.host.c_str(), ep.port, r->c_str());
     }
 
     // ---- OpenCL setup ----
     cl_uint num_platforms = 0;
     CL_CHECK(clGetPlatformIDs(0, nullptr, &num_platforms));
     if (num_platforms == 0 || static_cast<cl_uint>(a.platform) >= num_platforms) {
-        std::fprintf(stderr, "[%s] ERROR  invalid OpenCL platform %d (found %u)\n",
-                     timestamp().c_str(), a.platform, num_platforms);
+        clog_err(tag_opencl(), RED_BOLD_S "invalid OpenCL platform %d (found %u)" CLEAR,
+                 a.platform, num_platforms);
         return 5;
     }
     std::vector<cl_platform_id> platforms(num_platforms);
@@ -1006,14 +1172,14 @@ int main(int argc, char** argv) {
     {
         char pname[256]{};
         clGetPlatformInfo(plat, CL_PLATFORM_NAME, sizeof(pname), pname, nullptr);
-        std::printf("[%s] OPENCL  platform: %s\n", timestamp().c_str(), pname);
+        clog(tag_opencl(), "platform: %s", pname);
     }
 
     cl_uint num_devices = 0;
     CL_CHECK(clGetDeviceIDs(plat, CL_DEVICE_TYPE_ALL, 0, nullptr, &num_devices));
     if (num_devices == 0 || static_cast<cl_uint>(a.device) >= num_devices) {
-        std::fprintf(stderr, "[%s] ERROR  invalid OpenCL device %d (found %u)\n",
-                     timestamp().c_str(), a.device, num_devices);
+        clog_err(tag_opencl(), RED_BOLD_S "invalid OpenCL device %d (found %u)" CLEAR,
+                 a.device, num_devices);
         return 5;
     }
     std::vector<cl_device_id> devices(num_devices);
@@ -1028,9 +1194,8 @@ int main(int argc, char** argv) {
         clGetDeviceInfo(dev, CL_DEVICE_NAME, sizeof(dname), dname, nullptr);
         clGetDeviceInfo(dev, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(mem), &mem, nullptr);
         clGetDeviceInfo(dev, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cu), &cu, nullptr);
-        std::printf("[%s] OPENCL  device: %s  (%u CUs, %" PRIu64 " MB)\n",
-                    timestamp().c_str(), dname, cu,
-                    static_cast<uint64_t>(mem / (1024 * 1024)));
+        clog(tag_opencl(), "device: %s  (%u CUs, %" PRIu64 " MB)",
+             dname, cu, static_cast<uint64_t>(mem / (1024 * 1024)));
     }
 
     cl_int err;
@@ -1054,15 +1219,15 @@ int main(int argc, char** argv) {
         std::string build_log(log_size, '\0');
         clGetProgramBuildInfo(prog, dev, CL_PROGRAM_BUILD_LOG, log_size,
                               build_log.data(), nullptr);
-        std::fprintf(stderr, "[%s] ERROR  kernel build failed:\n%s\n",
-                     timestamp().c_str(), build_log.c_str());
+        clog_err(tag_opencl(), RED_BOLD_S "kernel build failed:" CLEAR "\n%s",
+                 build_log.c_str());
         return 6;
     }
 
     cl_kernel kernel = clCreateKernel(prog, "mine", &err);
     CL_CHECK(err);
 
-    std::printf("[%s] OPENCL  kernel compiled successfully\n", timestamp().c_str());
+    clog(tag_opencl(), GREEN_BOLD_S "kernel compiled successfully" CLEAR);
 
     // ---- Allocate GPU buffers ----
     cl_mem buf_header = clCreateBuffer(ctx, CL_MEM_READ_ONLY, HEADER_UNSIGNED, nullptr, &err);
@@ -1113,16 +1278,14 @@ int main(int argc, char** argv) {
             std::string params = a.address.empty() ? "[]" : "[\"" + a.address + "\"]";
             auto r = rpc_call(ep, "getblocktemplate", params);
             if (!r) {
-                std::fprintf(stderr, "[%s] NET     getblocktemplate failed\n",
-                             timestamp().c_str());
+                clog_err(tag_net(), YELLOW_BOLD_S "getblocktemplate failed" CLEAR);
                 std::this_thread::sleep_for(std::chrono::seconds(2));
                 continue;
             }
 
             BlockTemplate bt;
             if (!parse_template(*r, bt)) {
-                std::fprintf(stderr, "[%s] NET     malformed template\n",
-                             timestamp().c_str());
+                clog_err(tag_net(), YELLOW_BOLD_S "malformed template" CLEAR);
                 std::this_thread::sleep_for(std::chrono::seconds(2));
                 continue;
             }
@@ -1146,8 +1309,10 @@ int main(int argc, char** argv) {
 
                 char diff_buf[32];
                 std::snprintf(diff_buf, sizeof(diff_buf), "%.3f", bt.difficulty);
-                std::printf("[%s] NET     new job  height=%" PRIu64 "  diff=%s  algo=keccak-256d\n",
-                            timestamp().c_str(), bt.height, diff_buf);
+                clog(tag_net(),
+                     MAGENTA_BOLD_S "new job" CLEAR "  height=" WHITE_BOLD_S "%" PRIu64 CLEAR
+                     "  diff=" CYAN_BOLD_S "%s" CLEAR "  algo=" WHITE_BOLD_S "keccak-256d" CLEAR,
+                     bt.height, diff_buf);
             }
         }
 
@@ -1202,12 +1367,12 @@ int main(int argc, char** argv) {
             CL_CHECK(clEnqueueReadBuffer(queue, buf_result_hash, CL_TRUE, 0,
                                           32, winning_hash, 0, nullptr, nullptr));
 
-            std::printf("[%s] MINER   found nonce=%u  hash=%s\n",
-                        timestamp().c_str(), winning_nonce,
-                        hex_encode(winning_hash, 32).c_str());
+            clog(tag_miner(), "found nonce=" CYAN_BOLD_S "%u" CLEAR
+                 "  hash=" CYAN_BOLD_S "%s" CLEAR,
+                 winning_nonce, hex_encode(winning_hash, 32).c_str());
 
             // Submit block
-            std::string hex = serialize_unsigned_block(current_bt, winning_nonce);
+            std::string hex = serialize_signed_block(current_bt, winning_nonce, miner_key);
             auto ts = std::chrono::steady_clock::now();
             ++submits;
 
@@ -1219,19 +1384,21 @@ int main(int argc, char** argv) {
             bool ok = r && (*r == "null" || *r == "\"\"");
             if (ok) {
                 ++accepted;
-                std::printf("[%s] MINER   accepted (%" PRIu64 "/%" PRIu64
-                            ") height=%" PRIu64 "  nonce=%u  (%" PRId64 " ms)\n",
-                            timestamp().c_str(), accepted, submits,
-                            current_bt.height, winning_nonce,
-                            static_cast<int64_t>(ms));
+                clog(tag_miner(),
+                     GREEN_BOLD_S "accepted" CLEAR " (%" PRIu64 "/%" PRIu64
+                     ") height " WHITE_BOLD_S "%" PRIu64 CLEAR
+                     "  nonce " CYAN_BOLD_S "%u" CLEAR "  (%" PRId64 " ms)",
+                     accepted, submits, current_bt.height, winning_nonce,
+                     static_cast<int64_t>(ms));
             } else {
                 ++rejected;
                 std::string reason = r ? *r : "no response";
-                std::printf("[%s] MINER   rejected (%" PRIu64 "/%" PRIu64
-                            ") height=%" PRIu64 "  %s  (%" PRId64 " ms)\n",
-                            timestamp().c_str(), rejected, submits,
-                            current_bt.height, reason.c_str(),
-                            static_cast<int64_t>(ms));
+                clog(tag_miner(),
+                     RED_BOLD_S "rejected" CLEAR " (%" PRIu64 "/%" PRIu64
+                     ") height " WHITE_BOLD_S "%" PRIu64 CLEAR
+                     "  " RED_S "%s" CLEAR "  (%" PRId64 " ms)",
+                     rejected, submits, current_bt.height, reason.c_str(),
+                     static_cast<int64_t>(ms));
             }
 
             // Force template refresh after submit
@@ -1244,9 +1411,8 @@ int main(int argc, char** argv) {
         if (now - last_speed_print > std::chrono::seconds(10)) {
             double elapsed = std::chrono::duration<double>(now - speed_start).count();
             double rate = elapsed > 0.0 ? static_cast<double>(speed_hashes) / elapsed : 0.0;
-            std::printf("[%s] MINER   speed %s  total=%" PRIu64 "\n",
-                        timestamp().c_str(), format_hashrate(rate).c_str(),
-                        total_hashes);
+            clog(tag_miner(), "speed " CYAN_BOLD_S "%s" CLEAR "  total=" CYAN_BOLD_S "%" PRIu64 CLEAR,
+                 format_hashrate(rate).c_str(), total_hashes);
             speed_hashes = 0;
             speed_start  = now;
             last_speed_print = now;
@@ -1254,7 +1420,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- Cleanup ----
-    std::printf("[%s] SIGNAL  stopping\n", timestamp().c_str());
+    clog(tag_signal(), "stopping");
 
     clReleaseMemObject(buf_header);
     clReleaseMemObject(buf_target);
@@ -1266,9 +1432,9 @@ int main(int argc, char** argv) {
     clReleaseCommandQueue(queue);
     clReleaseContext(ctx);
 
-    std::printf("[%s] MINER   stopped. total=%" PRIu64 "  accepted=%" PRIu64
-                "  rejected=%" PRIu64 "\n",
-                timestamp().c_str(), submits, accepted, rejected);
+    clog(tag_miner(), "stopped. total=%" PRIu64 "  accepted=" GREEN_BOLD_S "%" PRIu64 CLEAR
+         "  rejected=" RED_BOLD_S "%" PRIu64 CLEAR,
+         submits, accepted, rejected);
 
 #ifdef _WIN32
     WSACleanup();
