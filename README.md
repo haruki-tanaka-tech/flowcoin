@@ -2,30 +2,30 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-f2a03d)](COPYING)
 [![Language: C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](https://en.cppreference.com/w/cpp/20)
-[![PoW: RandomX](https://img.shields.io/badge/PoW-RandomX-f2a03d)](https://github.com/tevador/RandomX)
+[![PoW: Keccak-256d](https://img.shields.io/badge/PoW-Keccak--256d-f2a03d)](whitepaper.txt)
 [![Supply: 21M](https://img.shields.io/badge/supply-21M-f2a03d)](whitepaper.txt)
 [![Website](https://img.shields.io/badge/web-flowcoin.org-f2a03d)](https://flowcoin.org)
 [![Telegram](https://img.shields.io/badge/telegram-@flowcoin__main-26A5E4?logo=telegram)](https://t.me/flowcoin_main)
 
-**CPU-only RandomX Proof-of-Work cryptocurrency — Bitcoin architecture, no ASIC, no GPU premium.**
+**Keccak-256d Proof-of-Work cryptocurrency — Bitcoin architecture, fair mining on CPU and GPU.**
 
 Written from scratch in C++20. The node's wire protocol, log format, RPC
 encoding, and address layout are intentionally Bitcoin-Core-compatible so
 existing tooling keeps working; only the PoW function and hash algorithm
 are different.
 
-## Why RandomX
+## Why Keccak-256d
 
 Bitcoin today: six mining pools control ~95% of hashrate because SHA-256d
-fits trivially on silicon. FlowCoin uses RandomX — the same CPU-only PoW
-that has kept Monero mineable on consumer hardware since November 2019
-with no ASIC ever reaching market in the five years since.
+fits trivially on silicon. FlowCoin uses Keccak-256d — a double-hash of
+Keccak-256 (the original Keccak with padding byte 0x01, not NIST SHA-3).
+Keccak-256d is a clean, well-studied hash function that works efficiently
+on both CPUs and GPUs, keeping mining accessible to anyone with commodity
+hardware.
 
-Each hash runs a pseudo-randomly generated program of 256 instructions
-against a 2 GiB dataset in a virtual machine. The bottleneck is DRAM
-bandwidth, not gate count, so specialised hardware gains no edge over a
-commodity CPU. On a 24-thread consumer laptop you get roughly 8 kH/s in
-full-memory mode and the best known GPU port is ~10× worse per watt.
+A modern CPU core achieves roughly 10-50 MH/s; GPUs can also mine
+effectively, broadening participation. The algorithm is simple, auditable,
+and carries no hidden complexity.
 
 Full argument in [whitepaper.txt](whitepaper.txt) §10.
 
@@ -102,7 +102,7 @@ The miner is a standalone process that talks to a running node over
 RPC:
 
 ```bash
-./flowcoin-miner --cookie ~/.flowcoin/.cookie --light
+./flowcoin-miner --cookie ~/.flowcoin/.cookie
 ```
 
 Flags:
@@ -114,9 +114,7 @@ Flags:
 | `--user U --pass P`      | Alternative: explicit credentials               |
 | `--threads N`            | Worker threads (default: all logical cores)     |
 | `--address ADDR`         | Coinbase reward address (default: node's wallet) |
-| `--light`                | 256 MiB cache, ~40 H/s per thread (fast init, low memory) |
-| *(no `--light`)*         | 2 GiB dataset, ~1000–1500 H/s per thread (the real deal) |
-| `--benchmark 10`         | Run RandomX for N seconds and print H/s, exit   |
+| `--benchmark 10`         | Run Keccak-256d for N seconds and print H/s, exit |
 
 At launch difficulty the network floor is `nbits = 0x1d00ffff`
 (difficulty 1). A solo miner on a modern CPU will find one block
@@ -153,9 +151,9 @@ rm -rf ~/.flowcoin
 - **`Is flowcoind running? / Cannot obtain lock on data directory`** —
   another flowcoind instance has the lock. `pkill flowcoind; sleep 1`
   and try again.
-- **Miner shows 0 H/s** — allocating the 2 GiB RandomX dataset takes
-  ~1.5 seconds on a fast CPU. If it stays at 0 for more than 10
-  seconds, switch to `--light` mode.
+- **Miner shows 0 H/s** — the miner should start hashing almost
+  instantly. If it stays at 0 for more than a few seconds, check
+  that `flowcoind` is running and the RPC endpoint is reachable.
 - **No peers** — check that port 9333 isn't firewalled. `./flowcoin-cli
   getpeerinfo` should show entries within a minute.
 
@@ -173,8 +171,7 @@ for prebuilt archives.
 
 | Parameter           | Value                                          |
 |---------------------|------------------------------------------------|
-| PoW                 | RandomX (2 GiB dataset / 256 MiB light)        |
-| Seed rotation       | Every 2048 blocks, 64-block lag                |
+| PoW                 | Keccak-256d                                    |
 | Block ID hash       | keccak256d (SHA-3 style, pad 0x01)             |
 | Block time          | 10 minutes                                     |
 | Block reward        | 50 FLC, halving every 210,000 blocks          |
@@ -202,7 +199,7 @@ Produces `build/flowcoind`, `build/flowcoin-cli`, `build/flowcoin-tx`,
 
 ### Dependencies
 
-- **Linux:** `cmake`, `g++` (≥10). RandomX picks up AES-NI / AVX2 at runtime if present.
+- **Linux:** `cmake`, `g++` (≥10).
 - **macOS:** Xcode command line tools.
 - **Windows:** MSYS2 MinGW64.
 
@@ -212,7 +209,7 @@ Produces `build/flowcoind`, `build/flowcoin-cli`, `build/flowcoin-tx`,
 flowcoind          Full node — P2P, RPC, wallet, block validation
 flowcoin-cli       JSON-RPC command-line client (Bitcoin-cli compatible)
 flowcoin-tx        Offline transaction construction utility
-flowcoin-miner     Standalone CPU-only RandomX miner (XMRig-style output)
+flowcoin-miner     Standalone Keccak-256d miner (XMRig-style output)
 ```
 
 Data directory layout (Bitcoin-Core-compatible, flat):
@@ -245,8 +242,8 @@ Data directory layout (Bitcoin-Core-compatible, flat):
 - **SQLite WAL chainstate** — survives `kill -9`, concurrent reads during
   block validation.
 - **Headers-first IBD** — fast initial block download.
-- **Standalone CPU miner** — solo mining over JSON-RPC with XMRig-style
-  banner + speed line. Full (2 GiB) and light (256 MiB) modes.
+- **Standalone miner** — solo mining over JSON-RPC with XMRig-style
+  banner + speed line. CPU and GPU (OpenCL) modes.
 
 ## Network
 

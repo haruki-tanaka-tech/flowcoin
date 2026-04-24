@@ -48,22 +48,19 @@ By year 20, annual inflation drops below 0.5%.
 
 ## Mining Economics
 
-FlowCoin uses RandomX Proof-of-Work — the CPU-oriented, memory-hard
-algorithm from tevador, the same family that has secured Monero since
-November 2019.
-Each hash runs a 256-instruction VM program against a 2 GiB
-deterministic dataset. The bottleneck is DRAM bandwidth, not silicon
-gate count, so general-purpose CPUs outperform both GPUs and bespoke
-ASICs by an order of magnitude.
+FlowCoin uses Keccak-256d Proof-of-Work — a double-hash of Keccak-256
+(padding byte 0x01), the same hash family that won the NIST SHA-3
+competition. Keccak-256d is efficient on both CPUs and GPUs, keeping
+mining accessible to anyone with commodity hardware.
 
 ### Cost Structure
 
 | Component | Bitcoin | FlowCoin |
 |-----------|---------|----------|
-| Capital (hardware) | ASIC miners | Commodity CPUs |
+| Capital (hardware) | ASIC miners | Commodity CPUs / GPUs |
 | Recurring (energy) | Electricity | Electricity |
-| Output | SHA-256d hashes | RandomX hashes |
-| Bottleneck | Silicon gate density | DRAM bandwidth |
+| Output | SHA-256d hashes | Keccak-256d hashes |
+| Bottleneck | Silicon gate density | Commodity hardware availability |
 | Network benefit | Security | Security |
 
 ### Mining Revenue Formula
@@ -97,9 +94,8 @@ At genesis: 144 * 50 = 7,200 FLC/day for the entire network.
 
 ### Node Requirements (Non-Mining)
 
-- **CPU**: x86-64 with AES-NI, or ARM64.
-- **RAM**: 1 GB minimum for a pruned node; 3 GB to also run the miner
-  in full mode (2 GiB dataset).
+- **CPU**: x86-64 or ARM64.
+- **RAM**: 1 GB minimum for a pruned node.
 - **Disk**: 1 GB base + ~1 GB per 100K blocks of chain data.
 - **Network**: 1 Mbps symmetric minimum.
 
@@ -138,24 +134,22 @@ FlowCoin uses a bucketed fee estimator similar to Bitcoin Core:
 | Property | Bitcoin | Ethereum | FlowCoin |
 |----------|---------|----------|----------|
 | Max supply | 21M | Unlimited | 21M |
-| Consensus | PoW (SHA-256d) | PoS | PoW (RandomX) |
+| Consensus | PoW (SHA-256d) | PoS | PoW (Keccak-256d) |
 | Block time | 10 min | 12 sec | 10 min |
 | Block reward | 6.25 BTC (2024) | ~2 ETH | 50 FLC (genesis) |
 | Halving | Every 210K blocks | N/A | Every 210K blocks |
-| Hardware | ASICs | Validators | Commodity CPUs |
-| Barrier to entry | Very high (ASICs) | 32 ETH stake | Any laptop/desktop |
+| Hardware | ASICs | Validators | Commodity CPUs / GPUs |
+| Barrier to entry | Very high (ASICs) | 32 ETH stake | Any laptop/desktop/GPU |
 
 ### Key Economic Differences
 
-1. **CPU mining**: RandomX's VM-generated programs, DRAM-bandwidth
-   ceiling, and IEEE-754 float ops make ASIC specialisation
-   economically pointless — Monero has run RandomX since November 2019
-   with no ASIC reaching market. Mining stays open to anyone with a
-   general-purpose computer.
+1. **Commodity mining**: Keccak-256d runs efficiently on CPUs and GPUs,
+   keeping mining accessible to anyone with general-purpose hardware.
+   No specialised ASIC is required to participate competitively.
 
-2. **Hardware depreciation curve**: Commodity CPUs depreciate far
-   more slowly than ASICs and retain full resale value as ordinary
-   computers. There is no dedicated mining hardware to strand when
+2. **Hardware depreciation curve**: Commodity CPUs and GPUs depreciate
+   far more slowly than ASICs and retain full resale value as ordinary
+   hardware. There is no dedicated mining equipment to strand when
    price drops.
 
 3. **Same monetary policy as Bitcoin**: The familiar 21M supply cap
@@ -176,13 +170,13 @@ FlowCoin uses a bucketed fee estimator similar to Bitcoin Core:
 ## Risk Factors
 
 1. **Hashrate centralisation**: If mining becomes dominated by a few
-   large CPU-farm operators, the network loses some of its
-   decentralisation premise. RandomX's flat per-thread throughput curve
-   makes this much less likely than in SHA-256 or GPU-mineable chains,
-   but it is not impossible.
+   large mining-farm operators, the network loses some of its
+   decentralisation premise. The broad availability of CPUs and GPUs
+   makes this less likely than in ASIC-dominated chains, but it is
+   not impossible.
 
-2. **Competition**: Other RandomX-based chains (notably Monero) compete
-   for CPU hashrate. Network effects and the Bitcoin-compatible tooling
+2. **Competition**: Other PoW chains compete for hashrate on commodity
+   hardware. Network effects and the Bitcoin-compatible tooling
    provide some moat.
 
 ## Token Utility
@@ -216,9 +210,9 @@ E[profit] = P(win) * reward - cost_compute - cost_data - cost_energy
 ```
 
 Where P(win) depends on:
-- Hashrate (more RandomX hashes per second -> higher probability)
+- Hashrate (more Keccak-256d hashes per second -> higher probability)
 - Network difficulty (more miners -> lower win probability)
-- Hardware efficiency (better CPU + DRAM -> more hashes per watt)
+- Hardware efficiency (better CPU / GPU -> more hashes per watt)
 
 ### Selfish Mining
 
@@ -232,11 +226,9 @@ A miner controlling >51% of the network hashrate could:
 - Censor transactions
 
 The cost of a 51% attack is the hashrate required to exceed all
-other miners, which scales with total network CPU power. Because
-RandomX cannot be accelerated by specialised silicon, an attacker
-must acquire or rent comparable quantities of general-purpose
-compute — a commodity that is competitive, auditable, and expensive
-at scale.
+other miners, which scales with total network CPU power. An attacker must acquire or rent comparable quantities of
+general-purpose compute (CPUs / GPUs) — commodity hardware that is
+competitive, auditable, and expensive at scale.
 
 ### Free-Rider Problem
 
@@ -288,7 +280,7 @@ If FLC price falls:
 | Lock-up | Token staking | Compute commitment |
 | Slashing | Token destruction | Wasted compute |
 | Centralisation risk | Wealth concentration | CPU-farm concentration |
-| Energy use | Very low | Moderate (CPU TDP, not ASIC farms) |
+| Energy use | Very low | Moderate (CPU/GPU TDP, not ASIC farms) |
 | Barrier to entry | Capital requirement | Any general-purpose computer |
 | Validator income | Proportional to stake | Proportional to hashrate |
 
@@ -346,18 +338,17 @@ miners' shares increase until equilibrium is restored.
 
 ### Hardware ROI Timeline
 
-Throughput figures below are full-mode RandomX (2 GiB dataset, JIT,
-AES-NI).
+Throughput figures below are Keccak-256d on CPU.
 
-| CPU class | Street price | Throughput | Payback (at illustrative $1/FLC) |
+| Hardware | Street price | Throughput | Payback (at illustrative $1/FLC) |
 |---|---|---|---|
-| Ryzen 7 7700 (8c/16t) | $300 | ~10 kH/s | ~4–8 months |
-| Ryzen 9 7950X (16c/32t) | $550 | ~20 kH/s | ~3–6 months |
-| EPYC 9654 (96c/192t) | $11,000 | ~80 kH/s | ~10–16 months |
-| Apple M2 Pro laptop | $2,000 | ~8 kH/s | ~12–18 months |
+| Ryzen 7 7700 (8c/16t) | $300 | ~300 MH/s | ~4–8 months |
+| Ryzen 9 7950X (16c/32t) | $550 | ~600 MH/s | ~3–6 months |
+| EPYC 9654 (96c/192t) | $11,000 | ~2 GH/s | ~10–16 months |
+| Mid-range GPU (OpenCL) | $400 | ~1–3 GH/s | ~3–6 months |
 
-Unlike ASICs, these CPUs retain full resale value as general-purpose
-computers — the hardware is never stranded if the chain price drops.
+Unlike ASICs, CPUs and GPUs retain full resale value as general-purpose
+hardware — the equipment is never stranded if the chain price drops.
 
 ## Treasury and Funding Model
 

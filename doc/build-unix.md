@@ -12,7 +12,7 @@ The default build produces four binaries and a test suite:
 | `flowcoind` | Full node daemon — P2P, RPC, wallet, chain validation |
 | `flowcoin-cli` | JSON-RPC command-line client (Bitcoin-cli compatible) |
 | `flowcoin-tx` | Offline transaction construction utility |
-| `flowcoin-miner` | Standalone CPU-only RandomX miner |
+| `flowcoin-miner` | Standalone Keccak-256d miner (CPU + OpenCL) |
 | `flowcoin_tests` | Assert-based unit / integration test suite |
 
 ## Dependencies
@@ -23,8 +23,7 @@ toolchain and a few system libraries are required.
 
 Vendored dependencies (already in `src/`):
 
-- **RandomX** (tevador) — CPU-only proof-of-work
-- **XKCP** — Keccak reference implementation (block-id hash only)
+- **XKCP** — Keccak reference implementation (block-id hash and PoW)
 - **Ed25519-donna** — signatures
 - **SQLite** — UTXO set, transaction index
 - **zstd** — block compression
@@ -109,13 +108,11 @@ ninja -C build
 ./build/flowcoin_tests
 ```
 
-There are ~55 test groups covering cryptography (Keccak, RandomX,
-Ed25519, Bech32, SLIP-0010), consensus rules, serialization,
-networking, wallet operations, and integration scenarios. Every test
-is assert-based with no external framework; a zero exit code means
-all passed. The RandomX test vectors from tevador's `tests.cpp` are
-checked bit-for-bit against our integration, so a mismatch there
-means the vendored library was compiled incorrectly.
+There are ~55 test groups covering cryptography (Keccak, Ed25519,
+Bech32, SLIP-0010), consensus rules, serialization, networking,
+wallet operations, and integration scenarios. Every test is
+assert-based with no external framework; a zero exit code means
+all passed.
 
 Expected summary line:
 
@@ -221,7 +218,7 @@ Both produce the same wire output format as Bitcoin Core 30.x.
 
 ## Mining
 
-RandomX is built-in. See [`mining.md`](mining.md) for the full guide.
+See [`mining.md`](mining.md) for the full guide.
 Short version:
 
 ```bash
@@ -290,12 +287,9 @@ rm -rf ~/.flowcoin/blocks ~/.flowcoin/chainstate ~/.flowcoin/indexes
 
 ### Miner shows 0 H/s for a long time
 
-The 2 GiB RandomX dataset takes ~1.5 s to allocate on a fast CPU. If
-it stays at 0 for more than ~10 s, fall back to light mode:
-
-```bash
-./build/flowcoin-miner --cookie ~/.flowcoin/.cookie --light
-```
+Keccak-256d requires no initialisation time. If the miner stays at
+0 H/s, check that `flowcoind` is running and the RPC endpoint is
+reachable.
 
 ## Reproducible builds
 
@@ -306,8 +300,7 @@ The CMake configuration is set up for deterministic output:
 - RPATH is disabled (`CMAKE_SKIP_RPATH`)
 - `ar` archives use the deterministic `D` mode
 - `-ffast-math` is intentionally omitted so IEEE-754 behaviour stays
-  identical across build hosts (required for consensus on the
-  floating-point ops inside RandomX)
+  identical across build hosts (required for consensus determinism)
 
 To verify, build twice on the same compiler / OS and compare
 checksums:

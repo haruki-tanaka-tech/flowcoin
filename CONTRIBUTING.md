@@ -56,7 +56,6 @@ to install.
 
 Don't edit the following — updates come from upstream only:
 
-- `src/randomx/` (tevador/RandomX)
 - `src/sqlite/`
 - `src/zstd/`
 - `src/libuv/`

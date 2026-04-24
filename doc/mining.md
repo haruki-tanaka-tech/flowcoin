@@ -16,13 +16,11 @@ cmake --build build -j$(nproc)
 
 ## Overview
 
-FlowCoin uses [RandomX](https://github.com/tevador/RandomX) — the
-same CPU-oriented memory-hard proof-of-work that has secured the Monero
-network since November 2019. Each hash executes a pseudo-randomly
-generated program of 256 instructions against a 2 GiB deterministic
-dataset in a virtual machine. The bottleneck is DRAM bandwidth, not
-silicon gate count, so general-purpose CPUs outperform both GPUs and
-bespoke hardware by an order of magnitude.
+FlowCoin uses Keccak-256d — a double-hash of Keccak-256 (padding byte
+0x01, not NIST SHA-3's 0x06) — as its proof-of-work function. The same
+hash also serves as the block identifier, keeping the protocol simple.
+Keccak-256d is efficient on both CPUs and GPUs, making mining accessible
+to anyone with commodity hardware.
 
 The `flowcoin-miner` binary is a standalone C++ process that talks to
 a running `flowcoind` over HTTP JSON-RPC (`getblocktemplate`,
@@ -31,9 +29,9 @@ start-up, then timestamped tagged events, a `speed 10s/60s/15m` line
 every ten seconds, and `accepted (N/M)` / `rejected` events per
 submit.
 
-Mining runs purely on the CPU. There is no OpenCL, no CUDA, no GPU
-path — and none is planned. A GPU port would be at best 10× slower
-per watt and serves no legitimate purpose for this chain.
+Mining runs on both CPU and GPU. The `flowcoin-miner` binary includes
+a CPU backend by default, and an OpenCL GPU backend is available for
+additional hashrate.
 
 ## Hardware requirements
 
@@ -41,8 +39,8 @@ per watt and serves no legitimate purpose for this chain.
 
 | Component | Requirement |
 |---|---|
-| CPU | Any x86-64 CPU with AES-NI (basically anything since ~2010). ARM64 also supported. |
-| RAM | 3 GiB (the 2 GiB dataset plus ~500 MiB for the node plus OS overhead) |
+| CPU | Any x86-64 or ARM64 CPU |
+| RAM | 1 GiB (node plus OS overhead) |
 | Storage | 1 GiB for node state — chain size is tiny at launch |
 | Network | Any broadband connection, incoming port 9333 preferably open |
 
@@ -51,22 +49,20 @@ per watt and serves no legitimate purpose for this chain.
 | Component | Requirement |
 |---|---|
 | CPU | Modern desktop/laptop (Ryzen 7+, Core i7+, Apple Silicon) with ≥8 threads |
-| RAM | 8 GiB system memory — more threads benefit from more L3 cache |
-| Storage | NVMe SSD for the node (not the miner — the miner is RAM-bound) |
+| GPU | Any OpenCL-capable GPU for additional hashrate (optional) |
+| RAM | 4 GiB system memory |
+| Storage | NVMe SSD for the node |
 | Network | Stable 24/7 uplink if you want to keep blocks in flight |
 
-Expected per-thread throughput in **full** memory mode (2 GiB dataset,
-JIT, AES-NI):
+Expected CPU throughput (Keccak-256d):
 
-| CPU class | H/s per thread | 8-thread aggregate |
+| CPU class | MH/s per thread | 8-thread aggregate |
 |---|---|---|
-| Ryzen 9 5950X / 7950X | 1100–1600 | 9–13 kH/s |
-| Core i9-13900K | 1000–1400 | 8–11 kH/s |
-| Apple M2 Pro | 900–1200 | 7–10 kH/s |
+| Ryzen 9 5950X / 7950X | 30–50 | 240–400 MH/s |
+| Core i9-13900K | 25–45 | 200–360 MH/s |
+| Apple M2 Pro | 20–35 | 160–280 MH/s |
 
-In **light** mode (256 MiB cache only, no dataset) expect ~40–90 H/s
-per thread — fine for verification, way too slow for competitive
-mining.
+GPUs can achieve significantly higher throughput via the OpenCL backend.
 
 ## Configuring the node
 
@@ -99,9 +95,8 @@ runs, and point the miner at the node's URL.
 ./build/flowcoin-miner --cookie ~/.flowcoin/.cookie
 ```
 
-This picks up all logical cores, allocates the 2 GiB dataset (~1.5 s
-init on a fast CPU), connects to `http://127.0.0.1:9334`, and starts
-hashing.
+This picks up all logical cores, connects to `http://127.0.0.1:9334`,
+and starts hashing.
 
 ### Flags
 
@@ -113,8 +108,7 @@ hashing.
 | `-t N`, `--threads N` | auto | Worker threads |
 | `-a ADDR`, `--address ADDR` | node's wallet | Coinbase reward address (bech32 `fl1q...`) |
 | `--key PATH` | `~/.flowcoin/miner_key` | Ed25519 signing key (generated on first run) |
-| `-b SEC`, `--benchmark SEC` | — | Run RandomX for N seconds, print H/s, exit |
-| `--light` | — | Use the 256 MiB cache instead of the 2 GiB dataset |
+| `-b SEC`, `--benchmark SEC` | — | Run Keccak-256d for N seconds, print H/s, exit |
 | `--no-color` | — | Disable ANSI colours |
 
 ### Examples
@@ -127,11 +121,8 @@ hashing.
 ./build/flowcoin-miner -o http://node.example.lan:9334 \
                        -u flow -p secret
 
-# 10-second RandomX benchmark (fast mode)
+# 10-second Keccak-256d benchmark
 ./build/flowcoin-miner --benchmark 10
-
-# 10-second benchmark in light mode (no 2 GiB allocation)
-./build/flowcoin-miner --benchmark 10 --light
 
 # Restrict to 4 threads, pay rewards to a specific address
 ./build/flowcoin-miner --cookie ~/.flowcoin/.cookie \
@@ -145,72 +136,53 @@ Startup banner plus a live event stream:
 
 ```
  * ABOUT        flowcoin-miner/0.1.0 gcc/15.2
- * LIBS         RandomX nlohmann-json/3.x
- * CPU          AMD Ryzen 9 7950X  64-bit AES
+ * LIBS         keccak256d nlohmann-json/3.x
+ * CPU          AMD Ryzen 9 7950X  64-bit
  *              threads:32
  * NODE         127.0.0.1:9334
  * ADDRESS      inherited from node wallet
- * ALGO         randomx
+ * ALGO         keccak256d
  * THREADS      32
 
 [2026-04-18 17:03:07.578]  config   miner pubkey c32e968b3cb9658a
 [2026-04-18 17:03:07.579]  net      connected to 127.0.0.1:9334  height=0
-[2026-04-18 17:03:07.823]  randomx  cache seed=9f32dc6a53fa6074  (243 ms)
-[2026-04-18 17:03:09.330]  randomx  dataset ready (2080 MB)  (1507 ms)
-[2026-04-18 17:03:09.331]  net      new job from 127.0.0.1:9334  height 1  diff 1.000  algo randomx
+[2026-04-18 17:03:07.823]  keccak   init complete  (1 ms)
+[2026-04-18 17:03:07.824]  net      new job from 127.0.0.1:9334  height 1  diff 1.000  algo keccak256d
 [2026-04-18 17:03:17.580]  miner    speed 10s/60s/15m 12.34 kH/s 12.40 kH/s 12.40 kH/s
 [2026-04-18 17:05:42.114]  miner    accepted (1/1) height 1  nonce 487221  (22 ms)
 ```
 
 ## How it works
 
-### The RandomX hash
+### The Keccak-256d hash
 
-For each nonce:
+For each nonce, the miner computes:
 
-1. Initialise a 4 KiB scratchpad with AES-based mixing keyed on the
-   header bytes.
-2. Execute a pseudo-randomly generated program of 256 VM instructions
-   against the scratchpad and a shared 2 GiB dataset, looping eight
-   times. The instruction mix covers integer, floating-point, and
-   memory ops.
-3. Finalise the scratchpad with AES and produce a 256-bit digest via
-   Blake2b.
+```
+pow_hash = keccak256d(header[0..91])
+         = Keccak-256(Keccak-256(header[0..91]))
+```
+
+using the original Keccak padding byte 0x01 (not NIST SHA-3's 0x06).
 
 Miners search for a nonce such that
 
 ```
-RandomX(header[0..91], seed) <= target(nbits)
+keccak256d(header[0..91]) <= target(nbits)
 ```
 
-where `seed` is the block hash at `rx_seed_height(height)` — the
-chain's own history keys the hash function. This forces every
-participant to rebuild the dataset on every epoch boundary (2048
-blocks) with a 64-block lag, preventing pre-computed-table attacks.
+The hash is a pure function of the header bytes -- no external seed,
+dataset, or state is required. This makes the miner simple: increment
+the nonce, hash, compare against the target, repeat.
 
-### Seed rotation
+### Why Keccak-256d
 
-The RandomX cache / dataset is keyed on a seed that advances every
-2,048 blocks, with a 64-block lag so nodes converge on the new seed
-before it takes effect. The miner rebuilds the dataset (~1.5 s on a
-fast CPU) when the seed changes — visible in the `randomx  cache
-seed=…` log line.
-
-### Why CPU-only in practice
-
-- **Generated code.** Each hash runs a fresh 256-instruction program.
-  A fixed-function pipeline cannot run arbitrary programs; a
-  competitive implementation needs a general-purpose decode/issue
-  stage — i.e. a CPU.
-- **Memory-bandwidth bound.** DRAM transactions per outer iteration
-  cap throughput at the chip's DRAM pin rate. An ASIC gets no edge
-  over a commodity CPU on that bottleneck.
-- **Float determinism.** RandomX includes IEEE-754 double-precision
-  arithmetic with deterministic rounding modes. An ASIC without a
-  full FPU cannot run the algorithm.
-
-Monero has shipped RandomX since November 2019 with no ASIC reaching
-market. FlowCoin inherits that track record.
+- **Proven cryptography.** Keccak won the NIST SHA-3 competition and
+  has been studied extensively since 2008.
+- **Simplicity.** No VM, no dataset, no seed rotation -- just a hash
+  of the header. This makes independent implementations easy to verify.
+- **Broad hardware support.** Efficient on CPUs, GPUs, and FPGAs,
+  keeping mining accessible to anyone with commodity hardware.
 
 ## Block reward schedule
 
@@ -237,10 +209,9 @@ per several days; once more miners join, difficulty retargets upward.
 
 - **`error: could not connect to 127.0.0.1:9334` / `Is flowcoind running?`**
   Start `flowcoind -daemon` first, give it a few seconds, retry.
-- **0 H/s for more than 10 seconds** — the 2 GiB dataset is still
-  initialising. On very slow machines this can take 5–10 s. If it
-  stays at 0 forever, switch to `--light` (256 MiB cache, init in
-  ~40 ms).
+- **0 H/s for more than a few seconds** — check that `flowcoind` is
+  running and the RPC endpoint is reachable. Keccak-256d requires no
+  initialisation time.
 - **Block rejected: `high-hash`** — hash was computed against a stale
   target. Happens naturally when a new block arrives mid-search;
   miner restarts against the fresh template automatically.

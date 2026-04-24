@@ -1,5 +1,5 @@
 FlowCoin: A Peer-to-Peer Electronic Cash System
-            with CPU-Only RandomX Proof-of-Work
+            with Keccak-256d Proof-of-Work
 
                     Kristian Pilatovich
                 pilatovichkristian2@gmail.com
@@ -11,17 +11,14 @@ going through a financial institution. Digital signatures provide part
 of the solution, but the main benefits are lost if a trusted third
 party is still required to prevent double-spending. We propose a
 solution to the double-spending problem using a peer-to-peer network
-that secures its ledger with RandomX, a CPU-oriented memory-hard
-proof-of-work designed by the Monero project and deployed on their
-mainnet since November 2019 with no ASIC having appeared in the five
-years since. RandomX generates a random instruction stream per block,
-executes it in a virtual machine against a 2 GiB deterministic dataset,
-and finalises with AES-based mixing; the result is that general-purpose
-CPUs outperform both GPUs and bespoke hardware by an order of magnitude
-on the workload that matters for mining. FlowCoin preserves Bitcoin's
-economic model (21 M supply, halving every 210,000 blocks, 10-minute
-target) and otherwise keeps hashing and signing at the cheapest
-suitable primitives (keccak256d for block IDs, Ed25519 for signatures).
+that secures its ledger with Keccak-256d, a double-hash of the original
+Keccak-256 function (padding byte 0x01, not NIST SHA-3's 0x06). The
+same hash serves both as the block identifier and as the proof-of-work
+function, keeping the design simple and auditable. Keccak-256d is
+efficient on both CPUs and GPUs, making mining accessible to anyone
+with commodity hardware. FlowCoin preserves Bitcoin's economic model
+(21 M supply, halving every 210,000 blocks, 10-minute target) and
+uses Ed25519 for signatures.
 
 
 1. Introduction
@@ -37,18 +34,16 @@ undermines the original "one-CPU-one-vote" vision.
 
 FlowCoin preserves Bitcoin's architecture — UTXO ledger, 10-minute
 blocks, 21 M supply, Nakamoto consensus — and replaces only what
-caused the centralization: the proof-of-work function. Rather than
-invent a new PoW, we adopt RandomX, the algorithm that has kept
-Monero CPU-mineable since 2019. This is a deliberate choice of a
-battle-tested design over theoretical novelty.
+caused the centralization: the proof-of-work function. We adopt
+Keccak-256d, a well-studied cryptographic hash from the Keccak
+family (the basis of SHA-3). This is a deliberate choice of a
+proven, auditable primitive over complex novelty.
 
-The network will not be ASIC-free in the future-proof sense; any
-algorithm can eventually be ASIC'd given sufficient economic
-incentive. The bet is more modest: a VM-based PoW with a 2 GiB
-working set that is already aligned with what general-purpose CPUs
-do well keeps the ASIC premium small enough that ordinary hardware
-remains competitive. RandomX's six-year incumbency with no ASIC
-release is the strongest empirical evidence we have.
+Keccak-256d is efficient on both CPUs and GPUs, which broadens
+mining participation beyond the ASIC-dominated SHA-256d ecosystem.
+While any hash function can eventually be implemented in an ASIC,
+Keccak's simplicity and the availability of efficient CPU and GPU
+miners mean that commodity hardware remains competitive.
 
 
 2. Transactions
@@ -95,100 +90,62 @@ layout:
 The full signed header is 188 bytes, appending the miner's 32-byte
 Ed25519 public key and 64-byte signature over bytes 0-91.
 
-A block is identified by two distinct hashes:
+The block hash serves as both the block identifier and the
+proof-of-work hash:
 
-  block_id  = keccak256d(header[0..91])
-  pow_hash  = RandomX(header[0..91], seed)
+  block_id = pow_hash = keccak256d(header[0..91])
 
-The block_id is what every other block, every P2P message, every
-RPC response, every merkle proof, every wallet record refers to.
-keccak256d is cheap (a few microseconds per header) so chain-internal
-operations stay fast. The pow_hash is what miners search for and
-what target-comparison uses; it is computed only at block production
-and at validation time, never for chain bookkeeping.
+This unification simplifies the protocol: there is only one hash
+per block, used everywhere — P2P messages, RPC responses, merkle
+proofs, wallet records, and target comparison. Miners search for a
+nonce such that this hash is at or below the difficulty target.
 
 
 4. Proof-of-Work
 
 The proof-of-work involves scanning for a nonce such that, for a
-given block header and a seed derived from the chain state, the
-RandomX hash is at or below the target value:
+given block header, the Keccak-256d hash is at or below the target
+value:
 
-  RandomX(header[0..91], seed) <= target(nbits)
+  keccak256d(header[0..91]) <= target(nbits)
 
-RandomX is a memory-hard PoW designed for CPUs. A single invocation
-does, in order:
+where keccak256d(x) = Keccak-256(Keccak-256(x)), using the original
+Keccak padding byte 0x01 (not NIST SHA-3's 0x06).
 
-  1. Initialise a 4 KiB scratchpad with AES-based mixing.
-  2. Execute a pseudo-randomly generated program of 256 instructions
-     against the scratchpad and a shared 2 GiB dataset, looping
-     eight times.
-  3. Finalise the scratchpad with AES and produce a 256-bit digest
-     via Blake2b.
+Keccak-256d is a straightforward cryptographic hash. A single
+invocation applies the Keccak-f[1600] permutation twice over the
+header bytes and produces a 256-bit digest. The function has no
+internal state beyond the sponge, no dataset, and no seed — it is
+purely a function of the input bytes.
 
-The instruction mix is deliberately chosen to match the issue width
-and execution-port distribution of general-purpose CPUs. The program
-is regenerated from the program counter each round, and both the
-scratchpad and dataset are accessed with data-dependent indices,
-which prevents a straightforward hard-wired pipeline implementation.
-The 2 GiB dataset forces a working set that exceeds any reasonable
-on-die SRAM budget, so even a custom ASIC must source bytes from
-off-die memory at roughly the same bandwidth as a commodity CPU.
-
-The practical consequence, observed continuously since 2019 on
-Monero's network, is that a 32-thread consumer CPU beats a
-flagship GPU by roughly 10× on the workload, and no ASIC has been
-offered for sale in those five years.
+The double-hash construction (hashing the hash) provides a minor
+additional security margin against length-extension attacks, mirrors
+Bitcoin's SHA-256d design, and costs negligible extra computation.
 
 
-4.1 Why RandomX over a Hash-Only PoW
+4.1 Why Keccak-256d
 
-Keccak, SHA-3, and double-SHA-256 all share a property that
-undermines decentralisation: they are cheap to implement. A
-straightforward Keccak-f[1600] unit fits comfortably on silicon,
-state is small enough to pin in registers, and the absence of
-control flow makes the pipeline trivial to hard-wire. The mining
-ecosystem reflects this — every pure-hash PoW of non-trivial
-economic weight is ASIC-dominated.
+We chose Keccak-256d for the following reasons:
 
-RandomX removes all three of those properties:
+  (a) Proven cryptography. Keccak won the NIST SHA-3 competition
+      and has been studied extensively by the cryptographic community
+      since 2008. It is among the most thoroughly analysed hash
+      functions in existence.
 
-  (a) Generated code. Each block requires executing a fresh
-      program of 256 instructions drawn from an instruction set
-      that includes integer, floating-point, and control-flow ops.
-      A fixed-function pipeline cannot run arbitrary programs; a
-      competitive implementation needs a general-purpose decode/
-      issue stage — i.e., a CPU.
+  (b) Simplicity. The algorithm is clean, stateless, and easy to
+      audit. There is no VM, no dataset, no seed rotation — just
+      a hash of the header. This reduces the attack surface and
+      makes independent implementations straightforward to verify.
 
-  (b) Memory-bandwidth bound. The 2 GiB dataset is accessed with
-      data-dependent addresses at every outer iteration. An ASIC
-      gains no advantage over a commodity CPU on the bottleneck
-      (DRAM bandwidth per chip).
+  (c) Broad hardware support. Keccak-256d runs efficiently on
+      CPUs, GPUs, and FPGAs. This breadth of hardware support
+      keeps mining accessible: anyone with a general-purpose
+      computer or a commodity GPU can participate.
 
-  (c) Floating-point determinism. RandomX includes IEEE-754
-      double-precision arithmetic with deterministic rounding modes.
-      An ASIC omitting FPU support cannot run the algorithm.
-
-
-4.2 Seed Rotation
-
-The RandomX program generator is keyed on a 32-byte seed. The seed
-for the block at height h is the hash of an earlier block:
-
-  seed(h) = block_id(rx_seed_height(h))
-  rx_seed_height(h) = ((h - 64 - 1) & ~(2048 - 1))   for h > 2048 + 64
-                   = 0                               otherwise
-
-The seed therefore advances on 2048-block epoch boundaries, with a
-64-block lag so nodes converge on the new seed before it takes
-effect and so short reorgs across the boundary do not require
-re-initialising the cache. Each rotation forces every participant
-to rebuild the 2 GiB dataset from the new seed; this prevents a
-hostile miner from amortising pre-computed tables across the life
-of the chain. A full node that only verifies blocks can instead
-run RandomX in light mode, which uses only the 256 MiB Argon2d
-cache at roughly 40 H/s per thread — slow to mine with, more than
-fast enough to catch invalid blocks.
+  (d) Same hash for block ID and PoW. Using keccak256d for both
+      the block identifier and the proof-of-work eliminates the
+      need for a separate PoW hash function, simplifying the
+      protocol and reducing the code surface.
 
 
 5. Network
@@ -250,9 +207,9 @@ with writes.
 
 A user can verify payments without running a full node by keeping
 the block-header chain and obtaining a Merkle branch for each
-transaction of interest. Because block IDs are keccak256d — not
-RandomX — SPV clients only need to keep keccak-chain continuity;
-they never need to allocate the 256 MiB RandomX cache. One year of
+transaction of interest. Because the PoW hash is keccak256d — the
+same cheap hash used everywhere else in the protocol — SPV clients
+can verify proof-of-work with negligible computation. One year of
 10-minute blocks produces approximately 4.8 MiB of headers.
 
 
@@ -280,11 +237,10 @@ where p is the probability the honest network finds the next block,
 q the probability the attacker does. The Nakamoto analysis is
 algorithm-independent; the useful question for FlowCoin is not
 whether the formula holds — it does — but what it costs the
-attacker to achieve q > p. Here the choice of RandomX over a
-pure-hash PoW changes the answer qualitatively.
+attacker to achieve q > p.
 
 
-10.1 Why the 51 % cost tracks DRAM, not silicon
+10.1 Attack cost under Keccak-256d
 
 In a SHA-256d chain, hash-rate is roughly proportional to silicon
 gate count: the compression function fits in a few hundred gates,
@@ -296,69 +252,47 @@ designers. A state-level attacker can, in principle, fab more
 silicon than every other participant combined faster than the
 community can respond.
 
-RandomX inverts this. The bottleneck in each hash is not logic
-but memory: data-dependent addresses into the 2 GiB dataset force
-a DRAM transaction on almost every outer iteration. Hash rate
-therefore scales with DRAM bandwidth per machine, not with gate
-count per die. The economic consequences are:
+Keccak-256d does not change this dynamic fundamentally — it is
+also a pure-hash function implementable in hardware. However,
+several practical factors work in FlowCoin's favour:
 
-  (a) DRAM bandwidth is a commodity. The six companies that
-      manufacture DRAM (Samsung, SK Hynix, Micron, and a handful
-      of smaller fabs) compete on price across every consumer
-      and datacentre channel. A RandomX-dedicated chip with, say,
-      8 DRAM channels performs roughly the same as a server CPU
-      with 8 DRAM channels — the chip cannot be made faster than
-      physics allows the DRAM pins to toggle. There is no
-      silicon advantage waiting to be exploited.
+  (a) Broad hardware base. Keccak-256d runs efficiently on CPUs,
+      GPUs, and FPGAs. This means the mining hashrate is
+      distributed across a wide variety of commodity hardware,
+      not concentrated in purpose-built devices from a handful
+      of manufacturers. The cost of a 51 % attack must exceed
+      the aggregate compute of this diverse hardware base.
 
-  (b) Supply cannot be covertly scaled. A SHA-256 ASIC attacker
-      can quietly tape out at a single foundry. A RandomX
-      attacker needs to source DRAM modules at scale, which
-      shows up in the channel: large orders move prices and are
-      visible to competitors and exchanges.
+  (b) Commodity hardware retains value. Unlike SHA-256 ASICs,
+      CPUs and GPUs used for mining retain full resale value as
+      general-purpose hardware. This lowers the barrier to entry
+      for honest miners but does not help an attacker, who must
+      still acquire or rent equivalent compute at market rates.
 
-  (c) Cost scales linearly with CPU-thread count. At roughly
-      1,000–1,500 H/s per modern CPU core, a 51 % attack at a
-      network size of N threads requires buying or renting on
-      the order of N more threads. Because those threads are
-      general-purpose compute, they retain resale value on
-      failure of the attack — but that salvage value caps how
-      much an attacker is willing to invest, since it is roughly
-      the price of used CPUs on the open market at the time the
-      attack fails.
+  (c) Cloud rental is bounded by visible capacity. The major
+      cloud providers offer a finite number of GPU and CPU cores
+      at any moment. A 51 %-scale rental would saturate capacity
+      and alert operators, who have both the ability and the
+      commercial incentive to refuse the workload once identified.
 
-  (d) Cloud rental is bounded by visible capacity. The three
-      hyperscalers together offer a finite number of CPU cores
-      at any moment. A 51 %-scale rental of RandomX-suitable
-      cores would saturate that capacity and alert operators,
-      who have both the ability and the commercial incentive to
-      refuse the workload once identified.
+  (d) No manufacturer bottleneck. Because mining hardware is
+      commodity (any CPU or GPU works), there is no single
+      manufacturer whose production capacity limits or gates
+      access to hashrate. Supply is diversified across the
+      entire semiconductor industry.
 
 None of these guarantees that no 51 % attack is ever possible.
-The claim is narrower: a RandomX attack costs roughly the price
-of buying or renting commodity compute at near-retail rates,
-whereas a SHA-256d attack can cost the marginal price of silicon
-inside a vertically-integrated operation. The ratio is large
-enough to matter.
-
-
-10.2 Empirical reference point
-
-Monero has run RandomX continuously since November 2019 on a
-network that, as of this writing, sustains several GH/s of
-aggregate hashrate. No RandomX ASIC has been offered for sale
-in that time, despite Monero's market cap providing ample
-economic incentive. This is the strongest available evidence
-that the memory-bandwidth argument holds in practice — and it
-is what FlowCoin is inheriting.
+The claim is narrower: a Keccak-256d attack requires acquiring
+commodity compute at near-retail rates across a diverse hardware
+ecosystem, rather than taping out a single ASIC design at a
+captive foundry.
 
 
 11. Technical Specifications
 
   Parameter                  Value
   ---------                  -----
-  PoW algorithm              RandomX (2 GiB dataset, 256 MiB cache)
-  PoW seed rotation          Every 2,048 blocks, 64-block lag
+  PoW algorithm              Keccak-256d (double Keccak-256, pad 0x01)
   Block ID hash              keccak256d (pad = 0x01)
   Block time target          600 seconds (10 minutes)
   Initial block reward       50 FLC
@@ -383,36 +317,35 @@ is what FlowCoin is inheriting.
 The reference implementation is written in C++20 and is available at
 https://github.com/KristianPilatovich/flowcoin. It comprises three
 binaries: flowcoind (the full node), flowcoin-cli (the RPC client),
-and flowcoin-miner (the standalone CPU miner).
+and flowcoin-miner (the standalone miner).
 
 flowcoin-miner talks to flowcoind over HTTP JSON-RPC: it calls
-getblocktemplate (which now returns the RandomX seed alongside the
-header template) and submitblock (a hex-encoded signed block). One
-RandomX VM per worker thread scans a disjoint nonce stripe; found
-blocks are signed with a locally-held Ed25519 key and submitted via
-RPC. The miner does not run a P2P stack or maintain chain state of
-its own, so it can run on hosts far smaller than the node.
+getblocktemplate and submitblock (a hex-encoded signed block).
+Each worker thread scans a disjoint nonce stripe; found blocks are
+signed with a locally-held Ed25519 key and submitted via RPC. The
+miner supports both CPU and GPU (OpenCL) backends. It does not run
+a P2P stack or maintain chain state of its own, so it can run on
+hosts far smaller than the node.
 
-Expected hashrate is roughly 1,000–1,500 H/s per modern CPU core
-in full-memory mode. A 24-thread consumer CPU therefore delivers
-on the order of 15–30 kH/s, which at difficulty 1 means blocks
-arrive in a few minutes rather than hours. The difficulty retarget
-algorithm is the same as Bitcoin's; as more miners join, the
-per-node expected time adjusts back toward 10 minutes.
+Expected hashrate is roughly 10–50 MH/s per modern CPU core. A
+24-thread consumer CPU therefore delivers on the order of hundreds
+of MH/s, which at difficulty 1 means blocks arrive quickly. The
+difficulty retarget algorithm is the same as Bitcoin's; as more
+miners join, the per-node expected time adjusts back toward
+10 minutes.
 
 
 13. Conclusion
 
 We have proposed a peer-to-peer electronic cash system that pairs
-Bitcoin's proven economic model with RandomX, the proof-of-work
-that has kept Monero CPU-mineable for more than five years. The
-design separates the two concerns a block-hash function has to
-serve: a fast chain-internal identifier (keccak256d, used
-everywhere in the protocol) and a mining-cost function (RandomX,
-used only at block production and validation). By reusing a
-proven CPU-only PoW instead of inventing a new one, we inherit
-six years of adversarial review without asking users to trust a
-novel construction. By preserving Bitcoin's halving schedule,
+Bitcoin's proven economic model with Keccak-256d proof-of-work.
+The design uses a single hash function — keccak256d — for both the
+block identifier and the proof-of-work, keeping the protocol simple
+and auditable. Keccak is among the most thoroughly studied hash
+functions in cryptography, having won the NIST SHA-3 competition.
+By using a proven primitive instead of inventing a new one, we
+inherit years of cryptanalytic review without asking users to trust
+a novel construction. By preserving Bitcoin's halving schedule,
 supply cap, and 10-minute block target, we inherit a monetary
 policy that users already understand.
 
@@ -422,21 +355,15 @@ References
 [1] S. Nakamoto, "Bitcoin: A Peer-to-Peer Electronic Cash System,"
     2008. https://bitcoin.org/bitcoin.pdf
 
-[2] tevador, "RandomX," 2019.
-    https://github.com/tevador/RandomX
-
-[3] tevador, "RandomX: Design notes."
-    https://github.com/tevador/RandomX/blob/master/doc/design.md
-
-[4] G. Bertoni, J. Daemen, M. Peeters, G. Van Assche, "Keccak,"
+[2] G. Bertoni, J. Daemen, M. Peeters, G. Van Assche, "Keccak,"
     https://keccak.team/keccak.html
 
-[5] D. J. Bernstein, N. Duif, T. Lange, P. Schwabe, B.-Y. Yang,
+[3] D. J. Bernstein, N. Duif, T. Lange, P. Schwabe, B.-Y. Yang,
     "High-speed high-security signatures," Journal of Cryptographic
     Engineering 2(2):77-89, 2012.
 
-[6] P. Wuille, "Bech32m format for v1+ witness addresses," BIP 350,
+[4] P. Wuille, "Bech32m format for v1+ witness addresses," BIP 350,
     2020.
 
-[7] SLIP-0010, "Universal private key derivation from master private
+[5] SLIP-0010, "Universal private key derivation from master private
     key," SatoshiLabs, 2016.

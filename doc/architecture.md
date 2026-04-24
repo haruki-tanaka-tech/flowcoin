@@ -2,11 +2,10 @@
 
 ## Overview
 
-FlowCoin is a CPU-only Proof-of-Work cryptocurrency that closely mirrors
-Bitcoin Core's design. The proof-of-work hash is RandomX (the same
-algorithm Monero has used on mainnet since November 2019); the block-id
-hash is keccak256d; addresses are Bech32 v0 with the `fl` HRP; signatures
-are Ed25519 (RFC 8032).
+FlowCoin is a Proof-of-Work cryptocurrency that closely mirrors
+Bitcoin Core's design. The proof-of-work and block-id hash is
+Keccak-256d (double Keccak-256, padding byte 0x01); addresses are
+Bech32 v0 with the `fl` HRP; signatures are Ed25519 (RFC 8032).
 
 ## Module Dependency Graph
 
@@ -33,8 +32,7 @@ flowcoind (main binary)
   +-- flowcoin_script            (script evaluation, standard scripts)
   |
   +-- sqlite (vendored)          (UTXO set, wallet DB, chain DB)
-  +-- randomx (vendored)         (RandomX PoW from tevador)
-  +-- xkcp (vendored)            (Keccak reference implementation for block IDs)
+  +-- xkcp (vendored)            (Keccak reference implementation for PoW and block IDs)
   +-- libuv (vendored)           (async I/O, event loop)
   +-- nlohmann/json (vendored)   (JSON parsing)
 ```
@@ -61,12 +59,11 @@ A block arrives via the P2P network through `flowcoin_net`:
 | 3 | timestamp | Must be strictly greater than Median Time Past of last 11 blocks |
 | 4 | timestamp | Must not be >2h in the future |
 | 5 | nbits | Must match retarget algorithm output |
-| 6 | pow_hash | `RandomX(header[0..91], pow_seed)` must be ≤ target decoded from nbits |
+| 6 | pow_hash | `keccak256d(header[0..91])` must be ≤ target decoded from nbits |
 | 7 | miner_sig | Ed25519 signature must verify against miner_pubkey |
 
-The RandomX seed is the block hash at `rx_seed_height(height)` —
-an earlier block from the same chain. It rotates every 2,048 blocks
-with a 64-block lag to avoid cache thrash around epoch boundaries.
+The PoW hash is keccak256d of the unsigned header bytes — no external
+seed or dataset is required.
 
 ### 3. Block Body Validation
 
@@ -108,8 +105,8 @@ FlowCoin uses a multi-threaded architecture with clear ownership rules:
 
 ### Mining Thread Pool
 - Block template construction (single-thread)
-- Nonce search (one RandomX VM per worker thread; each worker scans
-  a disjoint nonce stripe; first to find a valid hash wins)
+- Nonce search (each worker thread scans a disjoint nonce stripe;
+  first to find a valid keccak256d hash wins)
 
 ### Wallet Thread
 - UTXO scanning
@@ -305,7 +302,7 @@ Deterministic build support:
 - **Determinism**: All consensus-critical computation produces identical
   results across platforms.
 - **Cryptography**: Ed25519 for signatures, keccak256d for block IDs,
-  merkle roots, and address hashing, RandomX for proof-of-work,
+  merkle roots, address hashing, and proof-of-work,
   SLIP-0010 for HD key derivation.
 - **Network**: All peer messages are checksummed (keccak256d truncated
   to 4 bytes). Misbehaving peers are scored and banned at threshold.
@@ -445,8 +442,7 @@ Clean shutdown follows this order:
 | Operation | Time (typical) |
 |-----------|---------------|
 | Header validation | <1 ms |
-| PoW hash check (RandomX light mode) | ~10 ms |
-| PoW hash check (RandomX full dataset) | ~0.7 ms |
+| PoW hash check (keccak256d) | <0.01 ms |
 | Block-id hash (keccak256d) | <0.01 ms |
 | Transaction signature verification | ~0.1 ms per sig |
 | UTXO lookups | ~0.01 ms per input |

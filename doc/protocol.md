@@ -2,12 +2,12 @@
 
 ## 1. Overview
 
-FlowCoin is a CPU-only Proof-of-Work cryptocurrency that combines Bitcoin's
+FlowCoin is a Proof-of-Work cryptocurrency that combines Bitcoin's
 proven economic model (21M supply, 10-minute blocks, halving schedule) with
-a memory-hard PoW and modern signatures.
+Keccak-256d PoW and modern signatures.
 
 The protocol uses:
-- **RandomX** (from tevador, the same PoW family used by Monero since Nov 2019) for proof-of-work
+- **Keccak-256d** (double Keccak-256, padding byte 0x01) for proof-of-work
 - **keccak256d** (double Keccak-256, padding byte 0x01) for block IDs, merkle roots,
   transaction IDs, and address derivation
 - **Ed25519** signatures (RFC 8032) instead of secp256k1 ECDSA
@@ -44,19 +44,16 @@ Total: 188 bytes.
 Each block carries two distinct hashes:
 
 ```
-block_id = keccak256d(header[0..91])              # cheap, used for chain refs,
-                                                   #   P2P, merkle, RPC, indexing
-pow_hash = RandomX(header[0..91], pow_seed)       # CPU-only memory-hard PoW,
-                                                   #   compared against target
+block_id = pow_hash = keccak256d(header[0..91])    # used for chain refs, P2P,
+                                                   #   merkle, RPC, indexing,
+                                                   #   and PoW target comparison
 ```
 
 where `keccak256d(x) = Keccak-256(Keccak-256(x))` using the original Keccak
 padding byte `0x01` (not the `0x06` used by NIST SHA-3).
 
-`pow_seed` is the block hash at `rx_seed_height(height)` — an earlier block
-from the chain itself. The seed rotates every 2,048 blocks with a 64-block
-lag so nodes agree on the seed well before rotation takes effect and reorgs
-across an epoch boundary don't thrash the RandomX cache.
+The block hash serves as both the block identifier and the proof-of-work
+hash. No external seed or dataset is required.
 
 ### 2.2 Block Validation
 
@@ -76,8 +73,7 @@ Every block must pass all validation checks to be accepted:
    - At retarget boundaries (height % 2016 == 0): recalculated from the last 2016 blocks
    - Otherwise: inherited from parent
 
-6. **Proof-of-Work**: `RandomX(header[0..91], pow_seed) < target_from_nbits(block.nbits)`,
-   where `pow_seed = block_id(chain[rx_seed_height(block.height)])`.
+6. **Proof-of-Work**: `keccak256d(header[0..91]) < target_from_nbits(block.nbits)`.
 
 7. **Merkle root**: `block.merkle_root == compute_merkle_root(block.vtx)`.
 
@@ -98,7 +94,7 @@ Every block must pass all validation checks to be accepted:
 ### 2.3 Difficulty Adjustment
 
 FlowCoin uses Bitcoin's difficulty adjustment algorithm, retargeting
-against the RandomX work-per-block rate.
+against the Keccak-256d work-per-block rate.
 
 Retarget occurs every 2016 blocks. The new target is calculated as:
 
