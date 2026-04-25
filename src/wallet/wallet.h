@@ -60,8 +60,11 @@ public:
 
     // ---- Balance / UTXOs ----
 
-    /// Total confirmed balance (sum of wallet UTXOs in the UTXO set).
+    /// Confirmed mature balance (excludes immature coinbase).
     Amount get_balance() const;
+
+    /// Immature coinbase balance (< COINBASE_MATURITY confirmations).
+    Amount get_immature_balance() const;
 
     /// List all unspent outputs that belong to this wallet.
     std::vector<CoinToSpend> list_unspent() const;

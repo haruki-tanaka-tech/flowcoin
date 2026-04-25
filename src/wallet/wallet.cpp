@@ -139,11 +139,34 @@ std::string Wallet::get_coinbase_address() {
 Amount Wallet::get_balance() const {
     std::lock_guard<std::mutex> lock(mu_);
 
+    uint64_t tip = get_last_scan_height();
     Amount total = 0;
     for (const auto& [pkh, pubkey] : hash_to_pubkey_) {
         std::array<uint8_t, 32> pkh_arr;
         std::memcpy(pkh_arr.data(), pkh.data(), 32);
-        total += utxo_.get_balance(pkh_arr);
+        auto utxos = utxo_.get_utxos_for_script(pkh_arr);
+        for (const auto& [outpoint, entry] : utxos) {
+            if (entry.is_coinbase && tip < entry.height + consensus::COINBASE_MATURITY)
+                continue;
+            total += entry.value;
+        }
+    }
+    return total;
+}
+
+Amount Wallet::get_immature_balance() const {
+    std::lock_guard<std::mutex> lock(mu_);
+
+    uint64_t tip = get_last_scan_height();
+    Amount total = 0;
+    for (const auto& [pkh, pubkey] : hash_to_pubkey_) {
+        std::array<uint8_t, 32> pkh_arr;
+        std::memcpy(pkh_arr.data(), pkh.data(), 32);
+        auto utxos = utxo_.get_utxos_for_script(pkh_arr);
+        for (const auto& [outpoint, entry] : utxos) {
+            if (entry.is_coinbase && tip < entry.height + consensus::COINBASE_MATURITY)
+                total += entry.value;
+        }
     }
     return total;
 }
@@ -1487,8 +1510,7 @@ Wallet::WalletStats Wallet::get_stats() const {
     }
 
     // Immature balance: coinbase outputs that haven't reached maturity
-    // We approximate this as zero unless we track coinbase specifically
-    stats.immature_balance = 0;
+    stats.immature_balance = get_immature_balance();
 
     // Transaction totals
     {
