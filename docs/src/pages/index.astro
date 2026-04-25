@@ -7,13 +7,13 @@ import Base from '../layouts/Base.astro';
     <div class="container hero-inner">
       <div class="tag">
         <span class="dot"></span>
-        <span class="mono">v1.0.0 — RandomX era</span>
+        <span class="mono">v0.1.0 — Keccak-256d era</span>
       </div>
-      <h1>Open-source cryptocurrency<br/>that mines on <span class="accent">any CPU</span>.</h1>
+      <h1>Open-source cryptocurrency<br/>secured by <span class="accent">Keccak-256d</span>.</h1>
       <p class="subtitle">
-        FlowCoin is a Proof-of-Work cryptocurrency secured by RandomX —
-        the CPU-oriented, memory-hard algorithm used by Monero.
-        No ASICs. No GPUs. No premine. No ICO.
+        FlowCoin is a Proof-of-Work cryptocurrency using Keccak-256d —
+        a proven, auditable hash from the SHA-3 family.
+        CPU and GPU mining. No premine. No ICO.
       </p>
       <div class="cta">
         <a href="/download" class="btn btn-primary">
@@ -35,7 +35,7 @@ import Base from '../layouts/Base.astro';
   <section class="features container">
     <div class="section-head">
       <h2>Why FlowCoin</h2>
-      <p>Bitcoin's monetary policy. Monero's mining fairness. Modern cryptography.</p>
+      <p>Bitcoin's monetary policy. Keccak-256d proof-of-work. Modern cryptography.</p>
     </div>
 
     <div class="grid">
@@ -43,8 +43,8 @@ import Base from '../layouts/Base.astro';
         <div class="ico">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="6" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M8 10h8M8 14h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         </div>
-        <h3>CPU-only by design</h3>
-        <p>RandomX uses a 2 GiB dataset, IEEE-754 floats, and runtime-generated VM programs. ASICs can't compete with general-purpose silicon — Monero has proved this since 2019.</p>
+        <h3>Keccak-256d Proof-of-Work</h3>
+        <p>Keccak won the NIST SHA-3 competition. Simple, auditable, no hidden complexity. Mines on CPU and GPU — anyone with commodity hardware can participate.</p>
       </article>
 
       <article class="feat">
@@ -84,7 +84,7 @@ import Base from '../layouts/Base.astro';
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 4h16v16H4z" stroke="currentColor" stroke-width="1.6"/><path d="M9 9h6v6H9z" fill="currentColor"/></svg>
         </div>
         <h3>Audit-friendly codebase</h3>
-        <p>Vendored dependencies, no hidden magic. ~126K lines of C++20. 55 assert-based test groups covering consensus, crypto, network, wallet. Reproducible builds.</p>
+        <p>Vendored dependencies, no hidden magic. 500K+ lines of C/C++20. 55 assert-based test groups covering consensus, crypto, network, wallet. Reproducible builds.</p>
       </article>
     </div>
   </section>

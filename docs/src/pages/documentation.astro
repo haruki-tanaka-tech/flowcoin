@@ -67,13 +67,12 @@ const sections = [
   <section class="container specs">
     <h2>Protocol at a glance</h2>
     <div class="spec-table">
-      <div class="spec"><span class="k">PoW</span><span class="v">RandomX (2 GiB dataset / 256 MiB light)</span></div>
+      <div class="spec"><span class="k">PoW</span><span class="v">Keccak-256d (double Keccak-256)</span></div>
       <div class="spec"><span class="k">Block-ID hash</span><span class="v mono">keccak256d (SHA-3 style, pad 0x01)</span></div>
       <div class="spec"><span class="k">Signatures</span><span class="v">Ed25519 (RFC 8032), per-block + per-input</span></div>
       <div class="spec"><span class="k">Addresses</span><span class="v mono">Bech32 v0 — fl1q… (BIP-173)</span></div>
       <div class="spec"><span class="k">Block time</span><span class="v">10 minutes</span></div>
       <div class="spec"><span class="k">Difficulty retarget</span><span class="v">Every 2,016 blocks (±4× clamp)</span></div>
-      <div class="spec"><span class="k">RandomX seed rotation</span><span class="v">Every 2,048 blocks, 64-block lag</span></div>
       <div class="spec"><span class="k">Halving</span><span class="v">Every 210,000 blocks</span></div>
       <div class="spec"><span class="k">Max supply</span><span class="v">21,000,000 FLC</span></div>
       <div class="spec"><span class="k">Coinbase maturity</span><span class="v">100 blocks</span></div>
