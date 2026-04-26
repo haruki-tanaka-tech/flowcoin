@@ -851,6 +851,9 @@ bool step9_initialize_rpc(NodeContext& node, const AppArgs& args) {
     if (node.wallet) {
         register_wallet_rpcs(*node.rpc, *node.wallet, *node.chain, *node.net);
     }
+    if (node.mempool) {
+        register_mempool_rpcs(*node.rpc, *node.chain, *node.mempool);
+    }
     register_mining_rpcs(*node.rpc, *node.chain, *node.net,
                          node.wallet ? node.wallet.get() : nullptr);
     register_net_rpcs(*node.rpc, *node.net);
