@@ -6,6 +6,7 @@
 [![Supply: 21M](https://img.shields.io/badge/supply-21M-f2a03d)](whitepaper.txt)
 [![Website](https://img.shields.io/badge/web-flowcoin.org-f2a03d)](https://flowcoin.org)
 [![Telegram](https://img.shields.io/badge/telegram-@flowcoin__main-26A5E4?logo=telegram)](https://t.me/flowcoin_main)
+[![Discord](https://img.shields.io/badge/discord-FlowCoin-5865F2?logo=discord)](https://discord.gg/CPUZHNSzu2)
 
 **Keccak-256d Proof-of-Work cryptocurrency — Bitcoin architecture, fair mining on CPU and GPU.**
 
