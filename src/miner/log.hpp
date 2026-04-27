@@ -18,48 +18,48 @@
 namespace miner {
 
 // ---------------------------------------------------------------------------
-// ANSI colors. Mirrors XMRig's palette so the miner feels familiar.
+// No colors — plain grey terminal output.
 // ---------------------------------------------------------------------------
 
-#define CSI              "\x1B["
-#define CLEAR            CSI "0m"
+#define CSI              ""
+#define CLEAR            ""
 
-#define BLACK_BOLD_S     CSI "1;30m"
-#define RED_S            CSI "0;31m"
-#define RED_BOLD_S       CSI "1;31m"
-#define GREEN_S          CSI "0;32m"
-#define GREEN_BOLD_S     CSI "1;32m"
-#define YELLOW_S         CSI "0;33m"
-#define YELLOW_BOLD_S    CSI "1;33m"
-#define BLUE_S           CSI "0;34m"
-#define BLUE_BOLD_S      CSI "1;34m"
-#define MAGENTA_S        CSI "0;35m"
-#define MAGENTA_BOLD_S   CSI "1;35m"
-#define CYAN_S           CSI "0;36m"
-#define CYAN_BOLD_S      CSI "1;36m"
-#define WHITE_S          CSI "0;37m"
-#define WHITE_BOLD_S     CSI "1;37m"
+#define BLACK_BOLD_S     ""
+#define RED_S            ""
+#define RED_BOLD_S       ""
+#define GREEN_S          ""
+#define GREEN_BOLD_S     ""
+#define YELLOW_S         ""
+#define YELLOW_BOLD_S    ""
+#define BLUE_S           ""
+#define BLUE_BOLD_S      ""
+#define MAGENTA_S        ""
+#define MAGENTA_BOLD_S   ""
+#define CYAN_S           ""
+#define CYAN_BOLD_S      ""
+#define WHITE_S          ""
+#define WHITE_BOLD_S     ""
 
-#define BLUE_BG_S        CSI "44m"
-#define CYAN_BG_BOLD_S   CSI "46;1m"
-#define GREEN_BG_BOLD_S  CSI "42;1m"
-#define MAGENTA_BG_BOLD_S CSI "45;1m"
-#define YELLOW_BG_BOLD_S CSI "43;1m"
-#define RED_BG_BOLD_S    CSI "41;1m"
+#define BLUE_BG_S        ""
+#define CYAN_BG_BOLD_S   ""
+#define GREEN_BG_BOLD_S  ""
+#define MAGENTA_BG_BOLD_S ""
+#define YELLOW_BG_BOLD_S ""
+#define RED_BG_BOLD_S    ""
 
-#define BLACK_BOLD(x)    BLACK_BOLD_S   x CLEAR
-#define RED(x)           RED_S          x CLEAR
-#define RED_BOLD(x)      RED_BOLD_S     x CLEAR
-#define GREEN(x)         GREEN_S        x CLEAR
-#define GREEN_BOLD(x)    GREEN_BOLD_S   x CLEAR
-#define YELLOW(x)        YELLOW_S       x CLEAR
-#define YELLOW_BOLD(x)   YELLOW_BOLD_S  x CLEAR
-#define BLUE_BOLD(x)     BLUE_BOLD_S    x CLEAR
-#define MAGENTA(x)       MAGENTA_S      x CLEAR
-#define MAGENTA_BOLD(x)  MAGENTA_BOLD_S x CLEAR
-#define CYAN(x)          CYAN_S         x CLEAR
-#define CYAN_BOLD(x)     CYAN_BOLD_S    x CLEAR
-#define WHITE_BOLD(x)    WHITE_BOLD_S   x CLEAR
+#define BLACK_BOLD(x)    x
+#define RED(x)           x
+#define RED_BOLD(x)      x
+#define GREEN(x)         x
+#define GREEN_BOLD(x)    x
+#define YELLOW(x)        x
+#define YELLOW_BOLD(x)   x
+#define BLUE_BOLD(x)     x
+#define MAGENTA(x)       x
+#define MAGENTA_BOLD(x)  x
+#define CYAN(x)          x
+#define CYAN_BOLD(x)     x
+#define WHITE_BOLD(x)    x
 
 // ---------------------------------------------------------------------------
 // Log — threadsafe timestamped output with optional ANSI colour stripping.
