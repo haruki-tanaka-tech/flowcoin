@@ -881,9 +881,8 @@ void NetManager::on_tick() {
         addrman_.cleanup();
     }
 
-    // Save peers.dat every 60 seconds. Cheap (small file, one fsync) and
-    // ensures state survives a kill -9 with at most a minute of drift.
-    if (now - last_peers_save_time_ >= 60) {
+    // Save peers.dat every 15 minutes.
+    if (now - last_peers_save_time_ >= 900) {
         last_peers_save_time_ = now;
         addrman_.cleanup();
         save_peers();
